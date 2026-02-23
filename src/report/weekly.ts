@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 import { execSync } from "child_process";
 import { parse } from "yaml";
 import { loadAccount, type PaperTrade } from "../paper/account.js";
+import { ping } from "../health/heartbeat.js";
 import type { StrategyConfig } from "../types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -240,6 +241,8 @@ export async function sendWeeklyReportToAgent(report: WeeklyReport): Promise<voi
 // 主入口
 // ─────────────────────────────────────────────────────
 
+const done = ping("weekly_report");
 const report = await generateWeeklyReport();
 await sendWeeklyReportToAgent(report);
+done();
 log("─── 周报生成完成 ───\n");

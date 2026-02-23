@@ -146,6 +146,50 @@ logs/
 └── state.json              Monitor run state
 ```
 
+### Schedule Configuration
+
+All scheduled tasks are defined in `config/strategy.yaml` under `schedule:`.
+After editing, run `npm run cron:sync` to apply changes to system crontab.
+
+```yaml
+schedule:
+  price_monitor:
+    enabled: true
+    cron: "* * * * *"      # Every minute
+    timeout_minutes: 3     # Alert if not run within 3 min
+
+  news_collector:
+    enabled: true
+    cron: "0 */4 * * *"    # Every 4 hours
+    timeout_minutes: 260
+
+  health_check:
+    enabled: true
+    cron: "*/30 * * * *"   # Every 30 minutes
+    timeout_minutes: 35
+```
+
+### Health Monitoring
+
+```bash
+# Manual health check
+npm run health:check
+
+# Sync cron from config
+npm run cron:sync
+
+# List current cron jobs
+npm run cron:list
+```
+
+Health status levels:
+- ✅ `ok` — Task ran within expected interval
+- ⚠️ `warn` — Task overdue (not run within `timeout_minutes`)
+- ❌ `error` — Last run failed with error
+- 🔘 `never` — Task has never run (normal after fresh deploy)
+
+Alerts are sent to Telegram only when issues are detected (silent when healthy).
+
 ### Roadmap
 
 - [x] Technical indicator engine (MA + RSI)
@@ -156,6 +200,8 @@ logs/
 - [x] MACD + volume indicators & signals
 - [x] News sentiment gate (position sizing by sentiment)
 - [x] Weekly review report (AI-powered, every Sunday 22:00)
+- [x] Health monitoring & heartbeat system
+- [x] Config-driven schedule management (`cron:sync`)
 - [x] 104 unit tests
 - [ ] Backtesting module
 - [ ] Live trading mode (`mode: auto`)
@@ -249,6 +295,8 @@ npm test
 - [x] MACD + 成交量指标与信号
 - [x] 新闻情绪门控（仓位随情绪动态调整）
 - [x] 周报复盘功能（AI 深度分析，每周日 22:00）
+- [x] 健康监控 + 心跳系统（每 30 分钟检查，异常告警）
+- [x] 配置驱动的定时任务管理（`cron:sync` 一键同步）
 - [x] 104 条单元测试
 - [ ] 回测模块
 - [ ] 实盘自动交易（`mode: auto`）

@@ -17,6 +17,7 @@ import {
   type GlobalMarketData,
 } from "./fetcher.js";
 import { sendNewsReport } from "../notify/openclaw.js";
+import { ping } from "../health/heartbeat.js";
 import type { StrategyConfig } from "../types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -108,6 +109,7 @@ function assessMarketSentiment(
 
 async function main(): Promise<void> {
   log("─── 新闻情绪扫描开始 ───");
+  const done = ping("news_collector");
 
   const cfg = loadConfig();
   const state = loadState();
@@ -164,6 +166,7 @@ async function main(): Promise<void> {
     lastFearGreed: fearGreed.value,
   });
 
+  done();
   log("─── 新闻情绪扫描完成 ───\n");
 }
 

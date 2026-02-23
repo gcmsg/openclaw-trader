@@ -93,6 +93,34 @@ news:
   fear_greed_alert: 15        # 恐惧贪婪指数变化超过此值时告警
 
 # ───────────────────────────────────────
+# 定时任务配置（修改后运行 npm run cron:sync 生效）
+# ───────────────────────────────────────
+schedule:
+  # 价格监控（技术指标扫描）
+  price_monitor:
+    enabled: true
+    cron: "* * * * *"          # 每分钟
+    timeout_minutes: 3         # 超过此时间未运行 = 告警
+
+  # 新闻情绪抓取
+  news_collector:
+    enabled: true
+    cron: "0 */4 * * *"        # 每 4 小时
+    timeout_minutes: 260       # 4小时 + 20 分钟缓冲
+
+  # 周报复盘
+  weekly_report:
+    enabled: true
+    cron: "0 22 * * 0"         # 每周日 22:00
+    timeout_minutes: 10100     # 7 天 + 20 分钟缓冲
+
+  # 健康检查
+  health_check:
+    enabled: true
+    cron: "*/30 * * * *"       # 每 30 分钟
+    timeout_minutes: 35
+
+# ───────────────────────────────────────
 # 运行模式
 # ───────────────────────────────────────
 # notify_only: 只通知，不下单

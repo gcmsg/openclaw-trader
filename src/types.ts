@@ -75,14 +75,21 @@ export interface StrategyConfig {
     min_interval_minutes: number;
   };
   paper: {
-    initial_usdt: number;           // 模拟盘初始资金
-    report_interval_hours: number;  // 定期汇报间隔
+    initial_usdt: number;
+    report_interval_hours: number;
   };
   news: {
     enabled: boolean;
     interval_hours: number;
     price_alert_threshold: number;
     fear_greed_alert: number;
+  };
+  schedule: {
+    [taskName: string]: {
+      enabled: boolean;
+      cron: string;
+      timeout_minutes: number;
+    };
   };
   mode: TradeMode;
 }

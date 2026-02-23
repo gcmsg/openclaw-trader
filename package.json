@@ -8,6 +8,9 @@
     "news": "tsx src/news/monitor.ts",
     "paper:status": "tsx src/paper/status.ts",
     "report:weekly": "tsx src/report/weekly.ts",
+    "health:check": "tsx src/health/checker.ts",
+    "cron:sync": "tsx src/scripts/sync-cron.ts",
+    "cron:list": "crontab -l | grep -A1 'openclaw-trader'",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/**/*.ts"

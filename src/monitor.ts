@@ -13,6 +13,7 @@ import { detectSignal } from "./strategy/signals.js";
 import { notifySignal, notifyError, notifyPaperTrade, notifyStopLoss } from "./notify/openclaw.js";
 import { handleSignal, checkStopLoss, checkMaxDrawdown, formatSummaryMessage } from "./paper/engine.js";
 import { loadNewsReport, evaluateSentimentGate } from "./news/sentiment-gate.js";
+import { ping } from "./health/heartbeat.js";
 import type { StrategyConfig, Signal } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -167,6 +168,7 @@ async function scanSymbol(
 
 async function main(): Promise<void> {
   log("─── 监控扫描开始 ───");
+  const done = ping("price_monitor");
 
   const cfg = loadConfig();
   const state = loadState();
@@ -230,6 +232,7 @@ async function main(): Promise<void> {
   }
 
   saveState(state);
+  done();
   log("─── 监控扫描完成 ───\n");
 }
 
