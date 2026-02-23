@@ -1,24 +1,22 @@
 # openclaw-trader 模拟盘配置
-# 支持多场景并行运行，每个场景独立账户，方便横向对比
-# 账户状态文件: logs/paper-{id}.json
+# 场景 = 策略(strategy_id) × 市场(exchange)
+# 每个场景独立账户：logs/paper-{id}.json
+# 对比报告：npm run paper:compare
 
-# ───────────────────────────────────────
-# 全局模拟盘设置
-# ───────────────────────────────────────
-report_interval_hours: 24     # 定期账户汇报间隔
+report_interval_hours: 24
 
-# ───────────────────────────────────────
-# 测试场景列表
-# 所有 enabled: true 的场景同时运行
-# ───────────────────────────────────────
 scenarios:
 
-  # ── 场景1：现货（基准对照组）──────────────────
-  - id: "spot"
-    name: "现货基准"
+  # ══════════════════════════════════════════
+  # 保守策略组
+  # ══════════════════════════════════════════
+
+  - id: "conservative-spot"
+    name: "保守 × 现货"
     enabled: true
-    initial_usdt: 10000       # 模拟 1 万 USDT 起步
-    fee_rate: 0.001           # 0.1%（Binance VIP0 现货费率）
+    strategy_id: "conservative"
+    initial_usdt: 10000
+    fee_rate: 0.001
     slippage_percent: 0.05
     exchange:
       market: "spot"
@@ -26,60 +24,59 @@ scenarios:
         enabled: false
         default: 1
         max: 1
-    # symbols 不填 → 继承 strategy.yaml 的全局 symbols
-    # risk 不填 → 继承 strategy.yaml 的全局 risk
 
-  # ── 场景2：U 本位合约 永续 无杠杆 ──────────────
-  - id: "futures-1x"
-    name: "合约 永续 1x"
+  - id: "conservative-futures-3x"
+    name: "保守 × 合约 3x"
     enabled: true
-    initial_usdt: 10000
-    fee_rate: 0.0004          # 0.04%（Binance 合约 VIP0 挂单费）
-    slippage_percent: 0.05
-    exchange:
-      market: "futures"
-      futures:
-        contract_type: "perpetual"
-        margin_mode: "isolated"
-    leverage:
-      enabled: false
-      default: 1
-      max: 1
-
-  # ── 场景3：U 本位合约 永续 3 倍杠杆 ──────────────
-  - id: "futures-3x"
-    name: "合约 永续 3x"
-    enabled: true
+    strategy_id: "conservative"
     initial_usdt: 10000
     fee_rate: 0.0004
-    slippage_percent: 0.08    # 杠杆品种滑点更大
+    slippage_percent: 0.08
     exchange:
       market: "futures"
       futures:
         contract_type: "perpetual"
         margin_mode: "isolated"
-    leverage:
-      enabled: true
-      default: 3
-      max: 3
-    # 高杠杆风险参数收紧
+      leverage:
+        enabled: true
+        default: 3
+        max: 3
+    # 合约下进一步收紧保守策略的风控
     risk:
-      stop_loss_percent: 3    # 止损收紧（杠杆放大波动）
+      stop_loss_percent: 3
       take_profit_percent: 9
       trailing_stop:
         enabled: true
-        activation_percent: 4
+        activation_percent: 5
         callback_percent: 1.5
-      position_ratio: 0.1     # 仓位减半
+      position_ratio: 0.1
       max_positions: 3
       max_position_per_symbol: 0.2
-      max_total_loss_percent: 15  # 总亏损上限更严
-      daily_loss_limit_percent: 5
+      max_total_loss_percent: 12
+      daily_loss_limit_percent: 4
 
-  # ── 场景4：U 本位合约 永续 5 倍杠杆 ──────────────
-  - id: "futures-5x"
-    name: "合约 永续 5x"
+  # ══════════════════════════════════════════
+  # 激进策略组
+  # ══════════════════════════════════════════
+
+  - id: "aggressive-spot"
+    name: "激进 × 现货"
     enabled: true
+    strategy_id: "aggressive"
+    initial_usdt: 10000
+    fee_rate: 0.001
+    slippage_percent: 0.05
+    exchange:
+      market: "spot"
+      leverage:
+        enabled: false
+        default: 1
+        max: 1
+
+  - id: "aggressive-futures-3x"
+    name: "激进 × 合约 3x"
+    enabled: true
+    strategy_id: "aggressive"
     initial_usdt: 10000
     fee_rate: 0.0004
     slippage_percent: 0.1
@@ -88,27 +85,92 @@ scenarios:
       futures:
         contract_type: "perpetual"
         margin_mode: "isolated"
-    leverage:
-      enabled: true
-      default: 5
-      max: 5
+      leverage:
+        enabled: true
+        default: 3
+        max: 3
     risk:
-      stop_loss_percent: 2
-      take_profit_percent: 6
+      stop_loss_percent: 4
+      take_profit_percent: 12
       trailing_stop:
         enabled: true
         activation_percent: 3
         callback_percent: 1
-      position_ratio: 0.08
+      position_ratio: 0.15
+      max_positions: 4
+      max_position_per_symbol: 0.3
+      max_total_loss_percent: 20
+      daily_loss_limit_percent: 8
+
+  # ══════════════════════════════════════════
+  # 趋势跟踪策略组
+  # ══════════════════════════════════════════
+
+  - id: "trend-spot"
+    name: "趋势 × 现货"
+    enabled: true
+    strategy_id: "trend"
+    initial_usdt: 10000
+    fee_rate: 0.001
+    slippage_percent: 0.05
+    exchange:
+      market: "spot"
+      leverage:
+        enabled: false
+        default: 1
+        max: 1
+
+  - id: "trend-futures-5x"
+    name: "趋势 × 合约 5x"
+    enabled: false              # 5x 杠杆风险较大，默认关闭
+    strategy_id: "trend"
+    initial_usdt: 10000
+    fee_rate: 0.0004
+    slippage_percent: 0.12
+    exchange:
+      market: "futures"
+      futures:
+        contract_type: "perpetual"
+        margin_mode: "isolated"
+      leverage:
+        enabled: true
+        default: 5
+        max: 5
+    risk:
+      stop_loss_percent: 2
+      take_profit_percent: 10
+      trailing_stop:
+        enabled: true
+        activation_percent: 3
+        callback_percent: 1
+      position_ratio: 0.06
       max_positions: 2
       max_position_per_symbol: 0.15
-      max_total_loss_percent: 10
-      daily_loss_limit_percent: 4
+      max_total_loss_percent: 8
+      daily_loss_limit_percent: 3
 
-  # ── 场景5：杠杆现货 2 倍 ──────────────────────
-  - id: "margin-2x"
-    name: "杠杆现货 2x"
+  # ══════════════════════════════════════════
+  # RSI 均值回归策略组
+  # ══════════════════════════════════════════
+
+  - id: "rsi-spot"
+    name: "RSI均值回归 × 现货"
     enabled: true
+    strategy_id: "rsi-pure"
+    initial_usdt: 10000
+    fee_rate: 0.001
+    slippage_percent: 0.05
+    exchange:
+      market: "spot"
+      leverage:
+        enabled: false
+        default: 1
+        max: 1
+
+  - id: "rsi-margin-2x"
+    name: "RSI均值回归 × 杠杆2x"
+    enabled: true
+    strategy_id: "rsi-pure"
     initial_usdt: 10000
     fee_rate: 0.001
     slippage_percent: 0.06
@@ -120,30 +182,13 @@ scenarios:
         max: 2
     risk:
       stop_loss_percent: 4
-      take_profit_percent: 10
+      take_profit_percent: 8
       trailing_stop:
         enabled: false
         activation_percent: 5
         callback_percent: 2
-      position_ratio: 0.15
+      position_ratio: 0.12
       max_positions: 4
       max_position_per_symbol: 0.25
       max_total_loss_percent: 18
       daily_loss_limit_percent: 6
-
-  # ── 场景6：季度交割合约 无杠杆（测试价差特征）──
-  - id: "futures-quarterly"
-    name: "合约 季度交割 1x"
-    enabled: false            # 默认关闭，手动开启
-    initial_usdt: 10000
-    fee_rate: 0.0004
-    slippage_percent: 0.1     # 季度合约流动性较差，滑点更大
-    exchange:
-      market: "futures"
-      futures:
-        contract_type: "quarterly"
-        margin_mode: "isolated"
-    leverage:
-      enabled: false
-      default: 1
-      max: 1

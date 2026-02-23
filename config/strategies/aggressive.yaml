@@ -1,0 +1,44 @@
+# 激进策略：快速响应，捕捉短期动能
+# 适合：强势趋势市、可接受较大回撤
+name: "激进策略"
+description: "MA(10/30) 短周期均线，RSI 放宽条件，快进快出"
+
+timeframe: "1h"
+
+strategy:
+  ma:
+    short: 10          # 更短均线，反应更快
+    long: 30
+  rsi:
+    period: 14
+    oversold: 40       # 超卖门槛更宽（更早入场）
+    overbought: 60     # 超买门槛更低（更早出场）
+  macd:
+    enabled: true
+    fast: 12
+    slow: 26
+    signal: 9
+  volume:
+    surge_ratio: 1.2   # 成交量要求更宽松
+    low_ratio: 0.5
+
+signals:
+  buy:
+    - ma_bullish
+    - rsi_oversold     # 只需 MA + RSI（去掉 MACD 要求，更多信号）
+  sell:
+    - ma_bearish
+    - rsi_overbought
+
+risk:
+  stop_loss_percent: 6    # 止损宽一点，容忍更大波动
+  take_profit_percent: 18
+  trailing_stop:
+    enabled: true
+    activation_percent: 4
+    callback_percent: 1.5
+  position_ratio: 0.25    # 仓位更大
+  max_positions: 5
+  max_position_per_symbol: 0.35
+  max_total_loss_percent: 25
+  daily_loss_limit_percent: 10

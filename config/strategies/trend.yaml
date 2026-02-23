@@ -1,0 +1,54 @@
+# 趋势跟踪策略：只跟强趋势，持仓周期更长
+# 适合：牛市/熊市单边行情，信号少但质量高
+name: "趋势跟踪"
+description: "MA(50/200) 长周期均线，等待趋势确立后入场，追踪止损保护盈利"
+
+timeframe: "4h"          # 用 4h K 线，减少噪音
+
+strategy:
+  ma:
+    short: 50            # 长周期均线，趋势更稳固
+    long: 200
+  rsi:
+    period: 14
+    oversold: 35
+    overbought: 65
+  macd:
+    enabled: true
+    fast: 12
+    slow: 26
+    signal: 9
+  volume:
+    surge_ratio: 1.5
+    low_ratio: 0.5
+
+signals:
+  buy:
+    - ma_bullish
+    - ma_golden_cross   # 金叉才买（50 穿越 200 向上）
+    - rsi_oversold
+    - macd_bullish
+  sell:
+    - ma_bearish
+    - ma_death_cross    # 死叉才卖
+    - macd_bearish
+
+risk:
+  stop_loss_percent: 8    # 止损宽，趋势回调空间大
+  take_profit_percent: 30 # 目标更高，趋势行情吃大利
+  trailing_stop:
+    enabled: true
+    activation_percent: 10
+    callback_percent: 4   # 更宽追踪，不轻易被甩出
+  position_ratio: 0.2
+  max_positions: 3        # 趋势品种少而精
+  max_position_per_symbol: 0.3
+  max_total_loss_percent: 20
+  daily_loss_limit_percent: 10
+
+# 趋势策略重点关注市值较大、流动性好的币种
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT

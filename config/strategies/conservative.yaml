@@ -1,0 +1,47 @@
+# 保守策略：三重确认，宁可少信号不冒险
+# 适合：震荡市、风险厌恶型、资金规模较大时
+name: "保守策略"
+description: "MA(20/60) + RSI + MACD 三重确认，止损严格，仓位保守"
+
+timeframe: "1h"
+
+strategy:
+  ma:
+    short: 20
+    long: 60
+  rsi:
+    period: 14
+    oversold: 30       # 更深超卖才买（减少假信号）
+    overbought: 70     # 更高超买才卖
+  macd:
+    enabled: true
+    fast: 12
+    slow: 26
+    signal: 9
+  volume:
+    surge_ratio: 2.0   # 需要更明显放量（2x 均量）才认可信号
+    low_ratio: 0.5
+
+signals:
+  buy:
+    - ma_bullish
+    - rsi_oversold
+    - macd_bullish
+    - macd_golden_cross  # 额外要求 MACD 金叉
+  sell:
+    - ma_bearish
+    - rsi_overbought
+    - macd_bearish
+
+risk:
+  stop_loss_percent: 4
+  take_profit_percent: 12
+  trailing_stop:
+    enabled: true
+    activation_percent: 6
+    callback_percent: 2
+  position_ratio: 0.15   # 每笔仓位更小
+  max_positions: 3
+  max_position_per_symbol: 0.25
+  max_total_loss_percent: 15
+  daily_loss_limit_percent: 5

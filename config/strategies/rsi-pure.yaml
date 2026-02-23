@@ -1,0 +1,44 @@
+# 纯 RSI 均值回归策略：超卖反弹，超买回落
+# 适合：震荡区间市场，利用过度反应做反转
+name: "RSI 均值回归"
+description: "RSI 极值为核心信号，不依赖 MA 趋势判断，适合震荡市"
+
+timeframe: "1h"
+
+strategy:
+  ma:
+    short: 20
+    long: 60
+  rsi:
+    period: 14
+    oversold: 28       # 极度超卖才买（历史底部区域）
+    overbought: 72     # 极度超买才卖
+  macd:
+    enabled: true
+    fast: 12
+    slow: 26
+    signal: 9
+  volume:
+    surge_ratio: 1.5
+    low_ratio: 0.5
+
+signals:
+  buy:
+    - rsi_oversold     # 只要 RSI 超卖就买，不看 MA 趋势方向
+    - macd_histogram_expanding  # MACD 柱子放大（动能确认）
+  sell:
+    - rsi_overbought
+    - macd_histogram_expanding
+
+risk:
+  stop_loss_percent: 5
+  take_profit_percent: 10   # 均值回归目标不高
+  trailing_stop:
+    enabled: false
+    activation_percent: 5
+    callback_percent: 2
+  position_ratio: 0.18
+  max_positions: 4
+  max_position_per_symbol: 0.3
+  max_total_loss_percent: 20
+  daily_loss_limit_percent: 8

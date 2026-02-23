@@ -145,24 +145,42 @@ export interface ExchangeConfig {
 }
 
 // ─────────────────────────────────────────────────────
+// Strategy Profile (config/strategies/*.yaml)
+// ─────────────────────────────────────────────────────
+
+export interface StrategyProfile {
+  name: string;
+  description?: string;
+  symbols?: string[];
+  timeframe?: Timeframe;
+  strategy?: {
+    ma?: { short: number; long: number };
+    rsi?: { period?: number; oversold?: number; overbought?: number };
+    macd?: { enabled?: boolean; fast?: number; slow?: number; signal?: number };
+    volume?: { surge_ratio?: number; low_ratio?: number };
+  };
+  signals?: {
+    buy?: string[];
+    sell?: string[];
+  };
+  risk?: Partial<RiskConfig>;
+}
+
+// ─────────────────────────────────────────────────────
 // Paper Trading Config (paper.yaml)
 // ─────────────────────────────────────────────────────
 
 export interface PaperScenario {
-  id: string;                   // 唯一标识，用于账户状态文件名
-  name: string;                 // 展示名称
+  id: string;
+  name: string;
   enabled: boolean;
+  strategy_id: string;          // 引用 config/strategies/{id}.yaml
   initial_usdt: number;
   fee_rate: number;
   slippage_percent: number;
   exchange: ExchangeConfig;
-  leverage?: {                  // 顶层 leverage（优先于 exchange.leverage）
-    enabled: boolean;
-    default: number;
-    max: number;
-  };
-  symbols?: string[];           // 覆盖全局 symbols（不填则继承）
-  risk?: Partial<RiskConfig>;   // 覆盖全局 risk（不填则继承）
+  symbols?: string[];           // 覆盖策略/全局 symbols
+  risk?: Partial<RiskConfig>;   // 覆盖策略 risk
 }
 
 export interface PaperFileConfig {

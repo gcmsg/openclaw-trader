@@ -1,7 +1,7 @@
 /**
  * 配置加载器
- * 负责加载和合并 strategy.yaml + paper.yaml / live.yaml
- * 生成 RuntimeConfig 供各模块使用
+ * 优先级（高→低）：场景覆盖 > 策略 profile > strategy.yaml 全局默认
+ * 最终生成 RuntimeConfig 供各模块使用
  */
 
 import fs from "fs";
@@ -10,6 +10,7 @@ import { parse } from "yaml";
 import { fileURLToPath } from "url";
 import type {
   StrategyConfig,
+  StrategyProfile,
   PaperFileConfig,
   PaperScenario,
   LiveConfig,
@@ -21,75 +22,123 @@ import type {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_DIR = path.resolve(__dirname, "../../config");
 
-function readYaml<T>(filename: string): T {
-  const filePath = path.join(CONFIG_DIR, filename);
+function readYaml<T>(filePath: string): T {
   return parse(fs.readFileSync(filePath, "utf-8")) as T;
 }
 
-/** 加载核心策略配置 */
 export function loadStrategyConfig(): StrategyConfig {
-  return readYaml<StrategyConfig>("strategy.yaml");
+  return readYaml<StrategyConfig>(path.join(CONFIG_DIR, "strategy.yaml"));
 }
 
-/** 加载模拟盘配置 */
 export function loadPaperConfig(): PaperFileConfig {
-  return readYaml<PaperFileConfig>("paper.yaml");
+  return readYaml<PaperFileConfig>(path.join(CONFIG_DIR, "paper.yaml"));
 }
 
-/** 加载实盘配置 */
 export function loadLiveConfig(): LiveConfig {
-  return readYaml<LiveConfig>("live.yaml");
+  return readYaml<LiveConfig>(path.join(CONFIG_DIR, "live.yaml"));
+}
+
+export function loadStrategyProfile(strategyId: string): StrategyProfile {
+  const filePath = path.join(CONFIG_DIR, "strategies", `${strategyId}.yaml`);
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`策略文件不存在: config/strategies/${strategyId}.yaml`);
+  }
+  return readYaml<StrategyProfile>(filePath);
+}
+
+/** 列出所有可用策略 */
+export function listStrategyProfiles(): string[] {
+  const dir = path.join(CONFIG_DIR, "strategies");
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((f) => f.endsWith(".yaml"))
+    .map((f) => f.replace(".yaml", ""));
 }
 
 // ─────────────────────────────────────────────────────
-// 深合并工具：将 override 的非 undefined 字段覆盖到 base
+// 合并工具
 // ─────────────────────────────────────────────────────
 
-function mergeRisk(base: RiskConfig, override?: Partial<RiskConfig>): RiskConfig {
+function mergeRisk(base: RiskConfig, ...overrides: Array<Partial<RiskConfig> | undefined>): RiskConfig {
+  let result = { ...base };
+  for (const override of overrides) {
+    if (!override) continue;
+    result = {
+      ...result,
+      ...override,
+      trailing_stop: {
+        ...result.trailing_stop,
+        ...(override.trailing_stop ?? {}),
+      },
+    };
+  }
+  return result;
+}
+
+function mergeStrategySection(
+  base: StrategyConfig["strategy"],
+  override?: StrategyProfile["strategy"]
+): StrategyConfig["strategy"] {
   if (!override) return base;
   return {
     ...base,
-    ...override,
-    trailing_stop: {
-      ...base.trailing_stop,
-      ...(override.trailing_stop ?? {}),
-    },
+    ma: { ...base.ma, ...(override.ma ?? {}) },
+    rsi: { ...base.rsi, ...(override.rsi ?? {}) },
+    macd: { ...base.macd, ...(override.macd ?? {}) },
+    volume: override.volume
+      ? { ...(base.volume ?? { surge_ratio: 1.5, low_ratio: 0.5 }), ...override.volume }
+      : base.volume,
   };
 }
 
 // ─────────────────────────────────────────────────────
-// 合并成 RuntimeConfig
+// 构建 RuntimeConfig
 // ─────────────────────────────────────────────────────
 
 /**
- * 为某个 paper scenario 生成完整的 RuntimeConfig
- * 优先级：scenario.risk > strategy.risk
- *         scenario.symbols > strategy.symbols
+ * 为单个 paper scenario 构建完整 RuntimeConfig
+ * 优先级：scenario > strategy profile > strategy.yaml
  */
 export function buildPaperRuntime(
-  strategy: StrategyConfig,
+  base: StrategyConfig,
   paperCfg: PaperFileConfig,
   scenario: PaperScenario
 ): RuntimeConfig {
-  // leverage 字段：优先 scenario 顶层 leverage，否则 exchange.leverage
-  const leverage = scenario.leverage ?? scenario.exchange.leverage ?? {
-    enabled: false,
-    default: 1,
-    max: 1,
+  const profile = loadStrategyProfile(scenario.strategy_id);
+
+  // symbols：场景 > profile > 全局
+  const symbols = scenario.symbols ?? profile.symbols ?? base.symbols;
+
+  // timeframe：profile > 全局
+  const timeframe = profile.timeframe ?? base.timeframe;
+
+  // strategy section：profile 覆盖全局
+  const strategy = mergeStrategySection(base.strategy, profile.strategy);
+
+  // signals：profile > 全局
+  const signals = {
+    buy: profile.signals?.buy ?? base.signals.buy,
+    sell: profile.signals?.sell ?? base.signals.sell,
   };
 
+  // risk：场景覆盖 > profile 覆盖 > 全局
+  const risk = mergeRisk(base.risk, profile.risk, scenario.risk);
+
+  // exchange
   const exchange: ExchangeConfig = {
     name: "binance",
     credentials_path: ".secrets/binance.json",
     ...scenario.exchange,
-    leverage,
   };
 
   return {
-    ...strategy,
+    ...base,
+    symbols,
+    timeframe,
+    strategy,
+    signals,
+    risk,
     exchange,
-    symbols: scenario.symbols ?? strategy.symbols,
-    risk: mergeRisk(strategy.risk, scenario.risk),
     paper: {
       scenarioId: scenario.id,
       initial_usdt: scenario.initial_usdt,
@@ -101,22 +150,19 @@ export function buildPaperRuntime(
 }
 
 /**
- * 为实盘生成 RuntimeConfig
+ * 为实盘构建 RuntimeConfig
  */
-export function buildLiveRuntime(
-  strategy: StrategyConfig,
-  live: LiveConfig
-): RuntimeConfig {
+export function buildLiveRuntime(base: StrategyConfig, live: LiveConfig): RuntimeConfig {
   const { name, credentials_path, ...restExchange } = live.exchange;
   return {
-    ...strategy,
+    ...base,
     exchange: {
       name: name ?? "binance",
       credentials_path: credentials_path ?? ".secrets/binance.json",
       ...restExchange,
     },
-    symbols: live.symbols ?? strategy.symbols,
-    risk: mergeRisk(strategy.risk, live.risk),
+    symbols: live.symbols ?? base.symbols,
+    risk: mergeRisk(base.risk, live.risk),
     paper: {
       scenarioId: "live",
       initial_usdt: 0,
@@ -128,26 +174,23 @@ export function buildLiveRuntime(
 }
 
 /**
- * 加载所有启用的模拟盘运行时配置
+ * 加载所有启用场景的 RuntimeConfig
  */
 export function loadEnabledPaperRuntimes(): RuntimeConfig[] {
-  const strategy = loadStrategyConfig();
+  const base = loadStrategyConfig();
   const paperCfg = loadPaperConfig();
   return paperCfg.scenarios
     .filter((s) => s.enabled)
-    .map((s) => buildPaperRuntime(strategy, paperCfg, s));
+    .map((s) => buildPaperRuntime(base, paperCfg, s));
 }
 
 /**
- * 根据当前 mode 加载对应的运行时配置列表
- * - paper → 返回所有启用的场景（1+个）
- * - auto  → 返回单个实盘配置
- * - notify_only → 返回策略配置（无 exchange）
+ * 按当前 mode 分发加载
  */
 export function loadRuntimeConfigs(): RuntimeConfig[] {
-  const strategy = loadStrategyConfig();
+  const base = loadStrategyConfig();
 
-  if (strategy.mode === "paper") {
+  if (base.mode === "paper") {
     const runtimes = loadEnabledPaperRuntimes();
     if (runtimes.length === 0) {
       throw new Error("paper.yaml 中没有 enabled: true 的场景，请至少启用一个");
@@ -155,14 +198,12 @@ export function loadRuntimeConfigs(): RuntimeConfig[] {
     return runtimes;
   }
 
-  if (strategy.mode === "auto") {
-    const live = loadLiveConfig();
-    return [buildLiveRuntime(strategy, live)];
+  if (base.mode === "auto") {
+    return [buildLiveRuntime(base, loadLiveConfig())];
   }
 
-  // notify_only: 不需要 exchange，返回带默认 paper 字段的 config
   return [{
-    ...strategy,
+    ...base,
     exchange: { market: "spot" },
     paper: { scenarioId: "notify", initial_usdt: 0, fee_rate: 0, slippage_percent: 0, report_interval_hours: 0 },
   }];
