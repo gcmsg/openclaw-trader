@@ -93,8 +93,8 @@ export function paperBuy(
   const totalEquity = calcTotalEquity(account, { [symbol]: price });
   const usdtToSpend = totalEquity * positionRatio;
 
-  if (usdtToSpend > account.usdt) {
-    return null; // 余额不足
+  if (usdtToSpend < 1 || usdtToSpend > account.usdt) {
+    return null; // 余额不足或投入金额过小
   }
 
   const fee = usdtToSpend * FEE_RATE;
