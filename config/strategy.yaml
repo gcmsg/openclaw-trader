@@ -34,10 +34,15 @@ strategy:
     oversold: 35            # 低于此值 = 超卖 = 买入参考
     overbought: 65          # 高于此值 = 超买 = 卖出参考
   macd:
-    enabled: false
+    enabled: true
     fast: 12
     slow: 26
     signal: 9
+
+  # 成交量过滤
+  volume:
+    surge_ratio: 1.5    # 超过均量此倍数 = 放量（信号更可信）
+    low_ratio: 0.5      # 低于均量此倍数 = 缩量（信号可信度低）
 
 # ───────────────────────────────────────
 # 信号触发条件（需同时满足）
@@ -46,9 +51,11 @@ signals:
   buy:
     - ma_bullish            # MA 短期 > 长期（多头趋势）
     - rsi_oversold          # RSI 低于超卖线
+    - macd_bullish          # MACD 多头确认（减少假信号）
   sell:
     - ma_bearish            # MA 短期 < 长期（空头趋势）
     - rsi_overbought        # RSI 高于超买线
+    - macd_bearish          # MACD 空头确认
 
 # ───────────────────────────────────────
 # 风险控制

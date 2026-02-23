@@ -16,13 +16,25 @@ export interface Kline {
   closeTime: number;
 }
 
+export interface MacdResult {
+  macd: number;       // MACD 线（快线 - 慢线）
+  signal: number;     // 信号线（MACD 的 EMA）
+  histogram: number;  // 柱状图（MACD - Signal）
+  prevMacd?: number;
+  prevSignal?: number;
+  prevHistogram?: number;
+}
+
 export interface Indicators {
   maShort: number;
   maLong: number;
   rsi: number;
   price: number;
+  volume: number;          // 当前 K 线成交量
+  avgVolume: number;       // 近期平均成交量
   prevMaShort?: number;
   prevMaLong?: number;
+  macd?: MacdResult;
 }
 
 export interface Signal {
@@ -43,6 +55,7 @@ export interface StrategyConfig {
     ma: { short: number; long: number };
     rsi: { period: number; oversold: number; overbought: number };
     macd: { enabled: boolean; fast: number; slow: number; signal: number };
+    volume?: { surge_ratio: number; low_ratio: number };
   };
   signals: {
     buy: string[];

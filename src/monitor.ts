@@ -89,7 +89,8 @@ async function scanSymbol(
       klines,
       cfg.strategy.ma.short,
       cfg.strategy.ma.long,
-      cfg.strategy.rsi.period
+      cfg.strategy.rsi.period,
+      cfg.strategy.macd
     );
 
     if (!indicators) {
@@ -101,10 +102,15 @@ async function scanSymbol(
     const signal = detectSignal(symbol, indicators, cfg);
     const trend = indicators.maShort > indicators.maLong ? "📈 多头" : "📉 空头";
 
+    const macdInfo = indicators.macd
+      ? ` MACD=${indicators.macd.macd.toFixed(2)}/${indicators.macd.signal.toFixed(2)}`
+      : "";
+    const volRatio = indicators.avgVolume > 0
+      ? (indicators.volume / indicators.avgVolume).toFixed(2) : "?";
     log(
       `${symbol}: 价格=${indicators.price.toFixed(4)}, ` +
       `MA短=${indicators.maShort.toFixed(4)}, MA长=${indicators.maLong.toFixed(4)}, ` +
-      `RSI=${indicators.rsi.toFixed(1)}, ${trend}, 信号=${signal.type}`
+      `RSI=${indicators.rsi.toFixed(1)},${macdInfo} 成交量=${volRatio}x, ${trend}, 信号=${signal.type}`
     );
 
     if (signal.type === "none") return;
