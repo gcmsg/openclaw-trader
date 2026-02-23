@@ -12,6 +12,7 @@ import { calculateIndicators } from "./strategy/indicators.js";
 import { detectSignal } from "./strategy/signals.js";
 import { notifySignal, notifyError, notifyPaperTrade, notifyStopLoss } from "./notify/openclaw.js";
 import { handleSignal, checkStopLoss, checkMaxDrawdown, formatSummaryMessage } from "./paper/engine.js";
+import { loadNewsReport, evaluateSentimentGate } from "./news/sentiment-gate.js";
 import type { StrategyConfig, Signal } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -115,13 +116,28 @@ async function scanSymbol(
 
     if (signal.type === "none") return;
 
+    // ── 新闻情绪门控 ──
+    const newsReport = loadNewsReport();
+    const gate = evaluateSentimentGate(signal, newsReport, cfg.risk.position_ratio);
+    log(`${symbol}: 情绪门控 → ${gate.action}（${gate.reason}）`);
+
+    if (gate.action === "skip") return;
+
     // ── 模拟盘模式 ──
     if (cfg.mode === "paper") {
       if (shouldNotify(state, signal, cfg.notify.min_interval_minutes)) {
-        const result = handleSignal(signal, cfg);
+        // 将门控结果的仓位比例传入引擎
+        const adjustedCfg = {
+          ...cfg,
+          risk: { ...cfg.risk, position_ratio: "positionRatio" in gate ? gate.positionRatio : cfg.risk.position_ratio },
+        };
+        const result = handleSignal(signal, adjustedCfg);
         if (result.trade) {
-          log(`${symbol}: 📝 模拟${result.trade.side === "buy" ? "买入" : "卖出"} @${result.trade.price}`);
+          log(`${symbol}: 📝 模拟${result.trade.side === "buy" ? "买入" : "卖出"} @${result.trade.price}（仓位 ${((("positionRatio" in gate ? gate.positionRatio : cfg.risk.position_ratio)) * 100).toFixed(0)}%）`);
           await notifyPaperTrade(result.trade, result.account);
+        }
+        if (gate.action === "warn") {
+          await notifyError(symbol, new Error(`⚠️ 情绪警告：${gate.reason}`)).catch(() => {});
         }
         state.lastSignals[symbol] = { type: signal.type, timestamp: Date.now() };
       }
