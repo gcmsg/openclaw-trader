@@ -1,0 +1,23 @@
+{
+  "name": "openclaw-trader",
+  "version": "0.1.0",
+  "description": "Automated crypto trading bot powered by OpenClaw AI",
+  "type": "module",
+  "scripts": {
+    "monitor": "tsx src/monitor.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/**/*.ts"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "yaml": "^2.4.0",
+    "technicalindicators": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  }
+}
