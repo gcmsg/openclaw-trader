@@ -12,9 +12,16 @@ const STATE_PATH = path.resolve(__dirname, "../../logs/paper-account.json");
 
 export interface PaperPosition {
   symbol: string;
-  quantity: number;       // 持仓数量
-  entryPrice: number;     // 买入均价
-  entryTime: number;      // 买入时间戳
+  quantity: number;
+  entryPrice: number;
+  entryTime: number;
+  stopLoss: number;          // 止损价格
+  takeProfit: number;        // 止盈价格
+  trailingStop?: {
+    active: boolean;
+    highestPrice: number;    // 持仓期间最高价
+    stopPrice: number;       // 当前追踪止损价
+  };
 }
 
 export interface PaperTrade {
@@ -22,42 +29,55 @@ export interface PaperTrade {
   symbol: string;
   side: "buy" | "sell";
   quantity: number;
-  price: number;
-  usdtAmount: number;     // 成交金额（含手续费）
-  fee: number;            // 手续费
+  price: number;             // 成交价（含滑点）
+  usdtAmount: number;
+  fee: number;
+  slippage: number;          // 滑点金额（USDT）
   timestamp: number;
-  reason: string;         // 触发原因（信号描述）
-  pnl?: number;           // 卖出时的盈亏（USDT）
-  pnlPercent?: number;    // 盈亏百分比
+  reason: string;
+  pnl?: number;
+  pnlPercent?: number;
 }
 
 export interface PaperAccount {
-  initialUsdt: number;    // 初始资金
-  usdt: number;           // 当前 USDT 余额
-  positions: Record<string, PaperPosition>;  // 当前持仓
-  trades: PaperTrade[];   // 全部历史交易
+  initialUsdt: number;
+  usdt: number;
+  positions: Record<string, PaperPosition>;
+  trades: PaperTrade[];
   createdAt: number;
   updatedAt: number;
+  // 每日亏损追踪
+  dailyLoss: {
+    date: string;            // YYYY-MM-DD
+    loss: number;            // 当日亏损 USDT（累计）
+  };
 }
-
-const FEE_RATE = 0.001; // 0.1% 手续费（模拟 VIP0）
 
 function generateId(): string {
   return `P${Date.now().toString(36).toUpperCase()}`;
 }
 
-export function loadAccount(): PaperAccount {
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function loadAccount(initialUsdt = 1000): PaperAccount {
   try {
-    return JSON.parse(fs.readFileSync(STATE_PATH, "utf-8")) as PaperAccount;
+    const account = JSON.parse(fs.readFileSync(STATE_PATH, "utf-8")) as PaperAccount;
+    // 补全旧版账户可能缺少的字段
+    if (!account.dailyLoss) {
+      account.dailyLoss = { date: todayStr(), loss: 0 };
+    }
+    return account;
   } catch {
-    // 初始化账户：默认 1000 USDT
     const account: PaperAccount = {
-      initialUsdt: 1000,
-      usdt: 1000,
+      initialUsdt,
+      usdt: initialUsdt,
       positions: {},
       trades: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      dailyLoss: { date: todayStr(), loss: 0 },
     };
     saveAccount(account);
     return account;
@@ -70,44 +90,68 @@ export function saveAccount(account: PaperAccount): void {
   fs.writeFileSync(STATE_PATH, JSON.stringify(account, null, 2));
 }
 
+/** 重置每日亏损计数（每日首次调用时自动触发） */
+export function resetDailyLossIfNeeded(account: PaperAccount): void {
+  const today = todayStr();
+  if (account.dailyLoss.date !== today) {
+    account.dailyLoss = { date: today, loss: 0 };
+  }
+}
+
 /**
  * 模拟买入
- * @param symbol 交易对（如 ETHUSDT）
- * @param price  当前价格
- * @param usdtAmount 投入 USDT 数量（undefined = 使用单笔仓位比例）
- * @param reason 买入原因
- * @param positionRatio 仓位比例（默认 0.2，即总资金 20%）
  */
 export function paperBuy(
   account: PaperAccount,
   symbol: string,
   price: number,
   reason: string,
-  positionRatio = 0.2
+  opts: {
+    positionRatio?: number;
+    feeRate?: number;
+    slippagePercent?: number;
+    minOrderUsdt?: number;
+    stopLossPercent?: number;
+    takeProfitPercent?: number;
+  } = {}
 ): PaperTrade | null {
-  // 已有持仓则不重复买入
-  if (account.positions[symbol]) {
-    return null;
-  }
+  const {
+    positionRatio = 0.2,
+    feeRate = 0.001,
+    slippagePercent = 0.05,
+    minOrderUsdt = 10,
+    stopLossPercent = 5,
+    takeProfitPercent = 15,
+  } = opts;
+
+  if (account.positions[symbol]) return null;
 
   const totalEquity = calcTotalEquity(account, { [symbol]: price });
   const usdtToSpend = totalEquity * positionRatio;
 
-  if (usdtToSpend < 1 || usdtToSpend > account.usdt) {
-    return null; // 余额不足或投入金额过小
-  }
+  if (usdtToSpend < minOrderUsdt || usdtToSpend > account.usdt) return null;
 
-  const fee = usdtToSpend * FEE_RATE;
-  const actualUsdt = usdtToSpend - fee;
-  const quantity = actualUsdt / price;
+  // 滑点：买入时成交价略高于当前价
+  const slippageAmount = (price * slippagePercent) / 100;
+  const execPrice = price + slippageAmount;
+  const slippageUsdt = (usdtToSpend * slippagePercent) / 100;
 
-  // 更新账户
+  const fee = usdtToSpend * feeRate;
+  const actualUsdt = usdtToSpend - fee - slippageUsdt;
+  const quantity = actualUsdt / execPrice;
+
+  // 计算止损/止盈价格
+  const stopLossPrice = execPrice * (1 - stopLossPercent / 100);
+  const takeProfitPrice = execPrice * (1 + takeProfitPercent / 100);
+
   account.usdt -= usdtToSpend;
   account.positions[symbol] = {
     symbol,
     quantity,
-    entryPrice: price,
+    entryPrice: execPrice,
     entryTime: Date.now(),
+    stopLoss: stopLossPrice,
+    takeProfit: takeProfitPrice,
   };
 
   const trade: PaperTrade = {
@@ -115,9 +159,10 @@ export function paperBuy(
     symbol,
     side: "buy",
     quantity,
-    price,
+    price: execPrice,
     usdtAmount: usdtToSpend,
     fee,
+    slippage: slippageUsdt,
     timestamp: Date.now(),
     reason,
   };
@@ -133,21 +178,35 @@ export function paperSell(
   account: PaperAccount,
   symbol: string,
   price: number,
-  reason: string
+  reason: string,
+  opts: {
+    feeRate?: number;
+    slippagePercent?: number;
+  } = {}
 ): PaperTrade | null {
+  const { feeRate = 0.001, slippagePercent = 0.05 } = opts;
+
   const position = account.positions[symbol];
   if (!position) return null;
 
-  const grossUsdt = position.quantity * price;
-  const fee = grossUsdt * FEE_RATE;
+  // 滑点：卖出时成交价略低于当前价
+  const slippageAmount = (price * slippagePercent) / 100;
+  const execPrice = price - slippageAmount;
+
+  const grossUsdt = position.quantity * execPrice;
+  const fee = grossUsdt * feeRate;
+  const slippageUsdt = position.quantity * slippageAmount;
   const netUsdt = grossUsdt - fee;
 
-  // 计算盈亏
   const costBasis = position.quantity * position.entryPrice;
   const pnl = netUsdt - costBasis;
   const pnlPercent = pnl / costBasis;
 
-  // 更新账户
+  // 更新每日亏损
+  if (pnl < 0) {
+    account.dailyLoss.loss += Math.abs(pnl);
+  }
+
   account.usdt += netUsdt;
   delete account.positions[symbol];
 
@@ -156,9 +215,10 @@ export function paperSell(
     symbol,
     side: "sell",
     quantity: position.quantity,
-    price,
+    price: execPrice,
     usdtAmount: netUsdt,
     fee,
+    slippage: slippageUsdt,
     timestamp: Date.now(),
     reason,
     pnl,
@@ -167,6 +227,50 @@ export function paperSell(
 
   account.trades.push(trade);
   return trade;
+}
+
+/**
+ * 更新追踪止损价格（每次价格更新时调用）
+ * @returns 是否需要触发止损平仓
+ */
+export function updateTrailingStop(
+  position: PaperPosition,
+  currentPrice: number,
+  opts: { activationPercent: number; callbackPercent: number }
+): boolean {
+  const { activationPercent, callbackPercent } = opts;
+
+  if (!position.trailingStop) {
+    position.trailingStop = {
+      active: false,
+      highestPrice: position.entryPrice,
+      stopPrice: 0,
+    };
+  }
+
+  const ts = position.trailingStop;
+
+  // 更新最高价
+  if (currentPrice > ts.highestPrice) {
+    ts.highestPrice = currentPrice;
+  }
+
+  // 检查是否达到启动阈值
+  const gainPercent = ((ts.highestPrice - position.entryPrice) / position.entryPrice) * 100;
+  if (!ts.active && gainPercent >= activationPercent) {
+    ts.active = true;
+  }
+
+  // 追踪止损激活后更新止损价
+  if (ts.active) {
+    ts.stopPrice = ts.highestPrice * (1 - callbackPercent / 100);
+    // 当前价跌破止损价，触发平仓
+    if (currentPrice <= ts.stopPrice) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -185,7 +289,7 @@ export function calcTotalEquity(
 }
 
 /**
- * 账户摘要（用于展示）
+ * 账户摘要
  */
 export function getAccountSummary(
   account: PaperAccount,
@@ -202,9 +306,12 @@ export function getAccountSummary(
     currentPrice: number;
     unrealizedPnl: number;
     unrealizedPnlPercent: number;
+    stopLoss: number;
+    takeProfit: number;
   }>;
   tradeCount: number;
   winRate: number;
+  dailyLoss: number;
 } {
   const totalEquity = calcTotalEquity(account, prices);
   const totalPnl = totalEquity - account.initialUsdt;
@@ -222,10 +329,11 @@ export function getAccountSummary(
       currentPrice,
       unrealizedPnl,
       unrealizedPnlPercent: unrealizedPnl / costBasis,
+      stopLoss: pos.stopLoss,
+      takeProfit: pos.takeProfit,
     };
   });
 
-  // 胜率：已完成交易中盈利笔数
   const closedTrades = account.trades.filter((t) => t.side === "sell" && t.pnl !== undefined);
   const winners = closedTrades.filter((t) => (t.pnl ?? 0) > 0).length;
   const winRate = closedTrades.length > 0 ? winners / closedTrades.length : 0;
@@ -238,5 +346,6 @@ export function getAccountSummary(
     positions,
     tradeCount: account.trades.length,
     winRate,
+    dailyLoss: account.dailyLoss.loss,
   };
 }

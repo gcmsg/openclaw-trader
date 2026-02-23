@@ -11,7 +11,7 @@ import { getKlines } from "./exchange/binance.js";
 import { calculateIndicators } from "./strategy/indicators.js";
 import { detectSignal } from "./strategy/signals.js";
 import { notifySignal, notifyError, notifyPaperTrade, notifyStopLoss } from "./notify/openclaw.js";
-import { handleSignal, checkStopLoss, checkMaxDrawdown, formatSummaryMessage } from "./paper/engine.js";
+import { handleSignal, checkExitConditions, checkMaxDrawdown, checkDailyLossLimit, formatSummaryMessage } from "./paper/engine.js";
 import { loadNewsReport, evaluateSentimentGate } from "./news/sentiment-gate.js";
 import { ping } from "./health/heartbeat.js";
 import type { StrategyConfig, Signal } from "./types.js";
@@ -128,13 +128,17 @@ async function scanSymbol(
     if (cfg.mode === "paper") {
       if (shouldNotify(state, signal, cfg.notify.min_interval_minutes)) {
         // 将门控结果的仓位比例传入引擎
+        const effectiveRatio = "positionRatio" in gate ? gate.positionRatio : cfg.risk.position_ratio;
         const adjustedCfg = {
           ...cfg,
-          risk: { ...cfg.risk, position_ratio: "positionRatio" in gate ? gate.positionRatio : cfg.risk.position_ratio },
+          risk: { ...cfg.risk, position_ratio: effectiveRatio },
         };
         const result = handleSignal(signal, adjustedCfg);
+        if (result.skipped) {
+          log(`${symbol}: ⏭️ 跳过 — ${result.skipped}`);
+        }
         if (result.trade) {
-          log(`${symbol}: 📝 模拟${result.trade.side === "buy" ? "买入" : "卖出"} @${result.trade.price}（仓位 ${((("positionRatio" in gate ? gate.positionRatio : cfg.risk.position_ratio)) * 100).toFixed(0)}%）`);
+          log(`${symbol}: 📝 模拟${result.trade.side === "buy" ? "买入" : "卖出"} @${result.trade.price.toFixed(4)}（仓位 ${(effectiveRatio * 100).toFixed(0)}%）`);
           await notifyPaperTrade(result.trade, result.account);
         }
         if (gate.action === "warn") {
@@ -194,12 +198,22 @@ async function main(): Promise<void> {
     await Promise.all(batch.map((sym) => scanSymbol(sym, cfg, state, currentPrices)));
   }
 
-  // 止损检查（paper 模式）
+  // 止损/止盈/追踪止损检查（paper 模式）
   if (cfg.mode === "paper" && Object.keys(currentPrices).length > 0) {
-    const stopped = checkStopLoss(currentPrices, cfg);
-    for (const { symbol, trade, loss } of stopped) {
-      log(`${symbol}: 🚨 止损触发（亏损 ${(loss * 100).toFixed(2)}%）`);
-      await notifyStopLoss(symbol, trade.price / (1 + loss), trade.price, loss);
+    const exits = checkExitConditions(currentPrices, cfg);
+    for (const { symbol, trade, reason, pnlPercent } of exits) {
+      const emoji = reason === "take_profit" ? "🎯" : "🚨";
+      log(`${symbol}: ${emoji} ${reason === "take_profit" ? "止盈" : reason === "trailing_stop" ? "追踪止损" : "止损"}触发（${pnlPercent.toFixed(2)}%）`);
+      if (reason === "stop_loss" || reason === "trailing_stop") {
+        await notifyStopLoss(symbol, trade.price / (1 + pnlPercent / 100), trade.price, pnlPercent / 100);
+      } else if (cfg.notify.on_take_profit) {
+        await notifySignal({ symbol, type: "sell", price: trade.price, indicators: {} as never, reason: [`止盈: +${pnlPercent.toFixed(2)}%`], timestamp: Date.now() }).catch(() => {});
+      }
+    }
+
+    // 每日亏损限制检查
+    if (checkDailyLossLimit(currentPrices, cfg)) {
+      log(`⚠️ 今日亏损已达 ${cfg.risk.daily_loss_limit_percent}%，暂停当日开仓`);
     }
 
     // 总亏损暂停检查
@@ -215,7 +229,7 @@ async function main(): Promise<void> {
     const intervalMs = cfg.paper.report_interval_hours * 60 * 60 * 1000;
     if (Date.now() - state.lastReportAt >= intervalMs) {
       log("📊 发送定期账户汇报");
-      const msg = formatSummaryMessage(currentPrices);
+      const msg = formatSummaryMessage(currentPrices, cfg);
       const { spawnSync } = await import("child_process");
       const OPENCLAW_BIN = process.env.OPENCLAW_BIN ?? "openclaw";
       const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ?? "";

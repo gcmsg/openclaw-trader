@@ -21,21 +21,32 @@ function makeKlines(closes: number[], volumes?: number[]) {
 
 function makeConfig(buy: string[], sell: string[]): StrategyConfig {
   return {
+    exchange: {
+      name: "binance", credentials_path: ".secrets/binance.json", market: "spot",
+      futures: { contract_type: "perpetual", margin_mode: "isolated" },
+      leverage: { enabled: false, default: 1, max: 3 },
+    },
     symbols: [],
     timeframe: "1h",
     strategy: {
-      name: "test",
-      enabled: true,
+      name: "test", enabled: true,
       ma: { short: 20, long: 60 },
       rsi: { period: 14, oversold: 35, overbought: 65 },
       macd: { enabled: true, fast: 12, slow: 26, signal: 9 },
       volume: { surge_ratio: 1.5, low_ratio: 0.5 },
     },
     signals: { buy, sell },
-    risk: { stop_loss_percent: 5, take_profit_percent: 10, max_total_loss_percent: 20, position_ratio: 0.2 },
-    notify: { on_signal: true, on_trade: true, on_stop_loss: true, on_error: true, min_interval_minutes: 30 },
-    paper: { initial_usdt: 1000, report_interval_hours: 24 },
+    risk: {
+      stop_loss_percent: 5, take_profit_percent: 10,
+      trailing_stop: { enabled: false, activation_percent: 5, callback_percent: 2 },
+      max_total_loss_percent: 20, position_ratio: 0.2,
+      max_positions: 4, max_position_per_symbol: 0.3, daily_loss_limit_percent: 8,
+    },
+    execution: { order_type: "market", limit_order_offset_percent: 0.1, min_order_usdt: 10, limit_order_timeout_seconds: 300 },
+    notify: { on_signal: true, on_trade: true, on_stop_loss: true, on_take_profit: true, on_error: true, on_daily_summary: true, min_interval_minutes: 30 },
+    paper: { initial_usdt: 1000, fee_rate: 0.001, slippage_percent: 0, report_interval_hours: 24 },
     news: { enabled: true, interval_hours: 4, price_alert_threshold: 5, fear_greed_alert: 15 },
+    schedule: {},
     mode: "paper",
   };
 }

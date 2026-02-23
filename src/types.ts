@@ -5,6 +5,10 @@
 export type SignalType = "buy" | "sell" | "none";
 export type TradeMode = "notify_only" | "paper" | "auto";
 export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
+export type MarketType = "spot" | "margin" | "futures";
+export type ContractType = "perpetual" | "quarterly";
+export type MarginMode = "isolated" | "cross";
+export type OrderType = "market" | "limit";
 
 export interface Kline {
   openTime: number;
@@ -17,9 +21,9 @@ export interface Kline {
 }
 
 export interface MacdResult {
-  macd: number;       // MACD 线（快线 - 慢线）
-  signal: number;     // 信号线（MACD 的 EMA）
-  histogram: number;  // 柱状图（MACD - Signal）
+  macd: number;
+  signal: number;
+  histogram: number;
   prevMacd?: number;
   prevSignal?: number;
   prevHistogram?: number;
@@ -30,8 +34,8 @@ export interface Indicators {
   maLong: number;
   rsi: number;
   price: number;
-  volume: number;          // 当前 K 线成交量
-  avgVolume: number;       // 近期平均成交量
+  volume: number;
+  avgVolume: number;
   prevMaShort?: number;
   prevMaLong?: number;
   macd?: MacdResult;
@@ -46,7 +50,66 @@ export interface Signal {
   timestamp: number;
 }
 
+// ─────────────────────────────────────────────────────
+// Config Sections
+// ─────────────────────────────────────────────────────
+
+export interface ExchangeConfig {
+  name: string;
+  credentials_path: string;
+  market: MarketType;
+  futures: {
+    contract_type: ContractType;
+    margin_mode: MarginMode;
+  };
+  leverage: {
+    enabled: boolean;
+    default: number;
+    max: number;
+  };
+}
+
+export interface RiskConfig {
+  stop_loss_percent: number;
+  take_profit_percent: number;
+  trailing_stop: {
+    enabled: boolean;
+    activation_percent: number;  // 盈利达到此值后启动追踪
+    callback_percent: number;    // 回撤超过此值触发止损
+  };
+  position_ratio: number;
+  max_positions: number;
+  max_position_per_symbol: number;
+  max_total_loss_percent: number;
+  daily_loss_limit_percent: number;
+}
+
+export interface ExecutionConfig {
+  order_type: OrderType;
+  limit_order_offset_percent: number;
+  min_order_usdt: number;
+  limit_order_timeout_seconds: number;
+}
+
+export interface NotifyConfig {
+  on_signal: boolean;
+  on_trade: boolean;
+  on_stop_loss: boolean;
+  on_take_profit: boolean;
+  on_error: boolean;
+  on_daily_summary: boolean;
+  min_interval_minutes: number;
+}
+
+export interface PaperConfig {
+  initial_usdt: number;
+  fee_rate: number;
+  slippage_percent: number;
+  report_interval_hours: number;
+}
+
 export interface StrategyConfig {
+  exchange: ExchangeConfig;
   symbols: string[];
   timeframe: Timeframe;
   strategy: {
@@ -61,23 +124,10 @@ export interface StrategyConfig {
     buy: string[];
     sell: string[];
   };
-  risk: {
-    stop_loss_percent: number;      // 单笔止损百分比（如 5 = 5%）
-    take_profit_percent: number;    // 单笔止盈百分比
-    max_total_loss_percent: number; // 总亏损上限百分比（如 20 = 20%）
-    position_ratio: number;         // 单笔仓位比例（如 0.2 = 20%）
-  };
-  notify: {
-    on_signal: boolean;
-    on_trade: boolean;
-    on_stop_loss: boolean;
-    on_error: boolean;
-    min_interval_minutes: number;
-  };
-  paper: {
-    initial_usdt: number;
-    report_interval_hours: number;
-  };
+  risk: RiskConfig;
+  execution: ExecutionConfig;
+  notify: NotifyConfig;
+  paper: PaperConfig;
   news: {
     enabled: boolean;
     interval_hours: number;
@@ -94,6 +144,10 @@ export interface StrategyConfig {
   mode: TradeMode;
 }
 
+// ─────────────────────────────────────────────────────
+// Trading Entities
+// ─────────────────────────────────────────────────────
+
 export interface Position {
   symbol: string;
   side: "long" | "short";
@@ -102,6 +156,11 @@ export interface Position {
   entryTime: number;
   stopLoss: number;
   takeProfit: number;
+  trailingStop?: {
+    active: boolean;
+    highestPrice: number;  // 持仓期间最高价（用于追踪止损）
+    stopPrice: number;     // 当前追踪止损价
+  };
 }
 
 export interface TradeResult {
@@ -112,5 +171,7 @@ export interface TradeResult {
   orderId: string;
   timestamp: number;
   status: "filled" | "failed";
+  fee?: number;        // 实际手续费（USDT）
+  slippage?: number;   // 实际滑点（%）
   error?: string;
 }
