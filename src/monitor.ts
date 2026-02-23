@@ -10,7 +10,8 @@ import { fileURLToPath } from "url";
 import { getKlines } from "./exchange/binance.js";
 import { calculateIndicators } from "./strategy/indicators.js";
 import { detectSignal } from "./strategy/signals.js";
-import { notifySignal, notifyError } from "./notify/openclaw.js";
+import { notifySignal, notifyError, notifyPaperTrade, notifyStopLoss } from "./notify/openclaw.js";
+import { handleSignal, checkStopLoss, checkMaxDrawdown, formatSummaryMessage } from "./paper/engine.js";
 import type { StrategyConfig, Signal } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -35,13 +36,15 @@ function loadConfig(): StrategyConfig {
 
 interface MonitorState {
   lastSignals: Record<string, { type: string; timestamp: number }>;
+  lastReportAt: number;
+  paused: boolean;
 }
 
 function loadState(): MonitorState {
   try {
     return JSON.parse(fs.readFileSync(STATE_PATH, "utf-8")) as MonitorState;
   } catch {
-    return { lastSignals: {} };
+    return { lastSignals: {}, lastReportAt: 0, paused: false };
   }
 }
 
@@ -50,7 +53,6 @@ function saveState(state: MonitorState): void {
   fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 }
 
-/** 判断是否应该发送通知（防止同一币种重复刷屏） */
 function shouldNotify(
   state: MonitorState,
   signal: Signal,
@@ -59,27 +61,27 @@ function shouldNotify(
   const key = signal.symbol;
   const last = state.lastSignals[key];
   if (!last) return true;
-  if (last.type !== signal.type) return true; // 方向变了，一定通知
+  if (last.type !== signal.type) return true;
   const elapsed = (Date.now() - last.timestamp) / 1000 / 60;
   return elapsed >= minIntervalMinutes;
 }
 
 // ─────────────────────────────────────────────────────
-// 主逻辑
+// 扫描单个币种
 // ─────────────────────────────────────────────────────
 
 async function scanSymbol(
   symbol: string,
   cfg: StrategyConfig,
-  state: MonitorState
+  state: MonitorState,
+  currentPrices: Record<string, number>
 ): Promise<void> {
   try {
-    // 获取足够多的 K 线以计算指标
     const limit = Math.max(cfg.strategy.ma.long, cfg.strategy.rsi.period) + 10;
     const klines = await getKlines(symbol, cfg.timeframe, limit + 1);
 
     if (klines.length < limit) {
-      log(`${symbol}: K线数据不足（${klines.length}/${limit}）`);
+      log(`${symbol}: K线不足（${klines.length}/${limit}）`);
       return;
     }
 
@@ -95,30 +97,37 @@ async function scanSymbol(
       return;
     }
 
+    currentPrices[symbol] = indicators.price;
     const signal = detectSignal(symbol, indicators, cfg);
-    const trend =
-      indicators.maShort > indicators.maLong ? "📈 多头" : "📉 空头";
+    const trend = indicators.maShort > indicators.maLong ? "📈 多头" : "📉 空头";
 
     log(
       `${symbol}: 价格=${indicators.price.toFixed(4)}, ` +
-        `MA短=${indicators.maShort.toFixed(4)}, ` +
-        `MA长=${indicators.maLong.toFixed(4)}, ` +
-        `RSI=${indicators.rsi.toFixed(1)}, ` +
-        `${trend}, 信号=${signal.type}`
+      `MA短=${indicators.maShort.toFixed(4)}, MA长=${indicators.maLong.toFixed(4)}, ` +
+      `RSI=${indicators.rsi.toFixed(1)}, ${trend}, 信号=${signal.type}`
     );
 
-    if (signal.type !== "none" && cfg.notify.on_signal) {
-      if (shouldNotify(state, signal, cfg.notify.min_interval_minutes)) {
-        log(`${symbol}: 🚀 发送${signal.type === "buy" ? "买入" : "卖出"}信号通知`);
-        await notifySignal(signal);
+    if (signal.type === "none") return;
 
-        // 更新状态
-        state.lastSignals[signal.symbol] = {
-          type: signal.type,
-          timestamp: Date.now(),
-        };
-      } else {
-        log(`${symbol}: 信号已发送过，跳过（防刷屏）`);
+    // ── 模拟盘模式 ──
+    if (cfg.mode === "paper") {
+      if (shouldNotify(state, signal, cfg.notify.min_interval_minutes)) {
+        const result = handleSignal(signal, cfg);
+        if (result.trade) {
+          log(`${symbol}: 📝 模拟${result.trade.side === "buy" ? "买入" : "卖出"} @${result.trade.price}`);
+          await notifyPaperTrade(result.trade, result.account);
+        }
+        state.lastSignals[symbol] = { type: signal.type, timestamp: Date.now() };
+      }
+      return;
+    }
+
+    // ── notify_only 模式 ──
+    if (cfg.mode === "notify_only" && cfg.notify.on_signal) {
+      if (shouldNotify(state, signal, cfg.notify.min_interval_minutes)) {
+        log(`${symbol}: 🔔 发送信号通知`);
+        await notifySignal(signal);
+        state.lastSignals[symbol] = { type: signal.type, timestamp: Date.now() };
       }
     }
   } catch (err) {
@@ -130,6 +139,10 @@ async function scanSymbol(
   }
 }
 
+// ─────────────────────────────────────────────────────
+// 主逻辑
+// ─────────────────────────────────────────────────────
+
 async function main(): Promise<void> {
   log("─── 监控扫描开始 ───");
 
@@ -137,18 +150,62 @@ async function main(): Promise<void> {
   const state = loadState();
 
   if (!cfg.strategy.enabled) {
-    log("策略已禁用，跳过扫描");
+    log("策略已禁用");
     return;
   }
 
-  log(`监控币种: ${cfg.symbols.join(", ")}`);
-  log(`时间框架: ${cfg.timeframe} | 策略: ${cfg.strategy.name} | 模式: ${cfg.mode}`);
+  if (state.paused) {
+    log("⚠️ 策略已暂停（触发最大亏损上限）");
+    return;
+  }
 
-  // 并发扫描所有币种（带并发限制）
-  const CONCURRENT = 3;
-  for (let i = 0; i < cfg.symbols.length; i += CONCURRENT) {
-    const batch = cfg.symbols.slice(i, i + CONCURRENT);
-    await Promise.all(batch.map((symbol) => scanSymbol(symbol, cfg, state)));
+  log(`模式: ${cfg.mode} | 币种: ${cfg.symbols.join(", ")}`);
+
+  const currentPrices: Record<string, number> = {};
+
+  // 并发扫描（批次控制并发）
+  const BATCH = 3;
+  for (let i = 0; i < cfg.symbols.length; i += BATCH) {
+    const batch = cfg.symbols.slice(i, i + BATCH);
+    await Promise.all(batch.map((sym) => scanSymbol(sym, cfg, state, currentPrices)));
+  }
+
+  // 止损检查（paper 模式）
+  if (cfg.mode === "paper" && Object.keys(currentPrices).length > 0) {
+    const stopped = checkStopLoss(currentPrices, cfg);
+    for (const { symbol, trade, loss } of stopped) {
+      log(`${symbol}: 🚨 止损触发（亏损 ${(loss * 100).toFixed(2)}%）`);
+      await notifyStopLoss(symbol, trade.price / (1 + loss), trade.price, loss);
+    }
+
+    // 总亏损暂停检查
+    if (checkMaxDrawdown(currentPrices, cfg)) {
+      log("🚨 总亏损超过上限，策略已暂停！");
+      state.paused = true;
+      await notifyError("风控系统", new Error(
+        `总亏损超过 ${cfg.risk.max_total_loss_percent}% 上限，模拟盘策略已自动暂停。请检查账户状态。`
+      ));
+    }
+
+    // 定期汇报（根据 paper.report_interval_hours）
+    const intervalMs = cfg.paper.report_interval_hours * 60 * 60 * 1000;
+    if (Date.now() - state.lastReportAt >= intervalMs) {
+      log("📊 发送定期账户汇报");
+      const msg = formatSummaryMessage(currentPrices);
+      const { execSync } = await import("child_process");
+      const OPENCLAW_BIN = process.env.OPENCLAW_BIN ?? "openclaw";
+      const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
+      const tokenFlag = GATEWAY_TOKEN ? `--token ${GATEWAY_TOKEN}` : "";
+      try {
+        execSync(
+          `${OPENCLAW_BIN} system event --mode now ${tokenFlag} --text ${JSON.stringify(msg)}`,
+          { stdio: "pipe", timeout: 15000 }
+        );
+      } catch (e) {
+        log(`汇报发送失败: ${(e as Error).message}`);
+      }
+      state.lastReportAt = Date.now();
+    }
   }
 
   saveState(state);
@@ -156,6 +213,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("Fatal error:", err);
+  console.error("Fatal:", err);
   process.exit(1);
 });

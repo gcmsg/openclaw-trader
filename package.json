@@ -6,6 +6,7 @@
   "scripts": {
     "monitor": "tsx src/monitor.ts",
     "news": "tsx src/news/monitor.ts",
+    "paper:status": "tsx src/paper/status.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/**/*.ts"

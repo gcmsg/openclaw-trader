@@ -105,6 +105,34 @@ export async function notifyError(context: string, error: Error): Promise<void> 
   await sendToAgent(msg);
 }
 
+/** 模拟盘交易通知 */
+export async function notifyPaperTrade(
+  trade: import("../paper/account.js").PaperTrade,
+  account: import("../paper/account.js").PaperAccount
+): Promise<void> {
+  const side = trade.side === "buy" ? "买入" : "卖出";
+  const emoji = trade.side === "buy" ? "🟢" : "🔴";
+  const pnlLine =
+    trade.pnl !== undefined
+      ? `💰 本笔盈亏: ${trade.pnl >= 0 ? "+" : ""}$${trade.pnl.toFixed(2)} (${trade.pnl >= 0 ? "+" : ""}${((trade.pnlPercent ?? 0) * 100).toFixed(2)}%)`
+      : "";
+
+  const msg = [
+    `${emoji} **[模拟盘] ${trade.symbol} ${side}**`,
+    ``,
+    `💲 成交价: $${trade.price.toFixed(4)}`,
+    `📦 数量: ${trade.quantity.toFixed(6)}`,
+    `💵 金额: $${trade.usdtAmount.toFixed(2)}（含手续费 $${trade.fee.toFixed(3)}）`,
+    pnlLine,
+    `📋 原因: ${trade.reason}`,
+    ``,
+    `💼 当前余额: $${account.usdt.toFixed(2)} USDT`,
+    `🔖 订单号: ${trade.id}`,
+  ].filter(Boolean).join("\n");
+
+  await sendToAgent(msg);
+}
+
 /** 新闻情绪分析报告 */
 export async function sendNewsReport(data: {
   fearGreed: { value: number; label: string };
