@@ -153,9 +153,11 @@ logs/
 - [x] Paper trading mode with real prices
 - [x] News & sentiment analysis (every 4h)
 - [x] Risk management (stop-loss, max drawdown)
-- [x] 70 unit tests
+- [x] MACD + volume indicators & signals
+- [x] News sentiment gate (position sizing by sentiment)
+- [x] Weekly review report (AI-powered, every Sunday 22:00)
+- [x] 104 unit tests
 - [ ] Backtesting module
-- [ ] MACD indicator support
 - [ ] Live trading mode (`mode: auto`)
 - [ ] Web dashboard
 
@@ -244,8 +246,10 @@ npm test
 - [x] 模拟盘（使用真实价格）
 - [x] 新闻情绪分析（每 4 小时）
 - [x] 风险管理（止损 / 最大回撤）
-- [x] 70 条单元测试
+- [x] MACD + 成交量指标与信号
+- [x] 新闻情绪门控（仓位随情绪动态调整）
+- [x] 周报复盘功能（AI 深度分析，每周日 22:00）
+- [x] 104 条单元测试
 - [ ] 回测模块
-- [ ] MACD 指标支持
 - [ ] 实盘自动交易（`mode: auto`）
 - [ ] Web 可视化面板

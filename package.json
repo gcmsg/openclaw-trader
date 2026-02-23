@@ -7,6 +7,7 @@
     "monitor": "tsx src/monitor.ts",
     "news": "tsx src/news/monitor.ts",
     "paper:status": "tsx src/paper/status.ts",
+    "report:weekly": "tsx src/report/weekly.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/**/*.ts"
