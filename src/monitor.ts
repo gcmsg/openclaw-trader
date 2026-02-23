@@ -214,15 +214,14 @@ async function main(): Promise<void> {
     if (Date.now() - state.lastReportAt >= intervalMs) {
       log("📊 发送定期账户汇报");
       const msg = formatSummaryMessage(currentPrices);
-      const { execSync } = await import("child_process");
+      const { spawnSync } = await import("child_process");
       const OPENCLAW_BIN = process.env.OPENCLAW_BIN ?? "openclaw";
       const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
-      const tokenFlag = GATEWAY_TOKEN ? `--token ${GATEWAY_TOKEN}` : "";
       try {
-        execSync(
-          `${OPENCLAW_BIN} system event --mode now ${tokenFlag} --text ${JSON.stringify(msg)}`,
-          { stdio: "pipe", timeout: 15000 }
-        );
+        const args = ["system", "event", "--mode", "now"];
+        if (GATEWAY_TOKEN) args.push("--token", GATEWAY_TOKEN);
+        args.push("--text", msg);
+        spawnSync(OPENCLAW_BIN, args, { encoding: "utf-8", timeout: 15000 });
       } catch (e) {
         log(`汇报发送失败: ${(e as Error).message}`);
       }

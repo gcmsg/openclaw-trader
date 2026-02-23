@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { spawnSync } from "child_process";
 import type { Signal, TradeResult } from "../types.js";
 
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN ?? "openclaw";
@@ -7,11 +7,14 @@ const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
 /** 向 OpenClaw 主会话注入系统事件，触发 Mia 决策 */
 async function sendToAgent(message: string): Promise<void> {
   try {
-    const tokenFlag = GATEWAY_TOKEN ? `--token ${GATEWAY_TOKEN}` : "";
-    execSync(
-      `${OPENCLAW_BIN} system event --mode now ${tokenFlag} --text ${JSON.stringify(message)}`,
-      { stdio: "pipe", timeout: 15000 }
-    );
+    // 用参数数组避免 shell 解析 $ 符号
+    const args = ["system", "event", "--mode", "now"];
+    if (GATEWAY_TOKEN) args.push("--token", GATEWAY_TOKEN);
+    args.push("--text", message);
+    const result = spawnSync(OPENCLAW_BIN, args, { encoding: "utf-8", timeout: 15000 });
+    if (result.status !== 0 && result.stderr) {
+      console.error("sendToAgent failed:", result.stderr.slice(0, 200));
+    }
   } catch (err) {
     console.error("sendToAgent failed:", (err as Error).message);
   }

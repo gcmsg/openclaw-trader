@@ -220,11 +220,17 @@ export async function sendWeeklyReportToAgent(report: WeeklyReport): Promise<voi
   const tokenFlag = GATEWAY_TOKEN ? `--token ${GATEWAY_TOKEN}` : "";
 
   try {
-    execSync(
-      `${OPENCLAW_BIN} system event --mode now ${tokenFlag} --text ${JSON.stringify(message)}`,
-      { stdio: "pipe", timeout: 15000 }
-    );
-    log("✅ 周报已发送给 AI Agent");
+    // 用 spawnSync 传递参数数组，避免 shell 解析 $ 符号
+    const { spawnSync } = await import("child_process");
+    const args = ["system", "event", "--mode", "now"];
+    if (GATEWAY_TOKEN) args.push("--token", GATEWAY_TOKEN);
+    args.push("--text", message);
+    const result = spawnSync(OPENCLAW_BIN, args, { encoding: "utf-8", timeout: 15000 });
+    if (result.status !== 0) {
+      log(`❌ 发送失败: ${result.stderr}`);
+    } else {
+      log("✅ 周报已发送给 AI Agent");
+    }
   } catch (err) {
     log(`❌ 发送失败: ${(err as Error).message}`);
   }
