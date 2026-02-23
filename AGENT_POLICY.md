@@ -28,6 +28,7 @@
 
 ### 文档
 - 更新 README（中英双语同步更新）
+- 更新 skill/（SKILL.md + references/）与 README 同等级别实时同步
 - 更新代码注释
 
 ---
