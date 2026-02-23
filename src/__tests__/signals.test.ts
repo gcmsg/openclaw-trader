@@ -27,11 +27,6 @@ function makeConfig(
   rsiOverbought = 65
 ): StrategyConfig {
   return {
-    exchange: {
-      name: "binance", credentials_path: ".secrets/binance.json", market: "spot",
-      futures: { contract_type: "perpetual", margin_mode: "isolated" },
-      leverage: { enabled: false, default: 1, max: 3 },
-    },
     symbols: ["BTCUSDT"],
     timeframe: "1h",
     strategy: {
@@ -53,7 +48,6 @@ function makeConfig(
       on_take_profit: true, on_error: true, on_daily_summary: true,
       min_interval_minutes: 30,
     },
-    paper: { initial_usdt: 1000, fee_rate: 0.001, slippage_percent: 0, report_interval_hours: 24 },
     news: { enabled: true, interval_hours: 4, price_alert_threshold: 5, fear_greed_alert: 15 },
     schedule: {},
     mode: "paper",

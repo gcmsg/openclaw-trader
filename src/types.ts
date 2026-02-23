@@ -10,6 +10,10 @@ export type ContractType = "perpetual" | "quarterly";
 export type MarginMode = "isolated" | "cross";
 export type OrderType = "market" | "limit";
 
+// ─────────────────────────────────────────────────────
+// Market / Candle Data
+// ─────────────────────────────────────────────────────
+
 export interface Kline {
   openTime: number;
   open: number;
@@ -51,31 +55,16 @@ export interface Signal {
 }
 
 // ─────────────────────────────────────────────────────
-// Config Sections
+// Shared Config Sections (strategy.yaml)
 // ─────────────────────────────────────────────────────
-
-export interface ExchangeConfig {
-  name: string;
-  credentials_path: string;
-  market: MarketType;
-  futures: {
-    contract_type: ContractType;
-    margin_mode: MarginMode;
-  };
-  leverage: {
-    enabled: boolean;
-    default: number;
-    max: number;
-  };
-}
 
 export interface RiskConfig {
   stop_loss_percent: number;
   take_profit_percent: number;
   trailing_stop: {
     enabled: boolean;
-    activation_percent: number;  // 盈利达到此值后启动追踪
-    callback_percent: number;    // 回撤超过此值触发止损
+    activation_percent: number;
+    callback_percent: number;
   };
   position_ratio: number;
   max_positions: number;
@@ -101,15 +90,8 @@ export interface NotifyConfig {
   min_interval_minutes: number;
 }
 
-export interface PaperConfig {
-  initial_usdt: number;
-  fee_rate: number;
-  slippage_percent: number;
-  report_interval_hours: number;
-}
-
+/** strategy.yaml — 纯策略配置，不含交易所/市场信息 */
 export interface StrategyConfig {
-  exchange: ExchangeConfig;
   symbols: string[];
   timeframe: Timeframe;
   strategy: {
@@ -127,7 +109,6 @@ export interface StrategyConfig {
   risk: RiskConfig;
   execution: ExecutionConfig;
   notify: NotifyConfig;
-  paper: PaperConfig;
   news: {
     enabled: boolean;
     interval_hours: number;
@@ -145,6 +126,80 @@ export interface StrategyConfig {
 }
 
 // ─────────────────────────────────────────────────────
+// Exchange Config (shared between paper scenarios & live)
+// ─────────────────────────────────────────────────────
+
+export interface ExchangeConfig {
+  name?: string;                // 默认 "binance"
+  credentials_path?: string;
+  market: MarketType;
+  futures?: {
+    contract_type: ContractType;
+    margin_mode: MarginMode;
+  };
+  leverage?: {
+    enabled: boolean;
+    default: number;
+    max: number;
+  };
+}
+
+// ─────────────────────────────────────────────────────
+// Paper Trading Config (paper.yaml)
+// ─────────────────────────────────────────────────────
+
+export interface PaperScenario {
+  id: string;                   // 唯一标识，用于账户状态文件名
+  name: string;                 // 展示名称
+  enabled: boolean;
+  initial_usdt: number;
+  fee_rate: number;
+  slippage_percent: number;
+  exchange: ExchangeConfig;
+  leverage?: {                  // 顶层 leverage（优先于 exchange.leverage）
+    enabled: boolean;
+    default: number;
+    max: number;
+  };
+  symbols?: string[];           // 覆盖全局 symbols（不填则继承）
+  risk?: Partial<RiskConfig>;   // 覆盖全局 risk（不填则继承）
+}
+
+export interface PaperFileConfig {
+  report_interval_hours: number;
+  scenarios: PaperScenario[];
+}
+
+// ─────────────────────────────────────────────────────
+// Live Trading Config (live.yaml)
+// ─────────────────────────────────────────────────────
+
+export interface LiveConfig {
+  exchange: ExchangeConfig & {
+    name: string;
+    credentials_path: string;
+  };
+  symbols?: string[];
+  risk?: Partial<RiskConfig>;
+}
+
+// ─────────────────────────────────────────────────────
+// Merged runtime config (strategy.yaml + paper/live scenario)
+// ─────────────────────────────────────────────────────
+
+/** monitor.ts 和 engine.ts 实际使用的合并配置 */
+export interface RuntimeConfig extends StrategyConfig {
+  exchange: ExchangeConfig;
+  paper: {
+    scenarioId: string;
+    initial_usdt: number;
+    fee_rate: number;
+    slippage_percent: number;
+    report_interval_hours: number;
+  };
+}
+
+// ─────────────────────────────────────────────────────
 // Trading Entities
 // ─────────────────────────────────────────────────────
 
@@ -158,8 +213,8 @@ export interface Position {
   takeProfit: number;
   trailingStop?: {
     active: boolean;
-    highestPrice: number;  // 持仓期间最高价（用于追踪止损）
-    stopPrice: number;     // 当前追踪止损价
+    highestPrice: number;
+    stopPrice: number;
   };
 }
 
@@ -171,7 +226,7 @@ export interface TradeResult {
   orderId: string;
   timestamp: number;
   status: "filled" | "failed";
-  fee?: number;        // 实际手续费（USDT）
-  slippage?: number;   // 实际滑点（%）
+  fee?: number;
+  slippage?: number;
   error?: string;
 }

@@ -8,7 +8,12 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const STATE_PATH = path.resolve(__dirname, "../../logs/paper-account.json");
+const LOGS_DIR = path.resolve(__dirname, "../../logs");
+
+/** 根据场景 ID 返回账户状态文件路径 */
+export function getAccountPath(scenarioId = "default"): string {
+  return path.join(LOGS_DIR, `paper-${scenarioId}.json`);
+}
 
 export interface PaperPosition {
   symbol: string;
@@ -61,10 +66,10 @@ function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function loadAccount(initialUsdt = 1000): PaperAccount {
+export function loadAccount(initialUsdt = 1000, scenarioId = "default"): PaperAccount {
+  const statePath = getAccountPath(scenarioId);
   try {
-    const account = JSON.parse(fs.readFileSync(STATE_PATH, "utf-8")) as PaperAccount;
-    // 补全旧版账户可能缺少的字段
+    const account = JSON.parse(fs.readFileSync(statePath, "utf-8")) as PaperAccount;
     if (!account.dailyLoss) {
       account.dailyLoss = { date: todayStr(), loss: 0 };
     }
@@ -79,15 +84,16 @@ export function loadAccount(initialUsdt = 1000): PaperAccount {
       updatedAt: Date.now(),
       dailyLoss: { date: todayStr(), loss: 0 },
     };
-    saveAccount(account);
+    saveAccount(account, scenarioId);
     return account;
   }
 }
 
-export function saveAccount(account: PaperAccount): void {
-  fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
+export function saveAccount(account: PaperAccount, scenarioId = "default"): void {
+  const statePath = getAccountPath(scenarioId);
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
   account.updatedAt = Date.now();
-  fs.writeFileSync(STATE_PATH, JSON.stringify(account, null, 2));
+  fs.writeFileSync(statePath, JSON.stringify(account, null, 2));
 }
 
 /** 重置每日亏损计数（每日首次调用时自动触发） */

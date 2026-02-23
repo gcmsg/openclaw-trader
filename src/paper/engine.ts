@@ -1,9 +1,10 @@
 /**
  * Paper Trading 引擎
  * 接收信号 → 执行模拟交易 → 止损/止盈/追踪止损检查
+ * 每个场景使用独立的账户文件（logs/paper-{scenarioId}.json）
  */
 
-import type { Signal, StrategyConfig } from "../types.js";
+import type { Signal, RuntimeConfig } from "../types.js";
 import {
   loadAccount,
   saveAccount,
@@ -19,14 +20,17 @@ import {
 
 export interface PaperEngineResult {
   trade: PaperTrade | null;
-  skipped?: string;           // 跳过原因（如超过最大持仓数）
+  skipped?: string;
   stopLossTriggered: boolean;
   stopLossTrade: PaperTrade | null;
   account: PaperAccount;
 }
 
-/** 从配置提取 paper 相关参数 */
-function paperOpts(cfg: StrategyConfig) {
+function scenarioId(cfg: RuntimeConfig): string {
+  return cfg.paper.scenarioId;
+}
+
+function paperOpts(cfg: RuntimeConfig) {
   return {
     feeRate: cfg.paper.fee_rate,
     slippagePercent: cfg.paper.slippage_percent,
@@ -38,67 +42,43 @@ function paperOpts(cfg: StrategyConfig) {
 }
 
 /**
- * 处理信号：尝试开仓/平仓
- * 含仓位数量、单币占比、每日亏损检查
+ * 处理信号：开仓/平仓（含仓位数量、单币占比、每日亏损检查）
  */
 export function handleSignal(
   signal: Signal,
-  cfg: StrategyConfig
+  cfg: RuntimeConfig
 ): PaperEngineResult {
-  const account = loadAccount(cfg.paper.initial_usdt);
+  const sid = scenarioId(cfg);
+  const account = loadAccount(cfg.paper.initial_usdt, sid);
   resetDailyLossIfNeeded(account);
 
   let trade: PaperTrade | null = null;
   let skipped: string | undefined;
 
   if (signal.type === "buy") {
-    // ① 检查最大持仓数
     const openCount = Object.keys(account.positions).length;
     if (openCount >= cfg.risk.max_positions) {
       skipped = `已达最大持仓数 ${cfg.risk.max_positions}，跳过 ${signal.symbol}`;
-    }
-    // ② 检查单币最大持仓比例
-    else {
-      const prices = { [signal.symbol]: signal.price };
-      const equity = calcTotalEquity(account, prices);
-      const symbolValue = account.positions[signal.symbol]
-        ? (account.positions[signal.symbol].quantity * signal.price)
-        : 0;
-      const symbolRatio = symbolValue / equity;
-      if (symbolRatio >= cfg.risk.max_position_per_symbol) {
-        skipped = `${signal.symbol} 已达单币最大仓位 ${(cfg.risk.max_position_per_symbol * 100).toFixed(0)}%，跳过`;
-      }
-    }
-
-    // ③ 检查每日亏损限制
-    if (!skipped) {
+    } else {
       const equity = calcTotalEquity(account, { [signal.symbol]: signal.price });
-      const dailyLossPercent = (account.dailyLoss.loss / equity) * 100;
-      if (dailyLossPercent >= cfg.risk.daily_loss_limit_percent) {
-        skipped = `今日亏损已达 ${dailyLossPercent.toFixed(1)}%，暂停当日开仓`;
+      const symbolValue = account.positions[signal.symbol]
+        ? account.positions[signal.symbol].quantity * signal.price
+        : 0;
+      if (symbolValue / equity >= cfg.risk.max_position_per_symbol) {
+        skipped = `${signal.symbol} 已达单币最大仓位 ${(cfg.risk.max_position_per_symbol * 100).toFixed(0)}%，跳过`;
+      } else if ((account.dailyLoss.loss / equity) * 100 >= cfg.risk.daily_loss_limit_percent) {
+        skipped = `今日亏损已达 ${cfg.risk.daily_loss_limit_percent}%，暂停当日开仓`;
       }
     }
 
     if (!skipped) {
-      trade = paperBuy(
-        account,
-        signal.symbol,
-        signal.price,
-        signal.reason.join(", "),
-        paperOpts(cfg)
-      );
+      trade = paperBuy(account, signal.symbol, signal.price, signal.reason.join(", "), paperOpts(cfg));
     }
   } else if (signal.type === "sell") {
-    trade = paperSell(
-      account,
-      signal.symbol,
-      signal.price,
-      signal.reason.join(", "),
-      paperOpts(cfg)
-    );
+    trade = paperSell(account, signal.symbol, signal.price, signal.reason.join(", "), paperOpts(cfg));
   }
 
-  saveAccount(account);
+  saveAccount(account, sid);
   return { trade, skipped, stopLossTriggered: false, stopLossTrade: null, account };
 }
 
@@ -107,9 +87,10 @@ export function handleSignal(
  */
 export function checkExitConditions(
   prices: Record<string, number>,
-  cfg: StrategyConfig
+  cfg: RuntimeConfig
 ): Array<{ symbol: string; trade: PaperTrade; reason: "stop_loss" | "take_profit" | "trailing_stop"; pnlPercent: number }> {
-  const account = loadAccount(cfg.paper.initial_usdt);
+  const sid = scenarioId(cfg);
+  const account = loadAccount(cfg.paper.initial_usdt, sid);
   resetDailyLossIfNeeded(account);
   const triggered: Array<{ symbol: string; trade: PaperTrade; reason: "stop_loss" | "take_profit" | "trailing_stop"; pnlPercent: number }> = [];
 
@@ -121,18 +102,13 @@ export function checkExitConditions(
     let exitReason: "stop_loss" | "take_profit" | "trailing_stop" | null = null;
     let exitLabel = "";
 
-    // 固定止损
     if (currentPrice <= pos.stopLoss) {
       exitReason = "stop_loss";
       exitLabel = `止损触发：亏损 ${pnlPercent.toFixed(2)}%`;
-    }
-    // 固定止盈
-    else if (currentPrice >= pos.takeProfit) {
+    } else if (currentPrice >= pos.takeProfit) {
       exitReason = "take_profit";
       exitLabel = `止盈触发：盈利 ${pnlPercent.toFixed(2)}%`;
-    }
-    // 追踪止损
-    else if (cfg.risk.trailing_stop.enabled) {
+    } else if (cfg.risk.trailing_stop.enabled) {
       const shouldExit = updateTrailingStop(pos, currentPrice, {
         activationPercent: cfg.risk.trailing_stop.activation_percent,
         callbackPercent: cfg.risk.trailing_stop.callback_percent,
@@ -145,81 +121,55 @@ export function checkExitConditions(
 
     if (exitReason) {
       const trade = paperSell(account, symbol, currentPrice, exitLabel, paperOpts(cfg));
-      if (trade) {
-        triggered.push({ symbol, trade, reason: exitReason, pnlPercent });
-      }
+      if (trade) triggered.push({ symbol, trade, reason: exitReason, pnlPercent });
     }
   }
 
-  if (triggered.length > 0) {
-    saveAccount(account);
-  }
-
+  if (triggered.length > 0) saveAccount(account, sid);
   return triggered;
 }
 
-/**
- * 兼容旧接口：检查止损（只返回止损触发）
- * @deprecated 请使用 checkExitConditions
- */
+/** compat shim */
 export function checkStopLoss(
   prices: Record<string, number>,
-  cfg: StrategyConfig
+  cfg: RuntimeConfig
 ): Array<{ symbol: string; trade: PaperTrade; loss: number }> {
   return checkExitConditions(prices, cfg)
     .filter((r) => r.reason === "stop_loss")
     .map((r) => ({ symbol: r.symbol, trade: r.trade, loss: r.pnlPercent / 100 }));
 }
 
-/**
- * 检查总资金是否触发全局暂停线
- */
-export function checkMaxDrawdown(
-  prices: Record<string, number>,
-  cfg: StrategyConfig
-): boolean {
-  const account = loadAccount(cfg.paper.initial_usdt);
+export function checkMaxDrawdown(prices: Record<string, number>, cfg: RuntimeConfig): boolean {
+  const account = loadAccount(cfg.paper.initial_usdt, scenarioId(cfg));
   const equity = calcTotalEquity(account, prices);
-  const drawdown = (equity - account.initialUsdt) / account.initialUsdt;
-  return drawdown <= -cfg.risk.max_total_loss_percent / 100;
+  return (equity - account.initialUsdt) / account.initialUsdt <= -cfg.risk.max_total_loss_percent / 100;
 }
 
-/**
- * 检查每日亏损是否触发当日暂停
- */
-export function checkDailyLossLimit(
-  prices: Record<string, number>,
-  cfg: StrategyConfig
-): boolean {
-  const account = loadAccount(cfg.paper.initial_usdt);
+export function checkDailyLossLimit(prices: Record<string, number>, cfg: RuntimeConfig): boolean {
+  const account = loadAccount(cfg.paper.initial_usdt, scenarioId(cfg));
   resetDailyLossIfNeeded(account);
   const equity = calcTotalEquity(account, prices);
-  const dailyLossPercent = (account.dailyLoss.loss / equity) * 100;
-  return dailyLossPercent >= cfg.risk.daily_loss_limit_percent;
+  return (account.dailyLoss.loss / equity) * 100 >= cfg.risk.daily_loss_limit_percent;
 }
 
-/**
- * 获取账户摘要
- */
-export function getPaperSummary(prices: Record<string, number>, cfg: StrategyConfig) {
-  const account = loadAccount(cfg.paper.initial_usdt);
-  return getAccountSummary(account, prices);
+export function getPaperSummary(prices: Record<string, number>, cfg: RuntimeConfig) {
+  return getAccountSummary(loadAccount(cfg.paper.initial_usdt, scenarioId(cfg)), prices);
 }
 
-/**
- * 格式化汇报消息
- */
 export function formatSummaryMessage(
   prices: Record<string, number>,
-  cfg: StrategyConfig,
+  cfg: RuntimeConfig,
   mode: "full" | "brief" = "full"
 ): string {
   const summary = getPaperSummary(prices, cfg);
   const pnlEmoji = summary.totalPnl >= 0 ? "📈" : "📉";
   const pnlSign = summary.totalPnl >= 0 ? "+" : "";
+  const marketLabel = cfg.exchange.market.toUpperCase();
+  const leverageLabel = cfg.exchange.leverage?.enabled
+    ? ` ${cfg.exchange.leverage.default}x` : "";
 
   const lines: string[] = [
-    `📊 **[模拟盘账户]** ${new Date().toLocaleString("zh-CN")}`,
+    `📊 **[${marketLabel}${leverageLabel}]** ${new Date().toLocaleString("zh-CN")}`,
     ``,
     `💰 USDT 余额: $${summary.usdt.toFixed(2)}`,
     `💼 总资产: $${summary.totalEquity.toFixed(2)}`,

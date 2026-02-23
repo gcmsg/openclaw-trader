@@ -1,34 +1,9 @@
-# openclaw-trader 策略配置
-# 修改此文件即可切换策略，无需改代码
+# openclaw-trader 核心策略配置
+# 与交易模式无关的设置放这里：指标/信号/风控/调度
+# 交易所/市场/杠杆设置在 paper.yaml（模拟）或 live.yaml（实盘）
 
 # ───────────────────────────────────────
-# 交易所配置
-# ───────────────────────────────────────
-exchange:
-  name: "binance"               # 交易所名称（目前仅支持 binance）
-  credentials_path: ".secrets/binance.json"  # API 凭证路径（相对项目根目录）
-
-  # 市场类型
-  # spot:    现货（直接持有资产，无杠杆）
-  # margin:  杠杆现货（借币做多/做空）
-  # futures: U 本位合约（USDT 结算）
-  market: "spot"
-
-  # 合约设置（market=futures 时生效）
-  futures:
-    contract_type: "perpetual"  # perpetual（永续）| quarterly（季度交割）
-    margin_mode: "isolated"     # isolated（逐仓）| cross（全仓）
-                                # 建议初学者用 isolated，最多亏光一个仓位
-
-  # 杠杆设置（market=margin 或 futures 时生效）
-  leverage:
-    enabled: false              # 是否启用杠杆（spot 下无效）
-    default: 1                  # 默认杠杆倍数
-    max: 3                      # 最大允许倍数（超过此值程序拒绝执行）
-                                # 建议：margin≤3x，futures≤5x，新手≤2x
-
-# ───────────────────────────────────────
-# 监控的交易对
+# 默认监控币种（各场景可单独覆盖）
 # ───────────────────────────────────────
 symbols:
   - BTCUSDT
@@ -41,110 +16,82 @@ symbols:
   - AVAXUSDT
 
 # ───────────────────────────────────────
-# K 线时间框架（用于计算指标）
+# K 线时间框架
 # 可选: 1m 5m 15m 1h 4h 1d
 # ───────────────────────────────────────
 timeframe: "1h"
 
 # ───────────────────────────────────────
-# 技术指标策略
+# 技术指标
 # ───────────────────────────────────────
 strategy:
   name: "ma_rsi_macd"
   enabled: true
   ma:
-    short: 20               # 短期均线（趋势判断）
-    long: 60                # 长期均线（趋势判断）
+    short: 20
+    long: 60
   rsi:
     period: 14
-    oversold: 35            # 低于此值 = 超卖 = 买入参考
-    overbought: 65          # 高于此值 = 超买 = 卖出参考
+    oversold: 35
+    overbought: 65
   macd:
     enabled: true
     fast: 12
     slow: 26
     signal: 9
-
-  # 成交量过滤
   volume:
-    surge_ratio: 1.5        # 超过均量此倍数 = 放量（信号更可信）
-    low_ratio: 0.5          # 低于均量此倍数 = 缩量（信号可信度低）
+    surge_ratio: 1.5
+    low_ratio: 0.5
 
 # ───────────────────────────────────────
 # 信号触发条件（需同时满足）
 # ───────────────────────────────────────
 signals:
   buy:
-    - ma_bullish            # MA 短期 > 长期（多头趋势）
-    - rsi_oversold          # RSI 低于超卖线
-    - macd_bullish          # MACD 多头确认（减少假信号）
+    - ma_bullish
+    - rsi_oversold
+    - macd_bullish
   sell:
-    - ma_bearish            # MA 短期 < 长期（空头趋势）
-    - rsi_overbought        # RSI 高于超买线
-    - macd_bearish          # MACD 空头确认
+    - ma_bearish
+    - rsi_overbought
+    - macd_bearish
 
 # ───────────────────────────────────────
-# 风险控制
+# 风险控制（各场景可单独覆盖部分字段）
 # ───────────────────────────────────────
 risk:
-  # 单笔交易
-  stop_loss_percent: 5          # 单笔止损（亏损超过此值自动平仓）
-  take_profit_percent: 15       # 单笔止盈（盈利超过此值自动止盈）
+  stop_loss_percent: 5
+  take_profit_percent: 15
   trailing_stop:
-    enabled: false              # 追踪止损（盈利后锁定浮盈）
-    activation_percent: 5       # 盈利达到此值后启动追踪
-    callback_percent: 2         # 回撤超过此值触发止损
-
-  # 仓位管理
-  position_ratio: 0.2           # 单笔仓位占总资金比例（20%）
-  max_positions: 4              # 最多同时持仓币种数（超过不开新仓）
-  max_position_per_symbol: 0.3  # 单币最大持仓比例（防止某币过重，30%）
-
-  # 账户级别保护
-  max_total_loss_percent: 20    # 总亏损达到 20% 自动暂停策略
-  daily_loss_limit_percent: 8   # 单日亏损达到 8% 暂停当日交易
-                                # 次日 00:00 自动重置
+    enabled: false
+    activation_percent: 5
+    callback_percent: 2
+  position_ratio: 0.2
+  max_positions: 4
+  max_position_per_symbol: 0.3
+  max_total_loss_percent: 20
+  daily_loss_limit_percent: 8
 
 # ───────────────────────────────────────
-# 订单执行参数
+# 订单执行（实盘生效，paper 中仅模拟）
 # ───────────────────────────────────────
 execution:
-  # 订单类型
-  # market: 市价单（立即成交，会有滑点）
-  # limit:  限价单（挂单等待，可能不成交）
   order_type: "market"
-
-  # 限价单偏移（order_type=limit 时生效）
-  # 买入时在当前价格上方 0.1% 挂单（提高成交概率）
-  # 卖出时在当前价格下方 0.1% 挂单
   limit_order_offset_percent: 0.1
-
-  # 最小下单金额（USDT），防止下单量太小被交易所拒绝
   min_order_usdt: 10
-
-  # 最大等待时间（limit 单挂单后超时自动撤销，秒）
   limit_order_timeout_seconds: 300
 
 # ───────────────────────────────────────
-# 模拟盘设置（mode: paper 时生效）
-# ───────────────────────────────────────
-paper:
-  initial_usdt: 1000            # 初始模拟资金（USDT）
-  fee_rate: 0.001               # 手续费率（0.1%，模拟真实 Binance VIP0）
-  slippage_percent: 0.05        # 滑点模拟（0.05%，市价单价格偏差）
-  report_interval_hours: 24     # 定期发送账户状态汇报间隔
-
-# ───────────────────────────────────────
-# 通知设置
+# 通知
 # ───────────────────────────────────────
 notify:
-  on_signal: true               # 收到买卖信号时通知
-  on_trade: true                # 实际下单（或模拟成交）时通知
-  on_stop_loss: true            # 止损触发时通知
-  on_take_profit: true          # 止盈触发时通知
-  on_error: true                # 出错时通知
-  on_daily_summary: true        # 每日收盘后发汇总
-  min_interval_minutes: 30      # 同一币种信号最小通知间隔（防刷屏）
+  on_signal: true
+  on_trade: true
+  on_stop_loss: true
+  on_take_profit: true
+  on_error: true
+  on_daily_summary: true
+  min_interval_minutes: 30
 
 # ───────────────────────────────────────
 # 新闻与情绪分析
@@ -152,42 +99,32 @@ notify:
 news:
   enabled: true
   interval_hours: 4
-  price_alert_threshold: 5      # 24h 涨跌超过此值(%)时标注
-  fear_greed_alert: 15          # 恐惧贪婪指数变化超过此值时告警
+  price_alert_threshold: 5
+  fear_greed_alert: 15
 
 # ───────────────────────────────────────
-# 定时任务配置（修改后运行 npm run cron:sync 生效）
+# 定时任务（修改后运行 npm run cron:sync 生效）
 # ───────────────────────────────────────
 schedule:
-  # 价格监控（技术指标扫描）
   price_monitor:
     enabled: true
-    cron: "* * * * *"          # 每分钟
-    timeout_minutes: 3          # 超过此时间未运行 = 告警
-
-  # 新闻情绪抓取
+    cron: "* * * * *"
+    timeout_minutes: 3
   news_collector:
     enabled: true
-    cron: "0 */4 * * *"        # 每 4 小时
-    timeout_minutes: 260        # 4小时 + 20 分钟缓冲
-
-  # 周报复盘
+    cron: "0 */4 * * *"
+    timeout_minutes: 260
   weekly_report:
     enabled: true
-    cron: "0 22 * * 0"         # 每周日 22:00
-    timeout_minutes: 10100      # 7 天 + 20 分钟缓冲
-
-  # 健康检查
+    cron: "0 22 * * 0"
+    timeout_minutes: 10100
   health_check:
     enabled: true
-    cron: "*/30 * * * *"       # 每 30 分钟
+    cron: "*/30 * * * *"
     timeout_minutes: 35
 
 # ───────────────────────────────────────
 # 运行模式
-# ───────────────────────────────────────
-# notify_only: 只通知，不下单
-# paper:       模拟盘，使用真实价格但不实际交易
-# auto:        自动实盘交易（谨慎开启）
+# notify_only | paper | auto
 # ───────────────────────────────────────
 mode: "paper"
