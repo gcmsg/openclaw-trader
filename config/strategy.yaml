@@ -50,10 +50,10 @@ strategy:
 # ───────────────────────────────────────
 signals:
   buy:
-    - ma_golden_cross       # MA 短期上穿长期
+    - ma_bullish            # MA 短期 > 长期（多头趋势）
     - rsi_oversold          # RSI 处于超卖区域
   sell:
-    - ma_death_cross        # MA 短期下穿长期
+    - ma_bearish            # MA 短期 < 长期（空头趋势）
     - rsi_overbought        # RSI 处于超买区域
 
 # ───────────────────────────────────────
@@ -75,6 +75,15 @@ notify:
   on_stop_loss: true        # 触发止损时通知
   on_error: true            # 出错时通知
   min_interval_minutes: 30  # 同一币种最少通知间隔（防止刷屏）
+
+# ───────────────────────────────────────
+# 新闻与情绪分析
+# ───────────────────────────────────────
+news:
+  enabled: true
+  interval_hours: 4         # 每 4 小时扫描一次
+  price_alert_threshold: 5  # 价格 24h 变化超过此值(%)时额外标注
+  fear_greed_alert: 15      # 恐惧贪婪指数变化超过此值时发出警报
 
 # ───────────────────────────────────────
 # 运行模式

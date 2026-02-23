@@ -1,38 +1,20 @@
-import https from "https";
+import { execSync } from "child_process";
 import type { Signal, TradeResult } from "../types.js";
 
+const OPENCLAW_BIN = process.env.OPENCLAW_BIN ?? "openclaw";
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
-const GATEWAY_PORT = process.env.OPENCLAW_GATEWAY_PORT ?? "18789";
 
-/** 向 OpenClaw Gateway 发送消息，触发 Mia 决策 */
+/** 向 OpenClaw 主会话注入系统事件，触发 Mia 决策 */
 async function sendToAgent(message: string): Promise<void> {
-  const body = JSON.stringify({
-    message,
-    sessionKey: "agent:main:main",
-  });
-
-  return new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        hostname: "127.0.0.1",
-        port: parseInt(GATEWAY_PORT),
-        path: "/api/agent/message",
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${GATEWAY_TOKEN}`,
-          "Content-Length": Buffer.byteLength(body),
-        },
-      },
-      (res) => {
-        res.resume();
-        res.on("end", resolve);
-      }
+  try {
+    const tokenFlag = GATEWAY_TOKEN ? `--token ${GATEWAY_TOKEN}` : "";
+    execSync(
+      `${OPENCLAW_BIN} system event --mode now ${tokenFlag} --text ${JSON.stringify(message)}`,
+      { stdio: "pipe", timeout: 15000 }
     );
-    req.on("error", reject);
-    req.write(body);
-    req.end();
-  });
+  } catch (err) {
+    console.error("sendToAgent failed:", (err as Error).message);
+  }
 }
 
 function formatPrice(price: number): string {
@@ -120,6 +102,64 @@ export async function notifyError(context: string, error: Error): Promise<void> 
     `🕐 时间: ${new Date().toLocaleString("zh-CN")}`,
   ].join("\n");
 
+  await sendToAgent(msg);
+}
+
+/** 新闻情绪分析报告 */
+export async function sendNewsReport(data: {
+  fearGreed: { value: number; label: string };
+  fearGreedInterpret: string;
+  globalMarket: { totalMarketCapUsd: number; marketCapChangePercent24h: number; btcDominance: number };
+  sentiment: "bullish" | "bearish" | "neutral";
+  importantNews: Array<{ title: string; source: string; publishedAt: string }>;
+  bigMovers: Array<{ symbol: string; priceChangePercent: number; price: number }>;
+  fgAlert: boolean;
+  fgDelta: number;
+}): Promise<void> {
+  const sentimentEmoji =
+    data.sentiment === "bullish" ? "🟢 偏多" :
+    data.sentiment === "bearish" ? "🔴 偏空" : "⚪ 中性";
+
+  const fgEmoji =
+    data.fearGreed.value <= 25 ? "😱" :
+    data.fearGreed.value <= 45 ? "😰" :
+    data.fearGreed.value <= 55 ? "😐" :
+    data.fearGreed.value <= 75 ? "😏" : "🤑";
+
+  const totalMcap = (data.globalMarket.totalMarketCapUsd / 1e12).toFixed(2);
+  const mcapChange = data.globalMarket.marketCapChangePercent24h.toFixed(2);
+  const mcapEmoji = parseFloat(mcapChange) >= 0 ? "📈" : "📉";
+
+  const lines: string[] = [
+    `📰 **[市场情绪报告]** ${new Date().toLocaleString("zh-CN")}`,
+    ``,
+    `${fgEmoji} **恐惧贪婪指数**: ${data.fearGreed.value}/100 (${data.fearGreed.label})`,
+    `   ${data.fearGreedInterpret}`,
+    data.fgAlert ? `   ⚠️ 指数变化: ${data.fgDelta > 0 ? "+" : ""}${data.fgDelta} 点（显著变化）` : "",
+    ``,
+    `${mcapEmoji} **全球总市值**: $${totalMcap}T (24h: ${mcapChange}%)`,
+    `🔶 **BTC 占比**: ${data.globalMarket.btcDominance.toFixed(1)}%`,
+    ``,
+    `**综合情绪**: ${sentimentEmoji}`,
+  ];
+
+  if (data.bigMovers.length > 0) {
+    lines.push(``, `🚀 **价格异动（24h ±5%）**:`);
+    for (const m of data.bigMovers) {
+      const arrow = m.priceChangePercent >= 0 ? "🟢" : "🔴";
+      lines.push(`  ${arrow} ${m.symbol}: ${m.priceChangePercent > 0 ? "+" : ""}${m.priceChangePercent.toFixed(2)}%`);
+    }
+  }
+
+  if (data.importantNews.length > 0) {
+    lines.push(``, `📋 **重要新闻** (${data.importantNews.length} 条):`);
+    for (const n of data.importantNews.slice(0, 5)) {
+      lines.push(`  • ${n.title}`);
+      lines.push(`    _${n.source}_`);
+    }
+  }
+
+  const msg = lines.filter((l) => l !== "").join("\n");
   await sendToAgent(msg);
 }
 
