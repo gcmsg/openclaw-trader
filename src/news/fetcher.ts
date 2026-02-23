@@ -51,7 +51,7 @@ export async function getFearGreedIndex(): Promise<FearGreedData> {
 }
 
 // ─────────────────────────────────────────────────────
-// CryptoPanic 新闻（免费公开接口）
+// CryptoCompare 新闻（免费，无需 API Key）
 // ─────────────────────────────────────────────────────
 
 export interface NewsItem {
@@ -60,34 +60,78 @@ export interface NewsItem {
   source: string;
   publishedAt: string;
   currencies?: string[]; // 相关币种，如 ["BTC", "ETH"]
-  votes?: { positive: number; negative: number; important: number };
+  categories?: string;   // 如 "MARKET|REGULATION|BTC"
+  important?: boolean;   // 是否判定为重要新闻
 }
 
-export async function getLatestNews(limit = 20): Promise<NewsItem[]> {
+// 高影响关键词（出现则标记 important=true）
+const IMPORTANT_KEYWORDS = [
+  "crash", "collapse", "dump", "plunge", "hack", "exploit", "breach",
+  "ban", "regulation", "sec", "etf", "approved", "rejected",
+  "liquidation", "bankruptcy", "shutdown", "fraud", "scam",
+  "all-time high", "ath", "breakout", "capitulation",
+  "federal reserve", "fed rate", "inflation", "sanctions",
+  "surge", "rally", "bull", "bear",
+];
+
+// 高影响类别
+const IMPORTANT_CATEGORIES = ["REGULATION", "HACK", "EXCHANGE", "ICO", "MACROECONOMICS"];
+
+// 监控的主流币种关键词映射
+const COIN_KEYWORDS: Record<string, string[]> = {
+  BTC: ["bitcoin", "btc"],
+  ETH: ["ethereum", "eth", "ether"],
+  BNB: ["bnb", "binance coin", "binance smart chain"],
+  SOL: ["solana", "sol"],
+  XRP: ["xrp", "ripple"],
+  ADA: ["cardano", "ada"],
+  DOGE: ["dogecoin", "doge"],
+  AVAX: ["avalanche", "avax"],
+};
+
+function extractCurrencies(title: string, categories: string): string[] {
+  const text = (title + " " + categories).toLowerCase();
+  return Object.entries(COIN_KEYWORDS)
+    .filter(([, keywords]) => keywords.some((kw) => text.includes(kw)))
+    .map(([coin]) => coin);
+}
+
+function isImportant(title: string, categories: string): boolean {
+  const text = title.toLowerCase();
+  const cats = categories.toUpperCase().split("|");
+  return (
+    IMPORTANT_KEYWORDS.some((kw) => text.includes(kw)) ||
+    IMPORTANT_CATEGORIES.some((cat) => cats.includes(cat))
+  );
+}
+
+export async function getLatestNews(limit = 30): Promise<NewsItem[]> {
   try {
     const data = (await get(
-      `https://cryptopanic.com/api/free/v1/posts/?auth_token=free&public=true&limit=${limit}&kind=news`
+      `https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=${limit}&sortOrder=latest`
     )) as {
-      results: Array<{
+      Data: Array<{
         title: string;
         url: string;
-        source: { title: string };
-        published_at: string;
-        currencies?: Array<{ code: string }>;
-        votes?: { positive: number; negative: number; important: number };
+        source_info: { name: string };
+        published_on: number;
+        categories: string;
       }>;
     };
 
-    return data.results.map((item) => ({
-      title: item.title,
-      url: item.url,
-      source: item.source.title,
-      publishedAt: item.published_at,
-      currencies: item.currencies?.map((c) => c.code),
-      votes: item.votes,
-    }));
+    return data.Data.map((item) => {
+      const categories = item.categories || "";
+      return {
+        title: item.title,
+        url: item.url,
+        source: item.source_info?.name || "CryptoCompare",
+        publishedAt: new Date(item.published_on * 1000).toISOString(),
+        currencies: extractCurrencies(item.title, categories),
+        categories,
+        important: isImportant(item.title, categories),
+      };
+    });
   } catch {
-    // CryptoPanic 可能限速，返回空数组
     return [];
   }
 }

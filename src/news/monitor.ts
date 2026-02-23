@@ -62,20 +62,18 @@ function interpretFearGreed(value: number): string {
   return "极度贪婪 🤑 — 历史上往往是卖出信号";
 }
 
-/** 从新闻列表里提取关键词做初步过滤 */
+/** 从新闻列表里过滤重要新闻（使用 fetcher 的 important 标记 + 本地关键词兜底） */
 function filterImportantNews(news: NewsItem[]): NewsItem[] {
-  const KEYWORDS = [
-    "SEC", "ETF", "regulation", "监管", "banned", "法院",
-    "hack", "exploit", "漏洞", "盗币",
+  const EXTRA_KEYWORDS = [
     "BlackRock", "MicroStrategy", "Tesla", "institutional",
-    "Fed", "interest rate", "美联储", "通胀", "inflation",
     "halving", "减半", "upgrade", "升级",
-    "bankrupt", "破产", "FTX", "collapse",
+    "bankrupt", "破产", "FTX",
   ];
 
   return news.filter((n) => {
+    if (n.important) return true;
     const text = n.title.toLowerCase();
-    return KEYWORDS.some((kw) => text.includes(kw.toLowerCase()));
+    return EXTRA_KEYWORDS.some((kw) => text.includes(kw.toLowerCase()));
   });
 }
 
