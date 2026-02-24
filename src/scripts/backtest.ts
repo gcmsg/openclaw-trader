@@ -124,6 +124,8 @@ function buildBacktestConfig(
       signals: {
         buy: profile.signals?.buy ?? cfg.signals.buy,
         sell: profile.signals?.sell ?? cfg.signals.sell,
+        ...(profile.signals?.short !== undefined ? { short: profile.signals.short } : {}),
+        ...(profile.signals?.cover !== undefined ? { cover: profile.signals.cover } : {}),
       },
       risk: mergeRisk(cfg.risk, profile.risk),
       // MTF：profile 优先，其次全局 strategy.yaml
@@ -160,6 +162,8 @@ async function runOne(strategyId: string | undefined, args: CliArgs): Promise<vo
   );
   console.log(`   信号条件：买入 [${cfg.signals.buy.join(", ")}]`);
   console.log(`            卖出 [${cfg.signals.sell.join(", ")}]`);
+  if (cfg.signals.short?.length) console.log(`            开空 [${cfg.signals.short.join(", ")}]`);
+  if (cfg.signals.cover?.length) console.log(`            平空 [${cfg.signals.cover.join(", ")}]`);
 
   // 计算时间范围
   const endMs = Date.now();
