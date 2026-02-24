@@ -374,6 +374,17 @@ export class BinanceClient {
   }
 
   /**
+   * 市价买入（BASE 资产数量）
+   * 用于平空（cover short）：已知需要买回的数量时使用
+   * 精度会按 stepSize 向下取整
+   */
+  async marketBuyByQty(symbol: string, quantity: number): Promise<OrderResponse> {
+    const symbolInfo = await this.getSymbolInfo(symbol);
+    const qty = Math.floor(quantity / symbolInfo.stepSize) * symbolInfo.stepSize;
+    return this.createOrder({ symbol, side: "BUY", type: "MARKET", quantity: qty });
+  }
+
+  /**
    * 测试连接（ping）
    * 返回 true 表示 API Key 有效且能连通
    */

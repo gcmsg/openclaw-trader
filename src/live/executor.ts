@@ -25,6 +25,7 @@ import {
   type PaperAccount,
 } from "../paper/account.js";
 import { calcAtrPositionSize } from "../strategy/indicators.js";
+import type { ExitReason } from "../paper/engine.js";
 
 // ─────────────────────────────────────────────────────
 // 结果类型（与 PaperEngineResult 兼容）
@@ -50,7 +51,7 @@ function generateId(): string {
 /** 将 Binance OrderResponse 转换为 PaperTrade 格式（便于统计复用） */
 function orderToPaperTrade(
   order: OrderResponse,
-  side: "buy" | "sell",
+  side: PaperTrade["side"],
   reason: string,
   pnl?: number,
   pnlPercent?: number
@@ -193,6 +194,7 @@ export class LiveExecutor {
     account.usdt = realBalance - usdtToSpend;
     account.positions[signal.symbol] = {
       symbol: signal.symbol,
+      side: "long",
       quantity: execQty,
       entryPrice: avgPrice,
       entryTime: order.transactTime,
@@ -279,32 +281,176 @@ export class LiveExecutor {
   }
 
   /**
-   * 检查所有持仓的止损/止盈/追踪止损（轮询模式）
-   * 注意：生产环境建议用止损单替代轮询；testnet 用轮询即可
+   * 开空（Futures/Margin 专用）
+   * 使用 marketSell 以数量做空，margin 以 USDT 计算后换算
+   */
+  async handleShort(signal: Signal): Promise<LiveEngineResult> {
+    const market = this.cfg.exchange.market;
+    if (market !== "futures" && market !== "margin") {
+      const skipped = `开空需要 futures/margin 市场，当前为 ${market}`;
+      const account = loadAccount(this.cfg.paper.initial_usdt, this.scenarioId);
+      return { trade: null, skipped, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+
+    const account = loadAccount(this.cfg.paper.initial_usdt, this.scenarioId);
+    resetDailyLossIfNeeded(account);
+
+    if (account.positions[signal.symbol]) {
+      return { trade: null, skipped: `${signal.symbol} 已有持仓，跳过开空`, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+    if (Object.keys(account.positions).length >= this.cfg.risk.max_positions) {
+      return { trade: null, skipped: `已达最大持仓数，跳过开空 ${signal.symbol}`, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+
+    const realBalance = await this.client.getUsdtBalance();
+    const equity = Math.min(realBalance, calcTotalEquity(account, { [signal.symbol]: signal.price }));
+
+    if ((account.dailyLoss.loss / equity) * 100 >= this.cfg.risk.daily_loss_limit_percent) {
+      return { trade: null, skipped: `今日亏损已达上限，暂停开空`, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+
+    // 计算保证金与数量
+    let marginToLock: number;
+    const atrCfg = this.cfg.risk.atr_position;
+    if (atrCfg?.enabled && signal.indicators.atr) {
+      marginToLock = calcAtrPositionSize(equity, signal.price, signal.indicators.atr,
+        atrCfg.risk_per_trade_percent / 100, atrCfg.atr_multiplier, atrCfg.max_position_ratio);
+    } else {
+      marginToLock = equity * this.cfg.risk.position_ratio;
+    }
+
+    if (marginToLock < this.cfg.execution.min_order_usdt) {
+      return { trade: null, skipped: `保证金 $${marginToLock.toFixed(2)} 低于最小下单金额`, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+
+    // 按当前价格计算数量
+    const symbolInfo = await this.client.getSymbolInfo(signal.symbol);
+    const rawQty = marginToLock / signal.price;
+    const qty = Math.floor(rawQty / symbolInfo.stepSize) * symbolInfo.stepSize;
+
+    // 🔥 执行真实做空下单（Futures: SELL = 开空）
+    let order: OrderResponse;
+    try {
+      order = await this.client.marketSell(signal.symbol, qty);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`[LiveExecutor] 开空 ${signal.symbol} 失败: ${msg}`, { cause: err });
+    }
+
+    const avgPrice = order.fills && order.fills.length > 0
+      ? order.fills.reduce((s, f) => s + parseFloat(f.price) * parseFloat(f.qty), 0) / parseFloat(order.executedQty)
+      : signal.price;
+
+    const execQty = parseFloat(order.executedQty);
+    const totalFee = order.fills?.reduce((s, f) => s + parseFloat(f.commission), 0) ?? 0;
+    const actualMargin = marginToLock - totalFee;
+
+    account.usdt = realBalance - marginToLock;
+    account.positions[signal.symbol] = {
+      symbol: signal.symbol,
+      side: "short",
+      quantity: execQty,
+      entryPrice: avgPrice,
+      entryTime: order.transactTime,
+      stopLoss: avgPrice * (1 + this.cfg.risk.stop_loss_percent / 100),
+      takeProfit: avgPrice * (1 - this.cfg.risk.take_profit_percent / 100),
+      marginUsdt: actualMargin,
+    };
+
+    const trade = orderToPaperTrade(order, "short", signal.reason.join(", "));
+    account.trades.push(trade);
+    saveAccount(account, this.scenarioId);
+
+    const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+    console.log(`${label} 开空 ${signal.symbol}: 数量=${execQty.toFixed(6)}, 均价=$${avgPrice.toFixed(4)}, 手续费=$${totalFee.toFixed(4)}`);
+
+    return { trade, stopLossTriggered: false, stopLossTrade: null, account, orderId: order.orderId };
+  }
+
+  /**
+   * 平空（Futures: BUY = 买回归还）
+   */
+  async handleCover(symbol: string, currentPrice: number, reason: string): Promise<LiveEngineResult> {
+    const account = loadAccount(this.cfg.paper.initial_usdt, this.scenarioId);
+    const position = account.positions[symbol];
+
+    if (position?.side !== "short") {
+      return { trade: null, skipped: `${symbol} 无空头持仓`, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+
+    // 🔥 执行真实平空下单（Futures: BUY = 平空）
+    let order: OrderResponse;
+    try {
+      order = await this.client.marketBuyByQty(symbol, position.quantity);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`[LiveExecutor] 平空 ${symbol} 失败: ${msg}`, { cause: err });
+    }
+
+    const avgPrice = order.fills && order.fills.length > 0
+      ? order.fills.reduce((s, f) => s + parseFloat(f.price) * parseFloat(f.qty), 0) / parseFloat(order.executedQty)
+      : currentPrice;
+
+    const execQty = parseFloat(order.executedQty);
+    const totalFee = order.fills?.reduce((s, f) => s + parseFloat(f.commission), 0) ?? 0;
+    const marginUsdt = position.marginUsdt ?? position.quantity * position.entryPrice;
+    const pnl = (position.entryPrice - avgPrice) * execQty - totalFee;
+    const pnlPercent = pnl / marginUsdt;
+
+    if (pnl < 0) account.dailyLoss.loss += Math.abs(pnl);
+
+    const realBalance = await this.client.getUsdtBalance();
+    account.usdt = realBalance;
+    Reflect.deleteProperty(account.positions, symbol);
+
+    const trade = orderToPaperTrade(order, "cover", reason, pnl, pnlPercent);
+    account.trades.push(trade);
+    saveAccount(account, this.scenarioId);
+
+    const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+    console.log(`${label} 平空 ${symbol}: 数量=${execQty.toFixed(6)}, 均价=$${avgPrice.toFixed(4)}, 盈亏=${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)} (${(pnlPercent * 100).toFixed(2)}%)`);
+
+    return { trade, stopLossTriggered: false, stopLossTrade: null, account, orderId: order.orderId };
+  }
+
+  /**
+   * 检查所有持仓的止损/止盈（多头 + 空头，轮询模式）
    */
   async checkExitConditions(prices: Record<string, number>): Promise<
-    { symbol: string; trade: PaperTrade; reason: string; pnlPercent: number }[]
+    { symbol: string; trade: PaperTrade; reason: ExitReason; pnlPercent: number }[]
   > {
     const account = loadAccount(this.cfg.paper.initial_usdt, this.scenarioId);
     resetDailyLossIfNeeded(account);
-    const results: { symbol: string; trade: PaperTrade; reason: string; pnlPercent: number }[] = [];
+    const results: { symbol: string; trade: PaperTrade; reason: ExitReason; pnlPercent: number }[] = [];
 
     for (const [symbol, pos] of Object.entries(account.positions)) {
       const currentPrice = prices[symbol];
       if (!currentPrice) continue;
 
-      const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
-      let exitReason: string | null = null;
+      const isShort = pos.side === "short";
+      const pnlPercent = isShort
+        ? ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100
+        : ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
 
-      if (currentPrice <= pos.stopLoss) {
-        exitReason = `止损触发：亏损 ${pnlPercent.toFixed(2)}%（止损价 $${pos.stopLoss.toFixed(4)}）`;
-      } else if (currentPrice >= pos.takeProfit) {
-        exitReason = `止盈触发：盈利 ${pnlPercent.toFixed(2)}%（止盈价 $${pos.takeProfit.toFixed(4)}）`;
+      const hitStopLoss = isShort ? currentPrice >= pos.stopLoss : currentPrice <= pos.stopLoss;
+      const hitTakeProfit = isShort ? currentPrice <= pos.takeProfit : currentPrice >= pos.takeProfit;
+
+      let exitReason: ExitReason | null = null;
+      let exitLabel = "";
+
+      if (hitStopLoss) {
+        exitReason = "stop_loss";
+        exitLabel = `止损触发：亏损 ${Math.abs(pnlPercent).toFixed(2)}%（止损价 $${pos.stopLoss.toFixed(4)}）`;
+      } else if (hitTakeProfit) {
+        exitReason = "take_profit";
+        exitLabel = `止盈触发：盈利 ${pnlPercent.toFixed(2)}%（止盈价 $${pos.takeProfit.toFixed(4)}）`;
       }
 
       if (exitReason) {
         try {
-          const result = await this.handleSell(symbol, currentPrice, exitReason);
+          const result = isShort
+            ? await this.handleCover(symbol, currentPrice, exitLabel)
+            : await this.handleSell(symbol, currentPrice, exitLabel);
           if (result.trade) {
             results.push({ symbol, trade: result.trade, reason: exitReason, pnlPercent });
           }
