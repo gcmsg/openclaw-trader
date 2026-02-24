@@ -11,6 +11,8 @@ import {
   saveAccount,
   paperBuy,
   paperSell,
+  paperOpenShort,
+  paperCoverShort,
   calcTotalEquity,
   getAccountSummary,
   updateTrailingStop,
@@ -113,6 +115,63 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
       signal.reason.join(", "),
       paperOpts(cfg)
     );
+  } else if (signal.type === "short") {
+    // ── 开空（仅 futures / margin 市场有效）──
+    const market = cfg.exchange.market;
+    if (market !== "futures" && market !== "margin") {
+      skipped = `开空信号被忽略：当前市场类型为 ${market}，做空需要 futures 或 margin`;
+    } else {
+      const openCount = Object.keys(account.positions).length;
+      if (openCount >= cfg.risk.max_positions) {
+        skipped = `已达最大持仓数 ${cfg.risk.max_positions}，跳过开空 ${signal.symbol}`;
+      } else {
+        const equity = calcTotalEquity(account, { [signal.symbol]: signal.price });
+        const existingPos = account.positions[signal.symbol];
+        const symbolValue = existingPos
+          ? (existingPos.marginUsdt ?? existingPos.quantity * signal.price)
+          : 0;
+        if (symbolValue / equity >= cfg.risk.max_position_per_symbol) {
+          skipped = `${signal.symbol} 已达单币最大仓位，跳过开空`;
+        } else if ((account.dailyLoss.loss / equity) * 100 >= cfg.risk.daily_loss_limit_percent) {
+          skipped = `今日亏损已达 ${cfg.risk.daily_loss_limit_percent}%，暂停当日开仓`;
+        }
+      }
+    }
+
+    if (!skipped) {
+      let overridePositionUsdt: number | undefined;
+      const atrCfg = cfg.risk.atr_position;
+      if (atrCfg?.enabled && signal.indicators.atr) {
+        const equity = calcTotalEquity(account, { [signal.symbol]: signal.price });
+        overridePositionUsdt = calcAtrPositionSize(
+          equity,
+          signal.price,
+          signal.indicators.atr,
+          atrCfg.risk_per_trade_percent / 100,
+          atrCfg.atr_multiplier,
+          atrCfg.max_position_ratio
+        );
+      }
+      trade = paperOpenShort(
+        account,
+        signal.symbol,
+        signal.price,
+        signal.reason.join(", "),
+        {
+          ...paperOpts(cfg),
+          ...(overridePositionUsdt !== undefined ? { overridePositionUsdt } : {}),
+        }
+      );
+    }
+  } else if (signal.type === "cover") {
+    // ── 平空 ──
+    trade = paperCoverShort(
+      account,
+      signal.symbol,
+      signal.price,
+      signal.reason.join(", "),
+      paperOpts(cfg)
+    );
   }
 
   saveAccount(account, sid);
@@ -185,14 +244,30 @@ export function checkExitConditions(
     const currentPrice = prices[symbol];
     if (!currentPrice) continue;
 
-    const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+    const isShort = pos.side === "short";
+
+    // 盈亏百分比：多头=价格涨幅，空头=价格跌幅（下跌时空头盈利为正）
+    const pnlPercent = isShort
+      ? ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100
+      : ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+
     let exitReason: "stop_loss" | "take_profit" | "trailing_stop" | "time_stop" | null = null;
     let exitLabel = "";
 
-    if (currentPrice <= pos.stopLoss) {
+    // ── 止损：多头=价格跌破，空头=价格涨破 ──
+    const hitStopLoss = isShort
+      ? currentPrice >= pos.stopLoss  // 空头：价格上涨到止损线
+      : currentPrice <= pos.stopLoss; // 多头：价格下跌到止损线
+
+    // ── 止盈：多头=价格涨到目标，空头=价格跌到目标 ──
+    const hitTakeProfit = isShort
+      ? currentPrice <= pos.takeProfit  // 空头：价格下跌到止盈线
+      : currentPrice >= pos.takeProfit; // 多头：价格上涨到止盈线
+
+    if (hitStopLoss) {
       exitReason = "stop_loss";
-      exitLabel = `止损触发：亏损 ${pnlPercent.toFixed(2)}%`;
-    } else if (currentPrice >= pos.takeProfit) {
+      exitLabel = `止损触发：亏损 ${Math.abs(pnlPercent).toFixed(2)}%`;
+    } else if (hitTakeProfit) {
       exitReason = "take_profit";
       exitLabel = `止盈触发：盈利 ${pnlPercent.toFixed(2)}%`;
     } else if (cfg.risk.trailing_stop.enabled) {
@@ -202,11 +277,14 @@ export function checkExitConditions(
       });
       if (shouldExit) {
         exitReason = "trailing_stop";
-        exitLabel = `追踪止损触发：从最高价回撤 ${cfg.risk.trailing_stop.callback_percent}%`;
+        const dirLabel = isShort
+          ? `从最低价反弹 ${cfg.risk.trailing_stop.callback_percent}%`
+          : `从最高价回撤 ${cfg.risk.trailing_stop.callback_percent}%`;
+        exitLabel = `追踪止损触发：${dirLabel}`;
       }
     }
 
-    // ── 时间止损 ──
+    // ── 时间止损（多空均适用）──
     if (!exitReason && cfg.risk.time_stop_hours) {
       const holdingHours = (Date.now() - pos.entryTime) / 3_600_000;
       if (holdingHours >= cfg.risk.time_stop_hours && pnlPercent <= 0) {
@@ -216,18 +294,24 @@ export function checkExitConditions(
     }
 
     if (exitReason) {
-      const trade = paperSell(account, symbol, currentPrice, exitLabel, paperOpts(cfg));
+      // 多头用 paperSell，空头用 paperCoverShort
+      const trade = isShort
+        ? paperCoverShort(account, symbol, currentPrice, exitLabel, paperOpts(cfg))
+        : paperSell(account, symbol, currentPrice, exitLabel, paperOpts(cfg));
       if (trade) triggered.push({ symbol, trade, reason: exitReason, pnlPercent });
-      continue; // 全仓出场，不再检查分批止盈
+      continue;
     }
 
-    // ── 分批止盈（无法全仓出场时才检查）──
-    if (pos.tpStages) {
+    // ── 分批止盈（仅多头，无法全仓出场时才检查）──
+    if (!isShort && pos.tpStages) {
       checkStagedTakeProfit(account, symbol, pos, currentPrice, cfg, triggered);
     }
   }
 
-  if (triggered.length > 0) saveAccount(account, sid);
+  // 有持仓时始终保存（追踪止损状态在每次价格更新后都可能变化）
+  if (Object.keys(account.positions).length > 0 || triggered.length > 0) {
+    saveAccount(account, sid);
+  }
   return triggered;
 }
 
@@ -285,8 +369,9 @@ export function formatSummaryMessage(
     for (const pos of summary.positions) {
       const posSign = pos.unrealizedPnl >= 0 ? "+" : "";
       const posEmoji = pos.unrealizedPnl >= 0 ? "🟢" : "🔴";
+      const dirLabel = pos.side === "short" ? "📉SHORT" : "📈LONG";
       lines.push(
-        `  ${posEmoji} ${pos.symbol}: $${pos.entryPrice.toFixed(4)} → $${pos.currentPrice.toFixed(4)} | ${posSign}${(pos.unrealizedPnlPercent * 100).toFixed(2)}%`,
+        `  ${posEmoji} ${dirLabel} ${pos.symbol}: $${pos.entryPrice.toFixed(4)} → $${pos.currentPrice.toFixed(4)} | ${posSign}${(pos.unrealizedPnlPercent * 100).toFixed(2)}%`,
         `     止损: $${pos.stopLoss.toFixed(4)} | 止盈: $${pos.takeProfit.toFixed(4)}`
       );
     }

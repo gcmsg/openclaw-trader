@@ -172,7 +172,9 @@ function httpsRequest(
 
 export class BinanceClient {
   private readonly hostname: string;
-  private readonly apiPrefix: string; // /api/v3 or /fapi/v1
+  private readonly apiPrefix: string;      // /api/v3 or /fapi/v1
+  private readonly accountPrefix: string;  // /api/v3 or /fapi/v2（Futures account 用 v2）
+  private readonly market: "spot" | "futures";
   private readonly creds: BinanceCredentials;
 
   /**
@@ -190,7 +192,10 @@ export class BinanceClient {
 
     const env = testnet ? "testnet" : "production";
     this.hostname = ENDPOINTS[market][env];
+    this.market = market;
     this.apiPrefix = market === "futures" ? "/fapi/v1" : "/api/v3";
+    // Futures account/balance 接口在 v2（/fapi/v1/account 已废弃）
+    this.accountPrefix = market === "futures" ? "/fapi/v2" : "/api/v3";
   }
 
   // ── 公共接口（无需签名）──────────────────────────────
@@ -249,14 +254,34 @@ export class BinanceClient {
     return `${qs}&signature=${sig}`;
   }
 
-  /** 账户余额（Spot: 所有资产；Futures: USDT 余额） */
+  /** 账户余额（Spot 用 /api/v3/account；Futures 用 /fapi/v2/account） */
   async getAccountInfo(): Promise<AccountInfo> {
     const qs = this.buildSignedQuery({});
-    const path = `${this.apiPrefix}/account?${qs}`;
-    return (await httpsRequest(this.hostname, "GET", path, this.signedHeaders())) as AccountInfo;
+    const path = `${this.accountPrefix}/account?${qs}`;
+    const raw = await httpsRequest(this.hostname, "GET", path, this.signedHeaders());
+
+    if (this.market === "futures") {
+      // Futures 账户结构：{ assets: [{ asset, walletBalance, availableBalance }] }
+      const futuresRaw = raw as {
+        assets?: { asset: string; walletBalance: string; availableBalance: string }[];
+        canTrade?: boolean;
+      };
+      return {
+        canTrade: futuresRaw.canTrade ?? true,
+        canWithdraw: true,
+        canDeposit: true,
+        balances: (futuresRaw.assets ?? []).map((a) => ({
+          asset: a.asset,
+          free: a.availableBalance,
+          locked: "0",
+        })),
+      };
+    }
+
+    return raw as AccountInfo;
   }
 
-  /** 获取 USDT 可用余额 */
+  /** 获取 USDT 可用余额（Spot / Futures 均适用） */
   async getUsdtBalance(): Promise<number> {
     const info = await this.getAccountInfo();
     const usdt = info.balances.find((b) => b.asset === "USDT");
