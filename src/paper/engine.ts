@@ -5,6 +5,7 @@
  */
 
 import type { Signal, RuntimeConfig } from "../types.js";
+import { calcAtrPositionSize } from "../strategy/indicators.js";
 import {
   loadAccount,
   saveAccount,
@@ -16,6 +17,7 @@ import {
   resetDailyLossIfNeeded,
   type PaperTrade,
   type PaperAccount,
+  type PaperPosition,
 } from "./account.js";
 
 export interface PaperEngineResult {
@@ -68,13 +70,40 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
     }
 
     if (!skipped) {
+      // ── ATR 动态仓位计算 ──
+      let overridePositionUsdt: number | undefined;
+      const atrCfg = cfg.risk.atr_position;
+      if (atrCfg?.enabled && signal.indicators.atr) {
+        const equity = calcTotalEquity(account, { [signal.symbol]: signal.price });
+        overridePositionUsdt = calcAtrPositionSize(
+          equity,
+          signal.price,
+          signal.indicators.atr,
+          atrCfg.risk_per_trade_percent / 100,
+          atrCfg.atr_multiplier,
+          atrCfg.max_position_ratio
+        );
+      }
+
       trade = paperBuy(
         account,
         signal.symbol,
         signal.price,
         signal.reason.join(", "),
-        paperOpts(cfg)
+        {
+          ...paperOpts(cfg),
+          ...(overridePositionUsdt !== undefined ? { overridePositionUsdt } : {}),
+        }
       );
+
+      // ── 初始化分批止盈进度 ──
+      if (trade && cfg.risk.take_profit_stages?.length && account.positions[signal.symbol]) {
+        account.positions[signal.symbol]!.tpStages = cfg.risk.take_profit_stages.map((s) => ({
+          stagePct: s.at_percent,
+          closeRatio: s.close_ratio,
+          triggered: false,
+        }));
+      }
     }
   } else if (signal.type === "sell") {
     trade = paperSell(
@@ -88,6 +117,41 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
 
   saveAccount(account, sid);
   return { trade, skipped, stopLossTriggered: false, stopLossTrade: null, account };
+}
+
+/**
+ * 分批止盈检查（内部辅助函数）
+ * 遍历 tpStages，触发未执行的档位，执行部分平仓
+ */
+function checkStagedTakeProfit(
+  account: PaperAccount,
+  symbol: string,
+  pos: PaperPosition,
+  currentPrice: number,
+  cfg: RuntimeConfig,
+  triggered: { symbol: string; trade: PaperTrade; reason: "stop_loss" | "take_profit" | "trailing_stop"; pnlPercent: number }[]
+): void {
+  if (!pos.tpStages) return;
+  const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+
+  for (const stage of pos.tpStages) {
+    if (stage.triggered) continue;
+    if (pnlPercent < stage.stagePct) continue;
+
+    // 部分平仓：按比例减少持仓量
+    const partialQty = pos.quantity * stage.closeRatio;
+    if (partialQty <= 0) continue;
+
+    const label = `分批止盈第${pos.tpStages.indexOf(stage) + 1}档：盈利 ${pnlPercent.toFixed(2)}%，平掉 ${(stage.closeRatio * 100).toFixed(0)}% 仓位`;
+    const trade = paperSell(account, symbol, currentPrice, label, {
+      ...paperOpts(cfg),
+      overrideQty: partialQty, // 部分平仓数量
+    });
+    if (trade) {
+      stage.triggered = true;
+      triggered.push({ symbol, trade, reason: "take_profit", pnlPercent });
+    }
+  }
 }
 
 /**
@@ -117,7 +181,7 @@ export function checkExitConditions(
     if (!currentPrice) continue;
 
     const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
-    let exitReason: "stop_loss" | "take_profit" | "trailing_stop" | null = null;
+    let exitReason: "stop_loss" | "take_profit" | "trailing_stop" | "time_stop" | null = null;
     let exitLabel = "";
 
     if (currentPrice <= pos.stopLoss) {
@@ -137,9 +201,24 @@ export function checkExitConditions(
       }
     }
 
+    // ── 时间止损 ──
+    if (!exitReason && cfg.risk.time_stop_hours) {
+      const holdingHours = (Date.now() - pos.entryTime) / 3_600_000;
+      if (holdingHours >= cfg.risk.time_stop_hours && pnlPercent <= 0) {
+        exitReason = "time_stop";
+        exitLabel = `时间止损：持仓 ${holdingHours.toFixed(1)}h 未盈利`;
+      }
+    }
+
     if (exitReason) {
       const trade = paperSell(account, symbol, currentPrice, exitLabel, paperOpts(cfg));
-      if (trade) triggered.push({ symbol, trade, reason: exitReason, pnlPercent });
+      if (trade) triggered.push({ symbol, trade, reason: exitReason as "stop_loss" | "take_profit" | "trailing_stop", pnlPercent });
+      continue; // 全仓出场，不再检查分批止盈
+    }
+
+    // ── 分批止盈（无法全仓出场时才检查）──
+    if (pos.tpStages) {
+      checkStagedTakeProfit(account, symbol, pos, currentPrice, cfg, triggered);
     }
   }
 

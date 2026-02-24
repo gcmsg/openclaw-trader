@@ -192,3 +192,52 @@ scenarios:
       max_position_per_symbol: 0.25
       max_total_loss_percent: 18
       daily_loss_limit_percent: 6
+
+  # ══════════════════════════════════════════
+  # Binance Testnet（真实 API，虚拟资金）
+  # 申请地址：https://testnet.binance.vision
+  # 凭证文件：.secrets/binance-testnet.json
+  # ══════════════════════════════════════════
+
+  - id: "testnet-default"
+    name: "Testnet × 默认策略"
+    enabled: false              # ⚠️ 需先配置 .secrets/binance-testnet.json 再启用
+    strategy_id: "default"      # 使用 strategy.yaml 默认配置
+    initial_usdt: 10000         # 与 Testnet 账户实际余额保持一致
+    fee_rate: 0.001
+    slippage_percent: 0
+    exchange:
+      market: "spot"
+      testnet: true             # ← 关键：true = testapi.binance.vision
+      credentials_path: ".secrets/binance-testnet.json"
+      leverage:
+        enabled: false
+        default: 1
+        max: 1
+    # ATR 动态仓位（Testnet 开启验证效果）
+    risk:
+      stop_loss_percent: 5
+      take_profit_percent: 15
+      trailing_stop:
+        enabled: true
+        activation_percent: 8
+        callback_percent: 2
+      position_ratio: 0.2       # ATR 不生效时的 fallback 仓位
+      max_positions: 3
+      max_position_per_symbol: 0.3
+      max_total_loss_percent: 20
+      daily_loss_limit_percent: 8
+      # ATR 动态仓位（可选，优先于 position_ratio）
+      atr_position:
+        enabled: true
+        risk_per_trade_percent: 2   # 每笔最多亏 2% 总资金
+        atr_multiplier: 1.5         # 止损距离 = 1.5×ATR
+        max_position_ratio: 0.3     # 仓位上限 30%
+      # 分批止盈
+      take_profit_stages:
+        - at_percent: 8            # 盈利 8% 时
+          close_ratio: 0.5         # 平掉 50% 仓位
+        - at_percent: 12           # 盈利 12% 时
+          close_ratio: 0.5         # 再平掉剩余 50%
+      # 时间止损
+      time_stop_hours: 72          # 持仓超过 72h 且无盈利则强制出场

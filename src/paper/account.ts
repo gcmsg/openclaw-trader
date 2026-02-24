@@ -20,13 +20,21 @@ export interface PaperPosition {
   quantity: number;
   entryPrice: number;
   entryTime: number;
-  stopLoss: number; // 止损价格
-  takeProfit: number; // 止盈价格
+  stopLoss: number;   // 止损价格
+  takeProfit: number; // 最终全仓止盈价格
   trailingStop?: {
     active: boolean;
     highestPrice: number; // 持仓期间最高价
-    stopPrice: number; // 当前追踪止损价
+    stopPrice: number;    // 当前追踪止损价
   };
+  // 分批止盈进度（与 risk.take_profit_stages 对应）
+  tpStages?: {
+    stagePct: number;    // 该档触发盈利比例
+    closeRatio: number;  // 该档平仓比例
+    triggered: boolean;  // 是否已触发
+  }[];
+  // ATR 入场时值（用于止损距离参考）
+  entryAtr?: number;
 }
 
 export interface PaperTrade {
@@ -116,6 +124,7 @@ export function paperBuy(
   reason: string,
   opts: {
     positionRatio?: number;
+    overridePositionUsdt?: number; // 若设置，忽略 positionRatio，直接使用此金额（ATR 仓位）
     feeRate?: number;
     slippagePercent?: number;
     minOrderUsdt?: number;
@@ -125,6 +134,7 @@ export function paperBuy(
 ): PaperTrade | null {
   const {
     positionRatio = 0.2,
+    overridePositionUsdt,
     feeRate = 0.001,
     slippagePercent = 0.05,
     minOrderUsdt = 10,
@@ -135,7 +145,7 @@ export function paperBuy(
   if (account.positions[symbol]) return null;
 
   const totalEquity = calcTotalEquity(account, { [symbol]: price });
-  const usdtToSpend = totalEquity * positionRatio;
+  const usdtToSpend = overridePositionUsdt ?? totalEquity * positionRatio;
 
   if (usdtToSpend < minOrderUsdt || usdtToSpend > account.usdt) return null;
 
@@ -180,7 +190,8 @@ export function paperBuy(
 }
 
 /**
- * 模拟卖出（全仓）
+ * 模拟卖出（支持全仓或部分平仓）
+ * @param opts.overrideQty 若设置，只平掉这个数量（用于分批止盈）；不设置则全仓平
  */
 export function paperSell(
   account: PaperAccount,
@@ -190,23 +201,28 @@ export function paperSell(
   opts: {
     feeRate?: number;
     slippagePercent?: number;
+    overrideQty?: number; // 部分平仓数量（分批止盈使用）
   } = {}
 ): PaperTrade | null {
-  const { feeRate = 0.001, slippagePercent = 0.05 } = opts;
+  const { feeRate = 0.001, slippagePercent = 0.05, overrideQty } = opts;
 
   const position = account.positions[symbol];
   if (!position) return null;
+
+  // 部分平仓数量（不超过实际持仓）
+  const sellQty = overrideQty ? Math.min(overrideQty, position.quantity) : position.quantity;
+  const isPartial = sellQty < position.quantity;
 
   // 滑点：卖出时成交价略低于当前价
   const slippageAmount = (price * slippagePercent) / 100;
   const execPrice = price - slippageAmount;
 
-  const grossUsdt = position.quantity * execPrice;
+  const grossUsdt = sellQty * execPrice;
   const fee = grossUsdt * feeRate;
-  const slippageUsdt = position.quantity * slippageAmount;
+  const slippageUsdt = sellQty * slippageAmount;
   const netUsdt = grossUsdt - fee;
 
-  const costBasis = position.quantity * position.entryPrice;
+  const costBasis = sellQty * position.entryPrice;
   const pnl = netUsdt - costBasis;
   const pnlPercent = pnl / costBasis;
 
@@ -216,13 +232,20 @@ export function paperSell(
   }
 
   account.usdt += netUsdt;
-  delete account.positions[symbol];
+
+  if (isPartial) {
+    // 部分平仓：更新剩余持仓量
+    position.quantity -= sellQty;
+  } else {
+    // 全仓出场：删除持仓
+    Reflect.deleteProperty(account.positions, symbol);
+  }
 
   const trade: PaperTrade = {
     id: generateId(),
     symbol,
     side: "sell",
-    quantity: position.quantity,
+    quantity: sellQty,
     price: execPrice,
     usdtAmount: netUsdt,
     fee,

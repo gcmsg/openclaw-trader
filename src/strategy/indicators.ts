@@ -107,6 +107,75 @@ export function macd(
 }
 
 /**
+ * ATR（平均真实波幅）— Wilder 平滑
+ *
+ * 真实波幅（TR）= max(high-low, |high-prevClose|, |low-prevClose|)
+ * ATR = Wilder 平滑的 TR 均值（与 TradingView 标准一致）
+ *
+ * 用途：动态仓位计算、止损距离设定
+ */
+export function atr(klines: Kline[], period = 14): number {
+  if (klines.length < period + 1) return NaN;
+
+  // 计算每根 K 线的真实波幅
+  const trueRanges: number[] = [];
+  for (let i = 1; i < klines.length; i++) {
+    const curr = klines[i]!;
+    const prev = klines[i - 1]!;
+    trueRanges.push(Math.max(
+      curr.high - curr.low,
+      Math.abs(curr.high - prev.close),
+      Math.abs(curr.low - prev.close)
+    ));
+  }
+
+  // 初始 ATR = 前 period 根 TR 的 SMA
+  let atrValue = trueRanges.slice(0, period).reduce((s, v) => s + v, 0) / period;
+
+  // Wilder 平滑
+  for (let i = period; i < trueRanges.length; i++) {
+    atrValue = (atrValue * (period - 1) + trueRanges[i]!) / period;
+  }
+
+  return atrValue;
+}
+
+/**
+ * 基于 ATR 的动态仓位计算
+ *
+ * 核心思想：每笔交易愿意亏损的金额固定（riskAmount），
+ * 通过 ATR 算出止损距离，反推最大仓位。
+ *
+ * positionUsdt = riskAmount / (atrValue × atrMultiplier)
+ *
+ * @param totalUsdt     当前可用资金
+ * @param price         入场价格
+ * @param atrValue      当前 ATR 值
+ * @param riskPercent   每笔愿意亏损的比例（如 0.02 = 2%）
+ * @param atrMultiplier 止损距离 = ATR × 倍数（默认 1.5x）
+ * @param maxRatio      仓位上限（防止 ATR 极小时过度重仓，默认 0.3 = 30%）
+ * @returns 建议买入 USDT 金额
+ */
+export function calcAtrPositionSize(
+  totalUsdt: number,
+  price: number,
+  atrValue: number,
+  riskPercent = 0.02,
+  atrMultiplier = 1.5,
+  maxRatio = 0.3
+): number {
+  if (isNaN(atrValue) || atrValue <= 0 || price <= 0) return totalUsdt * 0.1; // fallback
+
+  const riskAmount = totalUsdt * riskPercent;
+  const stopDistance = atrValue * atrMultiplier; // 价格距离（绝对值）
+  const stopPercent = stopDistance / price; // 止损比例
+
+  const positionUsdt = riskAmount / stopPercent;
+  const capped = Math.min(positionUsdt, totalUsdt * maxRatio);
+  return Math.max(capped, 10); // 最低 10 USDT
+}
+
+/**
  * 成交量分析
  * 返回当前成交量相对于近期平均的倍数
  */
@@ -168,6 +237,10 @@ export function calculateIndicators(
     const macdResult = macd(closes, macdConfig.fast, macdConfig.slow, macdConfig.signal);
     if (macdResult) result.macd = macdResult;
   }
+
+  // ATR（始终计算，用于动态仓位和止损建议）
+  const atrValue = atr(klines, 14);
+  if (!isNaN(atrValue)) result.atr = atrValue;
 
   return result;
 }

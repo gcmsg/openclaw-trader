@@ -1,0 +1,331 @@
+/**
+ * 实盘/Testnet 交易执行器
+ *
+ * 职责：
+ * - 接收信号（Signal），通过 BinanceClient 执行真实下单
+ * - 持仓状态同步到本地 JSON（与 paper 格式兼容，便于复用统计工具）
+ * - 止损/止盈/追踪止损检查（通过下限价单或轮询触发）
+ *
+ * 使用方式：
+ *   mode: "testnet"  → 连 testapi.binance.vision（虚拟资金，真实价格）
+ *   mode: "live"     → 连 api.binance.com（⚠️ 真实资金）
+ */
+
+import type { Signal, RuntimeConfig } from "../types.js";
+import {
+  BinanceClient,
+  type OrderResponse,
+} from "../exchange/binance-client.js";
+import {
+  loadAccount,
+  saveAccount,
+  resetDailyLossIfNeeded,
+  calcTotalEquity,
+  type PaperTrade,
+  type PaperAccount,
+} from "../paper/account.js";
+import { calcAtrPositionSize } from "../strategy/indicators.js";
+
+// ─────────────────────────────────────────────────────
+// 结果类型（与 PaperEngineResult 兼容）
+// ─────────────────────────────────────────────────────
+
+export interface LiveEngineResult {
+  trade: PaperTrade | null;
+  skipped?: string;
+  stopLossTriggered: boolean;
+  stopLossTrade: PaperTrade | null;
+  account: PaperAccount;
+  orderId?: number; // Binance 订单 ID
+}
+
+// ─────────────────────────────────────────────────────
+// 辅助函数
+// ─────────────────────────────────────────────────────
+
+function generateId(): string {
+  return `live_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 将 Binance OrderResponse 转换为 PaperTrade 格式（便于统计复用） */
+function orderToPaperTrade(
+  order: OrderResponse,
+  side: "buy" | "sell",
+  reason: string,
+  pnl?: number,
+  pnlPercent?: number
+): PaperTrade {
+  const avgPrice =
+    order.fills && order.fills.length > 0
+      ? order.fills.reduce((s, f) => s + parseFloat(f.price) * parseFloat(f.qty), 0) /
+        parseFloat(order.executedQty)
+      : parseFloat(order.price);
+
+  const qty = parseFloat(order.executedQty);
+  const commission = order.fills?.reduce((s, f) => s + parseFloat(f.commission), 0) ?? 0;
+  const usdtAmount = qty * avgPrice;
+
+  const base: PaperTrade = {
+    id: generateId(),
+    symbol: order.symbol,
+    side,
+    quantity: qty,
+    price: avgPrice,
+    usdtAmount: side === "sell" ? usdtAmount - commission : usdtAmount + commission,
+    fee: commission,
+    slippage: 0, // 实盘没有模拟滑点
+    timestamp: order.transactTime,
+    reason,
+  };
+  if (pnl !== undefined && pnlPercent !== undefined) {
+    base.pnl = pnl;
+    base.pnlPercent = pnlPercent;
+  }
+  return base;
+}
+
+// ─────────────────────────────────────────────────────
+// LiveExecutor 类
+// ─────────────────────────────────────────────────────
+
+export class LiveExecutor {
+  private readonly client: BinanceClient;
+  private readonly cfg: RuntimeConfig;
+  private readonly scenarioId: string;
+  private readonly isTestnet: boolean;
+
+  constructor(cfg: RuntimeConfig) {
+    this.cfg = cfg;
+    this.scenarioId = cfg.paper.scenarioId;
+    this.isTestnet = cfg.exchange.testnet ?? false;
+
+    const credsPath = cfg.exchange.credentials_path ?? ".secrets/binance.json";
+    const market = cfg.exchange.market === "futures" ? "futures" : "spot";
+
+    this.client = new BinanceClient(credsPath, this.isTestnet, market);
+  }
+
+  /** 测试连接 */
+  async ping(): Promise<boolean> {
+    return this.client.ping();
+  }
+
+  /** 获取账户 USDT 余额（同步本地账户） */
+  async syncBalance(): Promise<number> {
+    return this.client.getUsdtBalance();
+  }
+
+  /**
+   * 处理买入信号
+   * 流程：检查仓位上限 → 计算仓位大小 → 下市价单 → 更新本地账户
+   */
+  async handleBuy(signal: Signal): Promise<LiveEngineResult> {
+    const account = loadAccount(this.cfg.paper.initial_usdt, this.scenarioId);
+    resetDailyLossIfNeeded(account);
+
+    const openCount = Object.keys(account.positions).length;
+    if (openCount >= this.cfg.risk.max_positions) {
+      const skipped = `已达最大持仓数 ${this.cfg.risk.max_positions}，跳过 ${signal.symbol}`;
+      return { trade: null, skipped, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+
+    if (account.positions[signal.symbol]) {
+      const skipped = `${signal.symbol} 已有持仓，跳过`;
+      return { trade: null, skipped, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+
+    // 从 Binance 获取真实余额（同步）
+    const realBalance = await this.client.getUsdtBalance();
+    const equity = Math.min(realBalance, calcTotalEquity(account, { [signal.symbol]: signal.price }));
+
+    // 检查每日亏损限制
+    if ((account.dailyLoss.loss / equity) * 100 >= this.cfg.risk.daily_loss_limit_percent) {
+      const skipped = `今日亏损已达 ${this.cfg.risk.daily_loss_limit_percent}%，暂停当日开仓`;
+      return { trade: null, skipped, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+
+    // 计算仓位大小
+    let usdtToSpend: number;
+    const atrCfg = this.cfg.risk.atr_position;
+    if (atrCfg?.enabled && signal.indicators.atr) {
+      usdtToSpend = calcAtrPositionSize(
+        equity,
+        signal.price,
+        signal.indicators.atr,
+        atrCfg.risk_per_trade_percent / 100,
+        atrCfg.atr_multiplier,
+        atrCfg.max_position_ratio
+      );
+    } else {
+      usdtToSpend = equity * this.cfg.risk.position_ratio;
+    }
+
+    // 检查最小下单金额
+    const minOrder = this.cfg.execution.min_order_usdt;
+    if (usdtToSpend < minOrder) {
+      const skipped = `仓位 $${usdtToSpend.toFixed(2)} 低于最小下单金额 $${minOrder}`;
+      return { trade: null, skipped, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+
+    // 🔥 执行真实下单
+    let order: OrderResponse;
+    try {
+      order = await this.client.marketBuy(signal.symbol, usdtToSpend);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`[LiveExecutor] 买入 ${signal.symbol} 失败: ${msg}`, { cause: err });
+    }
+
+    // 计算实际成交均价
+    const avgPrice =
+      order.fills && order.fills.length > 0
+        ? order.fills.reduce((s, f) => s + parseFloat(f.price) * parseFloat(f.qty), 0) /
+          parseFloat(order.executedQty)
+        : signal.price;
+
+    const execQty = parseFloat(order.executedQty);
+    const totalFee = order.fills?.reduce((s, f) => s + parseFloat(f.commission), 0) ?? 0;
+
+    // 更新本地账户（镜像真实状态）
+    const stopLossPrice = avgPrice * (1 - this.cfg.risk.stop_loss_percent / 100);
+    const takeProfitPrice = avgPrice * (1 + this.cfg.risk.take_profit_percent / 100);
+
+    account.usdt = realBalance - usdtToSpend;
+    account.positions[signal.symbol] = {
+      symbol: signal.symbol,
+      quantity: execQty,
+      entryPrice: avgPrice,
+      entryTime: order.transactTime,
+      stopLoss: stopLossPrice,
+      takeProfit: takeProfitPrice,
+    };
+
+    const trade = orderToPaperTrade(order, "buy", signal.reason.join(", "));
+    account.trades.push(trade);
+    saveAccount(account, this.scenarioId);
+
+    const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+    console.log(
+      `${label} 买入 ${signal.symbol}: 数量=${execQty.toFixed(6)}, 均价=$${avgPrice.toFixed(4)}, 手续费=$${totalFee.toFixed(4)}`
+    );
+
+    return { trade, stopLossTriggered: false, stopLossTrade: null, account, orderId: order.orderId };
+  }
+
+  /**
+   * 处理卖出信号或止损/止盈触发
+   */
+  async handleSell(
+    symbol: string,
+    currentPrice: number,
+    reason: string
+  ): Promise<LiveEngineResult> {
+    const account = loadAccount(this.cfg.paper.initial_usdt, this.scenarioId);
+    const position = account.positions[symbol];
+
+    if (!position) {
+      return { trade: null, skipped: `${symbol} 无持仓`, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+
+    // 🔥 执行真实卖出
+    let order: OrderResponse;
+    try {
+      order = await this.client.marketSell(symbol, position.quantity);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`[LiveExecutor] 卖出 ${symbol} 失败: ${msg}`, { cause: err });
+    }
+
+    const avgPrice =
+      order.fills && order.fills.length > 0
+        ? order.fills.reduce((s, f) => s + parseFloat(f.price) * parseFloat(f.qty), 0) /
+          parseFloat(order.executedQty)
+        : currentPrice;
+
+    const execQty = parseFloat(order.executedQty);
+    const grossUsdt = execQty * avgPrice;
+    const totalFee = order.fills?.reduce((s, f) => s + parseFloat(f.commission), 0) ?? 0;
+    const netUsdt = grossUsdt - totalFee;
+
+    const costBasis = position.quantity * position.entryPrice;
+    const pnl = netUsdt - costBasis;
+    const pnlPercent = pnl / costBasis;
+
+    if (pnl < 0) account.dailyLoss.loss += Math.abs(pnl);
+
+    // 从 Binance 同步真实余额
+    const realBalance = await this.client.getUsdtBalance();
+    account.usdt = realBalance;
+    Reflect.deleteProperty(account.positions, symbol);
+
+    const trade = orderToPaperTrade(order, "sell", reason, pnl, pnlPercent);
+    account.trades.push(trade);
+    saveAccount(account, this.scenarioId);
+
+    const isStopLoss = reason.includes("止损");
+    const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+    console.log(
+      `${label} 卖出 ${symbol}: 数量=${execQty.toFixed(6)}, 均价=$${avgPrice.toFixed(4)}, ` +
+      `盈亏=${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)} (${(pnlPercent * 100).toFixed(2)}%)`
+    );
+
+    return {
+      trade,
+      stopLossTriggered: isStopLoss,
+      stopLossTrade: isStopLoss ? trade : null,
+      account,
+      orderId: order.orderId,
+    };
+  }
+
+  /**
+   * 检查所有持仓的止损/止盈/追踪止损（轮询模式）
+   * 注意：生产环境建议用止损单替代轮询；testnet 用轮询即可
+   */
+  async checkExitConditions(prices: Record<string, number>): Promise<
+    { symbol: string; trade: PaperTrade; reason: string; pnlPercent: number }[]
+  > {
+    const account = loadAccount(this.cfg.paper.initial_usdt, this.scenarioId);
+    resetDailyLossIfNeeded(account);
+    const results: { symbol: string; trade: PaperTrade; reason: string; pnlPercent: number }[] = [];
+
+    for (const [symbol, pos] of Object.entries(account.positions)) {
+      const currentPrice = prices[symbol];
+      if (!currentPrice) continue;
+
+      const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+      let exitReason: string | null = null;
+
+      if (currentPrice <= pos.stopLoss) {
+        exitReason = `止损触发：亏损 ${pnlPercent.toFixed(2)}%（止损价 $${pos.stopLoss.toFixed(4)}）`;
+      } else if (currentPrice >= pos.takeProfit) {
+        exitReason = `止盈触发：盈利 ${pnlPercent.toFixed(2)}%（止盈价 $${pos.takeProfit.toFixed(4)}）`;
+      }
+
+      if (exitReason) {
+        try {
+          const result = await this.handleSell(symbol, currentPrice, exitReason);
+          if (result.trade) {
+            results.push({ symbol, trade: result.trade, reason: exitReason, pnlPercent });
+          }
+        } catch (err: unknown) {
+          console.error(`[LiveExecutor] 止损/止盈执行失败 ${symbol}:`, err);
+        }
+      }
+    }
+
+    return results;
+  }
+}
+
+// ─────────────────────────────────────────────────────
+// 工厂函数
+// ─────────────────────────────────────────────────────
+
+/**
+ * 从 RuntimeConfig 创建 LiveExecutor
+ * 根据 cfg.mode 自动判断 testnet / live
+ */
+export function createLiveExecutor(cfg: RuntimeConfig): LiveExecutor {
+  return new LiveExecutor(cfg);
+}

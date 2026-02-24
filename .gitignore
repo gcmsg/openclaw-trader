@@ -3,3 +3,7 @@ dist/
 logs/
 .env
 *.log
+
+# API 凭证（仅保留 .example 文件）
+.secrets/*.json
+!.secrets/*.json.example

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "monitor": "tsx src/monitor.ts",
+    "live": "tsx src/scripts/live-monitor.ts",
     "news": "tsx src/news/monitor.ts",
     "paper:status": "tsx src/paper/status.ts",
     "paper:compare": "tsx src/paper/compare.ts",

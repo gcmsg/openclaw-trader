@@ -12,6 +12,68 @@ import { loadAccount, type PaperTrade } from "../paper/account.js";
 import { loadPaperConfig, loadStrategyProfile } from "../config/loader.js";
 import { ping } from "../health/heartbeat.js";
 
+// ─────────────────────────────────────────────────────
+// 轻量绩效指标（从 PaperTrade 直接计算，无需完整回测数据）
+// ─────────────────────────────────────────────────────
+interface PerformanceMetrics {
+  sharpeRatio: number;
+  sortinoRatio: number;
+  maxDrawdownPct: number;
+  profitFactor: number;
+  winLossRatio: number; // avgWin / avgLoss
+  expectancy: number;   // 期望收益（每笔交易平均可期望的盈亏）
+}
+
+function calcPerformanceMetrics(
+  trades: PaperTrade[],
+  initialUsdt: number
+): PerformanceMetrics | null {
+  const sells = trades.filter((t) => t.side === "sell" && t.pnl !== undefined);
+  if (sells.length < 3) return null; // 数据太少，指标没有统计意义
+
+  const pnls = sells.map((t) => t.pnl ?? 0);
+  const wins = pnls.filter((p) => p > 0);
+  const losses = pnls.filter((p) => p <= 0);
+
+  // ── 盈亏比 / 利润因子 ──
+  const grossProfit = wins.reduce((s, p) => s + p, 0);
+  const grossLoss = Math.abs(losses.reduce((s, p) => s + p, 0));
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0;
+
+  const avgWin = wins.length > 0 ? grossProfit / wins.length : 0;
+  const avgLoss = losses.length > 0 ? grossLoss / losses.length : 0;
+  const winLossRatio = avgLoss > 0 ? avgWin / avgLoss : 0;
+  const winRate = sells.length > 0 ? wins.length / sells.length : 0;
+  const expectancy = avgWin * winRate - avgLoss * (1 - winRate);
+
+  // ── 权益曲线 → 逐笔收益率 ──
+  const pnlPcts = sells.map((t) => t.pnlPercent ?? (t.pnl ?? 0) / initialUsdt);
+  const mean = pnlPcts.reduce((s, r) => s + r, 0) / pnlPcts.length;
+  const variance = pnlPcts.reduce((s, r) => s + Math.pow(r - mean, 2), 0) / pnlPcts.length;
+  const stdDev = Math.sqrt(variance);
+  const sharpeRatio = stdDev > 0 ? (mean / stdDev) * Math.sqrt(pnlPcts.length) : 0;
+
+  const downReturns = pnlPcts.filter((r) => r < 0);
+  const downDev =
+    downReturns.length > 0
+      ? Math.sqrt(downReturns.reduce((s, r) => s + r * r, 0) / downReturns.length)
+      : 0;
+  const sortinoRatio = downDev > 0 ? (mean / downDev) * Math.sqrt(pnlPcts.length) : 0;
+
+  // ── 最大回撤（基于累计权益曲线）──
+  let equity = initialUsdt;
+  let peak = initialUsdt;
+  let maxDrawdownPct = 0;
+  for (const pnl of pnls) {
+    equity += pnl;
+    if (equity > peak) peak = equity;
+    const dd = (peak - equity) / peak;
+    if (dd > maxDrawdownPct) maxDrawdownPct = dd;
+  }
+
+  return { sharpeRatio, sortinoRatio, maxDrawdownPct: maxDrawdownPct * 100, profitFactor, winLossRatio, expectancy };
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPORT_DIR = path.resolve(__dirname, "../../logs/reports");
 const LOG_PATH = path.resolve(__dirname, "../../logs/weekly-report.log");
@@ -127,6 +189,7 @@ interface ScenarioReport {
   leverage: string;
   account: { initialUsdt: number; currentUsdt: number; totalPnl: number; totalPnlPercent: number };
   stats: TradeStats;
+  metrics: PerformanceMetrics | null; // 夏普/索提诺/最大回撤等（交易数 < 3 时为 null）
 }
 
 // ─────────────────────────────────────────────────────
@@ -169,6 +232,7 @@ export function generateWeeklyReport(): ScenarioReport[] {
         totalPnlPercent: totalPnl / account.initialUsdt,
       },
       stats,
+      metrics: calcPerformanceMetrics(account.trades.filter((t) => t.timestamp >= weekAgo), account.initialUsdt),
     });
 
     log(
@@ -209,6 +273,14 @@ function formatReportForAgent(reports: ScenarioReport[]): string {
           )
           .join("\n") || "  暂无已平仓交易";
 
+      const mStr = r.metrics
+        ? [
+            `- 夏普比率: ${r.metrics.sharpeRatio.toFixed(2)} | 索提诺: ${r.metrics.sortinoRatio.toFixed(2)}`,
+            `- 最大回撤: ${r.metrics.maxDrawdownPct.toFixed(2)}% | 利润因子: ${r.metrics.profitFactor.toFixed(2)}`,
+            `- 盈亏比: ${r.metrics.winLossRatio.toFixed(2)} | 期望收益: ${r.metrics.expectancy >= 0 ? "+" : ""}$${r.metrics.expectancy.toFixed(2)}/笔`,
+          ].join("\n")
+        : "- 绩效指标: 交易数不足（需 ≥ 3 笔）";
+
       return `
 ### ${r.scenarioName} [${r.strategyName} × ${r.market} ${r.leverage}]
 ${pnlEmoji} 总盈亏: ${pnlSign}$${r.account.totalPnl.toFixed(2)} (${pnlSign}${(r.account.totalPnlPercent * 100).toFixed(2)}%)
@@ -216,6 +288,7 @@ ${pnlEmoji} 总盈亏: ${pnlSign}$${r.account.totalPnl.toFixed(2)} (${pnlSign}${
 - 胜率: ${r.stats.sells > 0 ? (r.stats.winRate * 100).toFixed(1) + "%" : "无完成交易"}
 - 最大单笔盈利: +$${r.stats.maxProfit.toFixed(2)} | 最大单笔亏损: $${r.stats.maxLoss.toFixed(2)}
 - 平均持仓: ${r.stats.avgHoldingHours.toFixed(1)} 小时
+${mStr}
 各币种:\n${symbolSummary}`.trim();
     })
     .join("\n\n---\n\n");

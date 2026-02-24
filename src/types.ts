@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────
 
 export type SignalType = "buy" | "sell" | "none";
-export type TradeMode = "notify_only" | "paper" | "auto";
+export type TradeMode = "notify_only" | "paper" | "testnet" | "live" | "auto";
 export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 export type MarketType = "spot" | "margin" | "futures";
 export type ContractType = "perpetual" | "quarterly";
@@ -43,6 +43,7 @@ export interface Indicators {
   prevMaShort?: number;
   prevMaLong?: number;
   macd?: MacdResult;
+  atr?: number; // ATR（平均真实波幅），用于动态仓位和止损距离计算
 }
 
 export interface Signal {
@@ -58,6 +59,12 @@ export interface Signal {
 // Shared Config Sections (strategy.yaml)
 // ─────────────────────────────────────────────────────
 
+/** 分批止盈的单个档位 */
+export interface TakeProfitStage {
+  at_percent: number;   // 达到此盈利比例时触发（如 8 = +8%）
+  close_ratio: number;  // 平掉仓位的比例（如 0.5 = 平掉 50%）
+}
+
 export interface RiskConfig {
   stop_loss_percent: number;
   take_profit_percent: number;
@@ -71,6 +78,20 @@ export interface RiskConfig {
   max_position_per_symbol: number;
   max_total_loss_percent: number;
   daily_loss_limit_percent: number;
+
+  // ── ATR 动态仓位（可选，优先于 position_ratio）──
+  atr_position?: {
+    enabled: boolean;
+    risk_per_trade_percent: number; // 每笔最多亏占总资金的比例（如 2 = 2%）
+    atr_multiplier: number;         // 止损 = ATR × 此倍数（默认 1.5）
+    max_position_ratio: number;     // 仓位上限（防 ATR 极小时过重仓，如 0.3）
+  };
+
+  // ── 分批止盈（可选，配合 take_profit_percent 使用）──
+  take_profit_stages?: TakeProfitStage[];
+
+  // ── 时间止损（可选）──
+  time_stop_hours?: number; // 持仓超过 N 小时后若无盈利则强制出场
 }
 
 export interface ExecutionConfig {
@@ -131,8 +152,9 @@ export interface StrategyConfig {
 // ─────────────────────────────────────────────────────
 
 export interface ExchangeConfig {
-  name?: string; // 默认 "binance"
-  credentials_path?: string;
+  name?: string;             // 默认 "binance"
+  credentials_path?: string; // API Key/Secret 路径
+  testnet?: boolean;         // true = 使用 testapi.binance.vision，false = 生产环境
   market: MarketType;
   futures?: {
     contract_type: ContractType;
