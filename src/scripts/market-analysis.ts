@@ -13,6 +13,8 @@ import { getMacroContext, formatMacroReport } from "../exchange/macro-data.js";
 import { getBatchFuturesData, formatFundingRateReport } from "../exchange/futures-data.js";
 import { getBatchMultiTfContext, formatMultiTfReport } from "../strategy/market-context.js";
 import { getDerivativesSnapshot, formatDerivativesReport } from "../exchange/derivatives-data.js";
+import { getOnChainContext, formatOnChainReport } from "../exchange/onchain-data.js";
+import { getNewsDigest, formatNewsDigest } from "../news/digest.js";
 import { loadNewsReport } from "../news/sentiment-gate.js";
 import { loadStrategyConfig } from "../config/loader.js";
 import { getKlines } from "../exchange/binance.js";
@@ -57,11 +59,13 @@ async function main() {
   ]);
 
   // 先拿到价格，再并发拉其余数据
-  const [futuresData, multiTf, btcDeriv, ethDeriv] = await Promise.all([
+  const [futuresData, multiTf, btcDeriv, ethDeriv, onchain, newsDigest] = await Promise.all([
     getBatchFuturesData(FUTURES_SYMBOLS, prices),
     getBatchMultiTfContext(symbols, baseCfg, ["1h", "4h", "1d"] as Timeframe[]),
     getDerivativesSnapshot("BTCUSDT").catch(() => null),
     getDerivativesSnapshot("ETHUSDT").catch(() => null),
+    getOnChainContext().catch(() => null),
+    isQuick ? Promise.resolve(null) : getNewsDigest(12).catch(() => null),
   ]);
 
   // 读取情绪报告（本地缓存）
@@ -103,6 +107,18 @@ async function main() {
     sections.push(`\n${separator}`);
     if (btcDeriv) sections.push(formatDerivativesReport(btcDeriv));
     if (ethDeriv) sections.push(formatDerivativesReport(ethDeriv));
+  }
+
+  // 4.7 链上数据（稳定币流向 + BTC 网络）
+  if (onchain) {
+    sections.push(`\n${separator}`);
+    sections.push(formatOnChainReport(onchain));
+  }
+
+  // 4.9 新闻摘要（完整模式才拉，供 AI 分析用）
+  if (newsDigest) {
+    sections.push(`\n${separator}`);
+    sections.push(formatNewsDigest(newsDigest));
   }
 
   // 5. 多 TF 技术面扫描
