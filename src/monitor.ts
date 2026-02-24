@@ -16,6 +16,7 @@ import {
   checkExitConditions,
   checkMaxDrawdown,
   checkDailyLossLimit,
+  checkDcaTranches,
   formatSummaryMessage,
 } from "./paper/engine.js";
 import { loadNewsReport, evaluateSentimentGate } from "./news/sentiment-gate.js";
@@ -320,6 +321,15 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
           reason: [`止盈: +${pnlPercent.toFixed(2)}%`],
           timestamp: Date.now(),
         });
+      }
+    }
+
+    // ── DCA 追加检查 ─────────────────────────────────────
+    if (cfg.risk.dca?.enabled) {
+      const dcaResults = checkDcaTranches(currentPrices, cfg);
+      for (const { symbol, trade, tranche, totalTranches } of dcaResults) {
+        log(`${prefix}${symbol}: 💰 DCA 第 ${tranche}/${totalTranches} 批 @${trade.price.toFixed(4)} (${trade.usdtAmount.toFixed(2)} USDT)`);
+        notifyPaperTrade(trade, loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId));
       }
     }
 

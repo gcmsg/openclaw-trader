@@ -102,6 +102,17 @@ export interface RiskConfig {
     /** 用于计算相关性的 K 线数量（默认 60） */
     lookback: number;
   };
+
+  // ── 分批建仓 DCA（可选）──
+  dca?: {
+    enabled: boolean;
+    /** 分几批建仓（默认 3），第一批 = 正常 positionRatio，后续每批相同比例 */
+    tranches: number;
+    /** 触发下一批的价格下跌百分比（默认 3%） */
+    drop_pct: number;
+    /** DCA 最长持续时间（小时），超时停止追加（默认 48h） */
+    max_hours: number;
+  };
 }
 
 export interface ExecutionConfig {

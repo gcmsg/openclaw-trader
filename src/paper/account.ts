@@ -46,6 +46,21 @@ export interface PaperPosition {
   // 实盘止损/止盈挂单 ID（用于查询成交状态和取消冗余挂单）
   stopLossOrderId?: number;
   takeProfitOrderId?: number;
+  // 分批建仓（DCA）状态
+  dcaState?: {
+    /** 目标分批数（含第一批） */
+    totalTranches: number;
+    /** 已完成批次数（含第一批）*/
+    completedTranches: number;
+    /** 最近一批的成交价，用于计算下跌触发点 */
+    lastTranchePrice: number;
+    /** 每批追加 % 跌幅（如 3.0 = 跌 3% 时追加） */
+    dropPct: number;
+    /** DCA 开始时间（超时后停止追加）*/
+    startedAt: number;
+    /** 最大持续时长（毫秒）*/
+    maxMs: number;
+  };
 }
 
 export interface PaperTrade {
@@ -193,6 +208,79 @@ export function paperBuy(
     quantity,
     price: execPrice,
     usdtAmount: usdtToSpend,
+    fee,
+    slippage: slippageUsdt,
+    timestamp: Date.now(),
+    reason,
+  };
+
+  account.trades.push(trade);
+  return trade;
+}
+
+/**
+ * DCA 追加买入：在已有多头持仓基础上加仓
+ *
+ * 与 paperBuy() 不同：
+ * - 允许已有持仓存在（专为 DCA 追加设计）
+ * - 新仓量加到持仓，entryPrice 重新计算加权均价
+ * - 止损保持原始档位（不随追加下移，避免越套越深）
+ */
+export function paperDcaAdd(
+  account: PaperAccount,
+  symbol: string,
+  price: number,
+  reason: string,
+  opts: {
+    addUsdt: number;         // 本次追加金额（USDT）
+    feeRate?: number;
+    slippagePercent?: number;
+  } = { addUsdt: 0 }
+): PaperTrade | null {
+  const pos = account.positions[symbol];
+  if (!pos || pos.side === "short") return null;  // 仅对多头仓位追加
+
+  const { addUsdt, feeRate = 0.001, slippagePercent = 0.05 } = opts;
+  if (addUsdt < 1 || addUsdt > account.usdt) return null;
+
+  const slippageAmount = (price * slippagePercent) / 100;
+  const execPrice = price + slippageAmount;
+  const slippageUsdt = addUsdt * (slippagePercent / 100);
+  const fee = addUsdt * feeRate;
+  const netUsdt = addUsdt - fee;
+  const addQty = netUsdt / execPrice;
+
+  // 加权均价：原仓值 + 新仓值 / 总量
+  const totalQty = pos.quantity + addQty;
+  const weightedAvgPrice =
+    (pos.quantity * pos.entryPrice + addQty * execPrice) / totalQty;
+
+  account.usdt -= addUsdt;
+
+  // 计算更新后的 DCA 状态（在 spread 前计算，一并写入新对象）
+  const updatedDcaState = pos.dcaState
+    ? {
+        ...pos.dcaState,
+        completedTranches: pos.dcaState.completedTranches + 1,
+        lastTranchePrice: execPrice,
+      }
+    : undefined;
+
+  // 更新持仓：量增加，均价重算，止损不动，DCA 状态同步
+  account.positions[symbol] = {
+    ...pos,
+    quantity: totalQty,
+    entryPrice: weightedAvgPrice,
+    ...(updatedDcaState !== undefined && { dcaState: updatedDcaState }),
+  };
+
+  const trade: PaperTrade = {
+    id: generateId(),
+    symbol,
+    side: "buy",
+    quantity: addQty,
+    price: execPrice,
+    usdtAmount: addUsdt,
     fee,
     slippage: slippageUsdt,
     timestamp: Date.now(),

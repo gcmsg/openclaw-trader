@@ -282,3 +282,38 @@ scenarios:
       market: futures
       testnet: true
       credentials_path: ".secrets/binance-futures-testnet.json"
+
+  # ══════════════════════════════════════════
+  # DCA 分批建仓场景（极度恐惧时逐步抄底）
+  # 启用方法：enabled: true
+  # ══════════════════════════════════════════
+  - id: "dca-spot"
+    name: "DCA 分批建仓 × 现货"
+    enabled: false              # 手动启用
+    strategy_id: "conservative" # 用保守策略的信号触发入场
+    initial_usdt: 10000
+    fee_rate: 0.001
+    slippage_percent: 0.05
+    exchange:
+      market: "spot"
+      leverage:
+        enabled: false
+        default: 1
+        max: 1
+    risk:
+      stop_loss_percent: 8       # DCA 场景止损更宽（留空间补仓）
+      take_profit_percent: 20    # 等待更大反弹再止盈
+      trailing_stop:
+        enabled: true
+        activation_percent: 8
+        callback_percent: 3
+      position_ratio: 0.08       # 每批 8%，3 批 = 总仓位 24%
+      max_positions: 3
+      max_position_per_symbol: 0.3
+      max_total_loss_percent: 15
+      daily_loss_limit_percent: 5
+      dca:
+        enabled: true
+        tranches: 3              # 分 3 批建仓
+        drop_pct: 3.0            # 跌 3% 追加下一批
+        max_hours: 48            # 最多 DCA 持续 48h，超时停止追加

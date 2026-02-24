@@ -11,6 +11,7 @@ import {
   loadAccount,
   saveAccount,
   paperBuy,
+  paperDcaAdd,
   paperSell,
   paperOpenShort,
   paperCoverShort,
@@ -126,6 +127,19 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
           });
           account.positions[signal.symbol]!.signalHistoryId = sigId;
         } catch { /* 不影响主流程 */ }
+
+        // ── 初始化 DCA 状态（如已配置）──
+        const dcaCfg = cfg.risk.dca;
+        if (dcaCfg?.enabled && dcaCfg.tranches > 1) {
+          account.positions[signal.symbol]!.dcaState = {
+            totalTranches: dcaCfg.tranches,
+            completedTranches: 1,
+            lastTranchePrice: trade.price,
+            dropPct: dcaCfg.drop_pct,
+            startedAt: Date.now(),
+            maxMs: dcaCfg.max_hours * 3600 * 1000,
+          };
+        }
       }
     }
   } else if (signal.type === "sell") {
@@ -397,6 +411,70 @@ export function checkDailyLossLimit(prices: Record<string, number>, cfg: Runtime
   resetDailyLossIfNeeded(account);
   const equity = calcTotalEquity(account, prices);
   return (account.dailyLoss.loss / equity) * 100 >= cfg.risk.daily_loss_limit_percent;
+}
+
+/**
+ * 检查所有持仓的 DCA 追加条件
+ *
+ * 触发条件（全部满足才执行）：
+ * 1. 持仓有 dcaState 且未完成所有批次
+ * 2. 当前价格比上次追加价下跌了 ≥ dropPct%
+ * 3. DCA 开始至今未超过 maxMs（防止无限套牢）
+ *
+ * @returns 本次追加的交易列表（可能为空）
+ */
+export function checkDcaTranches(
+  prices: Record<string, number>,
+  cfg: RuntimeConfig
+): { symbol: string; trade: PaperTrade; tranche: number; totalTranches: number }[] {
+  const sid = scenarioId(cfg);
+  const account = loadAccount(cfg.paper.initial_usdt, sid);
+  const dcaCfg = cfg.risk.dca;
+  if (!dcaCfg?.enabled) return [];
+
+  const executed: { symbol: string; trade: PaperTrade; tranche: number; totalTranches: number }[] = [];
+
+  for (const [symbol, pos] of Object.entries(account.positions)) {
+    if (!pos.dcaState) continue;
+    const dca = pos.dcaState;
+
+    // 已完成所有批次 → 跳过
+    if (dca.completedTranches >= dca.totalTranches) continue;
+
+    // 超时 → 跳过（不再追加）
+    if (Date.now() - dca.startedAt > dca.maxMs) continue;
+
+    const currentPrice = prices[symbol];
+    if (!currentPrice) continue;
+
+    // 价格下跌足够 → 触发追加
+    const dropPct = ((dca.lastTranchePrice - currentPrice) / dca.lastTranchePrice) * 100;
+    if (dropPct < dca.dropPct) continue;
+
+    // 本次追加金额：与第一批相同比例
+    const equity = calcTotalEquity(account, prices);
+    const addUsdt = equity * cfg.risk.position_ratio;
+
+    const trade = paperDcaAdd(account, symbol, currentPrice, `DCA 第 ${dca.completedTranches + 1} 批（跌幅 ${dropPct.toFixed(1)}%）`, {
+      addUsdt,
+      feeRate: cfg.execution.order_type === "market" ? 0.001 : 0.001,
+    });
+
+    if (trade) {
+      executed.push({
+        symbol,
+        trade,
+        tranche: dca.completedTranches,     // 已更新为 +1 后的值
+        totalTranches: dca.totalTranches,
+      });
+    }
+  }
+
+  if (executed.length > 0) {
+    saveAccount(account, sid);
+  }
+
+  return executed;
 }
 
 export function getPaperSummary(prices: Record<string, number>, cfg: RuntimeConfig) {
