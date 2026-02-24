@@ -120,6 +120,9 @@ export function buildPaperRuntime(
   // timeframe：profile > 全局
   const timeframe = profile.timeframe ?? base.timeframe;
 
+  // trend_timeframe：profile > 全局（可选，用于 MTF 趋势过滤）
+  const trend_timeframe = profile.trend_timeframe ?? base.trend_timeframe;
+
   // strategy section：profile 覆盖全局
   const strategy = mergeStrategySection(base.strategy, profile.strategy);
 
@@ -143,6 +146,7 @@ export function buildPaperRuntime(
     ...base,
     symbols,
     timeframe,
+    ...(trend_timeframe !== undefined ? { trend_timeframe } : {}),
     strategy,
     signals,
     risk,

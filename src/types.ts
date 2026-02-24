@@ -115,6 +115,9 @@ export interface NotifyConfig {
 export interface StrategyConfig {
   symbols: string[];
   timeframe: Timeframe;
+  /** 趋势确认时间框架（可选）。如设置，只有该时间框架 MA 多头时才允许买入。
+   *  例：主策略 1h，trend_timeframe: "4h" → 4h MA多头才开 1h 买单。 */
+  trend_timeframe?: Timeframe;
   strategy: {
     name: string;
     enabled: boolean;
@@ -176,6 +179,7 @@ export interface StrategyProfile {
   description?: string;
   symbols?: string[];
   timeframe?: Timeframe;
+  trend_timeframe?: Timeframe;
   strategy?: {
     ma?: { short: number; long: number };
     rsi?: { period?: number; oversold?: number; overbought?: number };

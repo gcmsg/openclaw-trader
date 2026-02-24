@@ -96,7 +96,41 @@ async function scanSymbol(
     if (!indicators) return;
 
     currentPrices[symbol] = indicators.price;
+
+    // ── 多时间框架趋势过滤（MTF）──────────────────────────
+    // 如果配置了 trend_timeframe，拉取更高级别 K 线判断大趋势方向
+    // 买入信号只在大趋势为多头时执行；卖出/止损不受限制
+    let mtfTrendBull: boolean | null = null; // null = 未启用
+    if (cfg.trend_timeframe && cfg.trend_timeframe !== cfg.timeframe) {
+      try {
+        const trendLimit = cfg.strategy.ma.long + 10;
+        const trendKlines = await getKlines(symbol, cfg.trend_timeframe, trendLimit);
+        const trendInd = calculateIndicators(
+          trendKlines,
+          cfg.strategy.ma.short,
+          cfg.strategy.ma.long,
+          cfg.strategy.rsi.period,
+          cfg.strategy.macd
+        );
+        if (trendInd) {
+          mtfTrendBull = trendInd.maShort > trendInd.maLong;
+          log(
+            `${scenarioPrefix}${symbol}: MTF(${cfg.trend_timeframe}) MA短=${trendInd.maShort.toFixed(4)} MA长=${trendInd.maLong.toFixed(4)} → ${mtfTrendBull ? "多头✅" : "空头🚫"}`
+          );
+        }
+      } catch (err: unknown) {
+        log(`${scenarioPrefix}${symbol}: MTF 获取失败，跳过趋势过滤 — ${String(err)}`);
+      }
+    }
+
     const signal = detectSignal(symbol, indicators, cfg);
+
+    // MTF 过滤：买入信号且大趋势为空头 → 跳过
+    if (signal.type === "buy" && mtfTrendBull === false) {
+      log(`${scenarioPrefix}${symbol}: 🚫 MTF 趋势过滤：${cfg.trend_timeframe} 空头，忽略 1h 买入信号`);
+      return;
+    }
+
     const trend = indicators.maShort > indicators.maLong ? "📈 多头" : "📉 空头";
     const macdInfo = indicators.macd
       ? ` MACD=${indicators.macd.macd.toFixed(2)}/${indicators.macd.signal.toFixed(2)}`
