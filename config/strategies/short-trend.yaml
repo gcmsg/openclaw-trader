@@ -1,0 +1,50 @@
+# 空头趋势策略：仅做空，不做多
+# 市场类型：futures / margin（spot 无效）
+# 适合：熊市、风险对冲、单边下跌行情
+name: "空头趋势策略"
+description: "MA 空头 + MACD 死叉 + RSI 超买区，顺势做空"
+
+timeframe: "1h"
+trend_timeframe: "4h"  # MTF 过滤：4h MA 也是空头时才开仓
+
+strategy:
+  ma:
+    short: 20
+    long: 60
+  rsi:
+    period: 14
+    oversold: 35
+    overbought: 65
+  macd:
+    enabled: true
+    fast: 12
+    slow: 26
+    signal: 9
+  volume:
+    surge_ratio: 1.5
+    low_ratio: 0.5
+
+# 开空：均线空头（大趋势确认）+ MACD 死叉（动能转向）+ RSI 未超卖（避免底部做空）
+# 平空：均线多头（趋势反转）或 RSI 超卖（价格已过度下跌）
+signals:
+  buy: []   # 禁用多头
+  sell: []  # 无多头仓位，sell 无意义
+  short:
+    - ma_bearish           # EMA20 < EMA60（空头趋势）
+    - macd_death_cross     # MACD 死叉（动能向下确认）
+    - rsi_not_oversold     # RSI > 35（避免在底部做空）
+  cover:
+    - ma_bullish           # EMA20 > EMA60（趋势反转，平空）
+
+risk:
+  stop_loss_percent: 4       # 空头止损 4%（价格上涨触发）
+  take_profit_percent: 12    # 空头止盈 12%（价格下跌触发）
+  trailing_stop:
+    enabled: true
+    activation_percent: 6    # 盈利 6% 后激活追踪
+    callback_percent: 2.5    # 从最低点反弹 2.5% 触发平仓
+  position_ratio: 0.2
+  max_positions: 3           # 空头仓位控制，不超过 3 个
+  max_position_per_symbol: 0.3
+  max_total_loss_percent: 15
+  daily_loss_limit_percent: 6

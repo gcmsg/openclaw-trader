@@ -1,0 +1,56 @@
+# 双向策略：牛市做多 + 熊市做空
+# 市场类型：futures / margin（spot 只有多头生效）
+# 适合：适应性强，无论涨跌均可捕捉趋势
+name: "双向趋势策略"
+description: "MA 趋势多空两用：多头时做多，空头时做空"
+
+timeframe: "1h"
+trend_timeframe: "4h"
+
+strategy:
+  ma:
+    short: 20
+    long: 60
+  rsi:
+    period: 14
+    oversold: 35
+    overbought: 65
+  macd:
+    enabled: true
+    fast: 12
+    slow: 26
+    signal: 9
+  volume:
+    surge_ratio: 1.5
+    low_ratio: 0.5
+
+# 多头：均线多头 + MACD 金叉 + RSI 未超买
+# 平多：均线空头
+# 开空：均线空头 + MACD 死叉 + RSI 未超卖（避免底部做空）
+# 平空：均线多头（趋势反转）
+signals:
+  buy:
+    - ma_bullish           # EMA20 > EMA60
+    - macd_golden_cross    # MACD 金叉（精准入场）
+    - rsi_not_overbought   # RSI < 65
+  sell:
+    - ma_bearish           # 趋势反转，平多
+  short:
+    - ma_bearish           # EMA20 < EMA60
+    - macd_death_cross     # MACD 死叉（精准做空入场）
+    - rsi_not_oversold     # RSI > 35（避免底部追空）
+  cover:
+    - ma_bullish           # 趋势反转，平空
+
+risk:
+  stop_loss_percent: 5
+  take_profit_percent: 15
+  trailing_stop:
+    enabled: true
+    activation_percent: 7
+    callback_percent: 2.5
+  position_ratio: 0.18       # 双向策略单笔仓位稍小
+  max_positions: 4           # 多空合计不超过 4 个
+  max_position_per_symbol: 0.25
+  max_total_loss_percent: 20
+  daily_loss_limit_percent: 8
