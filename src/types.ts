@@ -2,7 +2,8 @@
 // Global Types for openclaw-trader
 // ─────────────────────────────────────────────────────
 
-export type SignalType = "buy" | "sell" | "none";
+export type SignalType = "buy" | "sell" | "short" | "cover" | "none";
+export type PositionSide = "long" | "short";
 export type TradeMode = "notify_only" | "paper" | "testnet" | "live" | "auto";
 export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 export type MarketType = "spot" | "margin" | "futures";
@@ -138,6 +139,10 @@ export interface StrategyConfig {
   signals: {
     buy: string[];
     sell: string[];
+    /** 开空条件（仅 futures/margin 市场有效） */
+    short?: string[];
+    /** 平空条件（仅 futures/margin 市场有效） */
+    cover?: string[];
   };
   risk: RiskConfig;
   execution: ExecutionConfig;
@@ -198,6 +203,8 @@ export interface StrategyProfile {
   signals?: {
     buy?: string[];
     sell?: string[];
+    short?: string[];
+    cover?: string[];
   };
   risk?: Partial<RiskConfig>;
 }

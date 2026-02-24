@@ -6,6 +6,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import type { PositionSide } from "../types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOGS_DIR = path.resolve(__dirname, "../../logs");
@@ -17,15 +18,20 @@ export function getAccountPath(scenarioId = "default"): string {
 
 export interface PaperPosition {
   symbol: string;
+  /** 持仓方向：long=多头，short=空头（undefined 视为 long，兼容旧数据）*/
+  side?: PositionSide;
   quantity: number;
   entryPrice: number;
   entryTime: number;
-  stopLoss: number;   // 止损价格
-  takeProfit: number; // 最终全仓止盈价格
+  stopLoss: number;   // 止损价格（多头：低于入场；空头：高于入场）
+  takeProfit: number; // 止盈价格（多头：高于入场；空头：低于入场）
+  /** 空头仓位锁定的保证金（扣除手续费后的净值），用于平仓时还原资金 */
+  marginUsdt?: number;
   trailingStop?: {
     active: boolean;
-    highestPrice: number; // 持仓期间最高价
-    stopPrice: number;    // 当前追踪止损价
+    highestPrice: number; // 多头：持仓期间最高价；空头：入场价（历史意义）
+    lowestPrice?: number; // 空头：持仓期间最低价（追踪止损参考）
+    stopPrice: number;    // 当前追踪止损触发价
   };
   // 分批止盈进度（与 risk.take_profit_stages 对应）
   tpStages?: {
@@ -40,7 +46,8 @@ export interface PaperPosition {
 export interface PaperTrade {
   id: string;
   symbol: string;
-  side: "buy" | "sell";
+  /** buy=开多, sell=平多, short=开空, cover=平空 */
+  side: "buy" | "sell" | "short" | "cover";
   quantity: number;
   price: number; // 成交价（含滑点）
   usdtAmount: number;
@@ -166,6 +173,7 @@ export function paperBuy(
   account.usdt -= usdtToSpend;
   account.positions[symbol] = {
     symbol,
+    side: "long",
     quantity,
     entryPrice: execPrice,
     entryTime: Date.now(),
@@ -262,7 +270,149 @@ export function paperSell(
 }
 
 /**
+ * 模拟开空（做空）
+ * 锁定保证金 = positionRatio × equity（或 overridePositionUsdt）
+ * 虚拟"借币卖出"，平仓时买回归还，差价即盈亏
+ * 仅在 futures / margin 市场有效
+ */
+export function paperOpenShort(
+  account: PaperAccount,
+  symbol: string,
+  price: number,
+  reason: string,
+  opts: {
+    positionRatio?: number;
+    overridePositionUsdt?: number;
+    feeRate?: number;
+    slippagePercent?: number;
+    minOrderUsdt?: number;
+    stopLossPercent?: number;
+    takeProfitPercent?: number;
+  } = {}
+): PaperTrade | null {
+  const {
+    positionRatio = 0.2,
+    overridePositionUsdt,
+    feeRate = 0.001,
+    slippagePercent = 0.05,
+    minOrderUsdt = 10,
+    stopLossPercent = 5,
+    takeProfitPercent = 15,
+  } = opts;
+
+  if (account.positions[symbol]) return null; // 该币种已有持仓（不论多空）
+
+  const equity = calcTotalEquity(account, { [symbol]: price });
+  const marginToLock = overridePositionUsdt ?? equity * positionRatio;
+
+  if (marginToLock < minOrderUsdt || marginToLock > account.usdt) return null;
+
+  // 空头开仓：卖出时滑点导致成交价略低（对做空方不利）
+  const slippageAmount = (price * slippagePercent) / 100;
+  const execPrice = price - slippageAmount;
+
+  const fee = marginToLock * feeRate;
+  const actualMargin = marginToLock - fee; // 净保证金（扣除手续费）
+  const quantity = actualMargin / execPrice; // 借来卖出的币量
+
+  // 空头止损/止盈方向与多头相反
+  const stopLossPrice = execPrice * (1 + stopLossPercent / 100);   // 价格上涨 = 亏损
+  const takeProfitPrice = execPrice * (1 - takeProfitPercent / 100); // 价格下跌 = 盈利
+
+  account.usdt -= marginToLock; // 锁定保证金
+  account.positions[symbol] = {
+    symbol,
+    side: "short",
+    quantity,
+    entryPrice: execPrice,
+    entryTime: Date.now(),
+    stopLoss: stopLossPrice,
+    takeProfit: takeProfitPrice,
+    marginUsdt: actualMargin,
+  };
+
+  const trade: PaperTrade = {
+    id: generateId(),
+    symbol,
+    side: "short",
+    quantity,
+    price: execPrice,
+    usdtAmount: marginToLock,
+    fee,
+    slippage: quantity * slippageAmount,
+    timestamp: Date.now(),
+    reason,
+  };
+
+  account.trades.push(trade);
+  return trade;
+}
+
+/**
+ * 模拟平空（买入归还借币）
+ * pnl = (entryPrice - coverPrice) × quantity - coverFee
+ * 将保证金 + pnl 归还到 account.usdt
+ */
+export function paperCoverShort(
+  account: PaperAccount,
+  symbol: string,
+  price: number,
+  reason: string,
+  opts: {
+    feeRate?: number;
+    slippagePercent?: number;
+  } = {}
+): PaperTrade | null {
+  const { feeRate = 0.001, slippagePercent = 0.05 } = opts;
+
+  const position = account.positions[symbol];
+  if (position?.side !== "short") return null;
+
+  // 平空时买入：滑点导致成交价略高（对买入方不利）
+  const slippageAmount = (price * slippagePercent) / 100;
+  const execPrice = price + slippageAmount;
+
+  const { quantity, entryPrice } = position;
+  const marginUsdt = position.marginUsdt ?? quantity * entryPrice;
+
+  const grossUsdt = quantity * execPrice; // 买回所需花费
+  const fee = grossUsdt * feeRate;
+  const pnl = (entryPrice - execPrice) * quantity - fee; // 正数=盈利，负数=亏损
+  const pnlPercent = pnl / marginUsdt;
+
+  // 保护：最多亏光保证金（无负余额）
+  const returnAmount = Math.max(0, marginUsdt + pnl);
+
+  if (pnl < 0) {
+    account.dailyLoss.loss += Math.abs(pnl);
+  }
+
+  account.usdt += returnAmount;
+  Reflect.deleteProperty(account.positions, symbol);
+
+  const trade: PaperTrade = {
+    id: generateId(),
+    symbol,
+    side: "cover",
+    quantity,
+    price: execPrice,
+    usdtAmount: returnAmount,
+    fee,
+    slippage: quantity * slippageAmount,
+    timestamp: Date.now(),
+    reason,
+    pnl,
+    pnlPercent,
+  };
+
+  account.trades.push(trade);
+  return trade;
+}
+
+/**
  * 更新追踪止损价格（每次价格更新时调用）
+ * - 多头：追踪最高价，从高点回撤 callbackPercent 触发
+ * - 空头：追踪最低价，从低点反弹 callbackPercent 触发
  * @returns 是否需要触发止损平仓
  */
 export function updateTrailingStop(
@@ -271,32 +421,37 @@ export function updateTrailingStop(
   opts: { activationPercent: number; callbackPercent: number }
 ): boolean {
   const { activationPercent, callbackPercent } = opts;
+  const isShort = position.side === "short";
 
-  position.trailingStop ??= {
-    active: false,
-    highestPrice: position.entryPrice,
-    stopPrice: 0,
-  };
+  const ts = (position.trailingStop ??= isShort
+    ? { active: false, highestPrice: position.entryPrice, lowestPrice: position.entryPrice, stopPrice: 0 }
+    : { active: false, highestPrice: position.entryPrice, stopPrice: 0 });
 
-  const ts = position.trailingStop;
+  if (isShort) {
+    // ── 空头追踪止损：跟踪最低价，从低点反弹时平仓 ──
+    ts.lowestPrice ??= position.entryPrice;
+    if (currentPrice < ts.lowestPrice) ts.lowestPrice = currentPrice;
 
-  // 更新最高价
-  if (currentPrice > ts.highestPrice) {
-    ts.highestPrice = currentPrice;
-  }
+    // 盈利百分比 = 价格从入场价下跌的幅度
+    const lowestPrice = ts.lowestPrice; // narrow to number for TS
+    const gainPercent = ((position.entryPrice - lowestPrice) / position.entryPrice) * 100;
+    if (!ts.active && gainPercent >= activationPercent) ts.active = true;
 
-  // 检查是否达到启动阈值
-  const gainPercent = ((ts.highestPrice - position.entryPrice) / position.entryPrice) * 100;
-  if (!ts.active && gainPercent >= activationPercent) {
-    ts.active = true;
-  }
+    if (ts.active) {
+      ts.stopPrice = lowestPrice * (1 + callbackPercent / 100);
+      // 价格从低点反弹超过回调幅度，触发平仓
+      if (currentPrice >= ts.stopPrice) return true;
+    }
+  } else {
+    // ── 多头追踪止损：跟踪最高价，从高点下跌时平仓 ──
+    if (currentPrice > ts.highestPrice) ts.highestPrice = currentPrice;
 
-  // 追踪止损激活后更新止损价
-  if (ts.active) {
-    ts.stopPrice = ts.highestPrice * (1 - callbackPercent / 100);
-    // 当前价跌破止损价，触发平仓
-    if (currentPrice <= ts.stopPrice) {
-      return true;
+    const gainPercent = ((ts.highestPrice - position.entryPrice) / position.entryPrice) * 100;
+    if (!ts.active && gainPercent >= activationPercent) ts.active = true;
+
+    if (ts.active) {
+      ts.stopPrice = ts.highestPrice * (1 - callbackPercent / 100);
+      if (currentPrice <= ts.stopPrice) return true;
     }
   }
 
@@ -305,18 +460,41 @@ export function updateTrailingStop(
 
 /**
  * 计算总资产（USDT + 持仓市值）
+ * - 多头：equity += quantity × currentPrice
+ * - 空头：equity += marginUsdt + (entryPrice - currentPrice) × quantity
  */
 export function calcTotalEquity(account: PaperAccount, prices: Record<string, number>): number {
   let equity = account.usdt;
   for (const [symbol, pos] of Object.entries(account.positions)) {
     const price = prices[symbol];
-    if (price) equity += pos.quantity * price;
+    if (!price) continue;
+    if (pos.side === "short") {
+      // 空头：锁定保证金 + 浮动盈亏
+      const margin = pos.marginUsdt ?? pos.quantity * pos.entryPrice;
+      const unrealizedPnl = (pos.entryPrice - price) * pos.quantity;
+      equity += margin + unrealizedPnl;
+    } else {
+      // 多头：持仓市值
+      equity += pos.quantity * price;
+    }
   }
   return equity;
 }
 
+export interface PositionSummary {
+  symbol: string;
+  side: PositionSide;
+  quantity: number;
+  entryPrice: number;
+  currentPrice: number;
+  unrealizedPnl: number;
+  unrealizedPnlPercent: number;
+  stopLoss: number;
+  takeProfit: number;
+}
+
 /**
- * 账户摘要
+ * 账户摘要（支持多头 + 空头持仓）
  */
 export function getAccountSummary(
   account: PaperAccount,
@@ -326,16 +504,7 @@ export function getAccountSummary(
   totalEquity: number;
   totalPnl: number;
   totalPnlPercent: number;
-  positions: {
-    symbol: string;
-    quantity: number;
-    entryPrice: number;
-    currentPrice: number;
-    unrealizedPnl: number;
-    unrealizedPnlPercent: number;
-    stopLoss: number;
-    takeProfit: number;
-  }[];
+  positions: PositionSummary[];
   tradeCount: number;
   winRate: number;
   dailyLoss: number;
@@ -344,24 +513,40 @@ export function getAccountSummary(
   const totalPnl = totalEquity - account.initialUsdt;
   const totalPnlPercent = totalPnl / account.initialUsdt;
 
-  const positions = Object.values(account.positions).map((pos) => {
+  const positions: PositionSummary[] = Object.values(account.positions).map((pos) => {
     const currentPrice = prices[pos.symbol] ?? pos.entryPrice;
-    const currentValue = pos.quantity * currentPrice;
-    const costBasis = pos.quantity * pos.entryPrice;
-    const unrealizedPnl = currentValue - costBasis;
+    const side: PositionSide = pos.side ?? "long";
+
+    let unrealizedPnl: number;
+    let costBasis: number;
+
+    if (side === "short") {
+      const margin = pos.marginUsdt ?? pos.quantity * pos.entryPrice;
+      unrealizedPnl = (pos.entryPrice - currentPrice) * pos.quantity;
+      costBasis = margin;
+    } else {
+      const currentValue = pos.quantity * currentPrice;
+      costBasis = pos.quantity * pos.entryPrice;
+      unrealizedPnl = currentValue - costBasis;
+    }
+
     return {
       symbol: pos.symbol,
+      side,
       quantity: pos.quantity,
       entryPrice: pos.entryPrice,
       currentPrice,
       unrealizedPnl,
-      unrealizedPnlPercent: unrealizedPnl / costBasis,
+      unrealizedPnlPercent: costBasis > 0 ? unrealizedPnl / costBasis : 0,
       stopLoss: pos.stopLoss,
       takeProfit: pos.takeProfit,
     };
   });
 
-  const closedTrades = account.trades.filter((t) => t.side === "sell" && t.pnl !== undefined);
+  // 已平仓交易：sell（平多）+ cover（平空）
+  const closedTrades = account.trades.filter(
+    (t) => (t.side === "sell" || t.side === "cover") && t.pnl !== undefined
+  );
   const winners = closedTrades.filter((t) => (t.pnl ?? 0) > 0).length;
   const winRate = closedTrades.length > 0 ? winners / closedTrades.length : 0;
 
