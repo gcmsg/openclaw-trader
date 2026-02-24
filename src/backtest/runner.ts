@@ -122,11 +122,11 @@ function doBuy(
   if (usdtToSpend < cfg.execution.min_order_usdt) return;
   if (usdtToSpend > account.usdt) return;
 
-  // 买入时价格上滑（略高于报价）
+  // 买入时价格上滑（略高于报价），仅通过提高 execPrice 模拟滑点
+  // 不额外扣除 slippageUsdt，避免与 execPrice 双重计算
   const execPrice = price * (1 + opts.slippagePercent / 100);
   const fee = usdtToSpend * opts.feeRate;
-  const slippageUsdt = usdtToSpend * (opts.slippagePercent / 100);
-  const netUsdt = usdtToSpend - fee - slippageUsdt;
+  const netUsdt = usdtToSpend - fee; // execPrice 已含滑点成本
   const quantity = netUsdt / execPrice;
 
   account.usdt -= usdtToSpend;

@@ -246,9 +246,12 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
     for (const { symbol, trade, reason, pnlPercent } of exits) {
       const emoji = reason === "take_profit" ? "🎯" : "🚨";
       const label =
-        reason === "take_profit" ? "止盈" : reason === "trailing_stop" ? "追踪止损" : "止损";
+        reason === "take_profit" ? "止盈" :
+        reason === "trailing_stop" ? "追踪止损" :
+        reason === "time_stop" ? "时间止损" : "止损";
       log(`${prefix}${symbol}: ${emoji} ${label}触发（${pnlPercent.toFixed(2)}%）`);
-      if (reason === "stop_loss" || reason === "trailing_stop") {
+      if (reason !== "take_profit") {
+        // stop_loss / trailing_stop / time_stop 均发送止损通知
         notifyStopLoss(symbol, trade.price / (1 + pnlPercent / 100), trade.price, pnlPercent / 100);
       } else if (cfg.notify.on_take_profit) {
         // 止盈通知复用 notifySignal，indicators 仅用于消息格式化，填充占位数据

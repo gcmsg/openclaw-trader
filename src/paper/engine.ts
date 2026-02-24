@@ -129,41 +129,46 @@ function checkStagedTakeProfit(
   pos: PaperPosition,
   currentPrice: number,
   cfg: RuntimeConfig,
-  triggered: { symbol: string; trade: PaperTrade; reason: "stop_loss" | "take_profit" | "trailing_stop"; pnlPercent: number }[]
+  triggered: { symbol: string; trade: PaperTrade; reason: ExitReason; pnlPercent: number }[]
 ): void {
   if (!pos.tpStages) return;
   const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
 
-  for (const stage of pos.tpStages) {
+  // 用 entries() 获取索引，避免 indexOf 的 O(n) 搜索
+  for (const [idx, stage] of pos.tpStages.entries()) {
     if (stage.triggered) continue;
     if (pnlPercent < stage.stagePct) continue;
 
-    // 部分平仓：按比例减少持仓量
+    // 部分平仓：按当前剩余持仓的比例平仓
     const partialQty = pos.quantity * stage.closeRatio;
     if (partialQty <= 0) continue;
 
-    const label = `分批止盈第${pos.tpStages.indexOf(stage) + 1}档：盈利 ${pnlPercent.toFixed(2)}%，平掉 ${(stage.closeRatio * 100).toFixed(0)}% 仓位`;
+    const label = `分批止盈第${idx + 1}档：盈利 ${pnlPercent.toFixed(2)}%，平掉 ${(stage.closeRatio * 100).toFixed(0)}% 仓位`;
     const trade = paperSell(account, symbol, currentPrice, label, {
       ...paperOpts(cfg),
-      overrideQty: partialQty, // 部分平仓数量
+      overrideQty: partialQty,
     });
     if (trade) {
       stage.triggered = true;
       triggered.push({ symbol, trade, reason: "take_profit", pnlPercent });
     }
+    // 若持仓已被全部卖出，停止检查后续档位
+    if (!account.positions[symbol]) break;
   }
 }
 
 /**
  * 检查所有持仓的止损/止盈/追踪止损
  */
+export type ExitReason = "stop_loss" | "take_profit" | "trailing_stop" | "time_stop";
+
 export function checkExitConditions(
   prices: Record<string, number>,
   cfg: RuntimeConfig
 ): {
   symbol: string;
   trade: PaperTrade;
-  reason: "stop_loss" | "take_profit" | "trailing_stop";
+  reason: ExitReason;
   pnlPercent: number;
 }[] {
   const sid = scenarioId(cfg);
@@ -172,7 +177,7 @@ export function checkExitConditions(
   const triggered: {
     symbol: string;
     trade: PaperTrade;
-    reason: "stop_loss" | "take_profit" | "trailing_stop";
+    reason: ExitReason;
     pnlPercent: number;
   }[] = [];
 
@@ -212,7 +217,7 @@ export function checkExitConditions(
 
     if (exitReason) {
       const trade = paperSell(account, symbol, currentPrice, exitLabel, paperOpts(cfg));
-      if (trade) triggered.push({ symbol, trade, reason: exitReason as "stop_loss" | "take_profit" | "trailing_stop", pnlPercent });
+      if (trade) triggered.push({ symbol, trade, reason: exitReason, pnlPercent });
       continue; // 全仓出场，不再检查分批止盈
     }
 
@@ -226,13 +231,13 @@ export function checkExitConditions(
   return triggered;
 }
 
-/** compat shim */
+/** compat shim — 只返回止损类出场（含时间止损） */
 export function checkStopLoss(
   prices: Record<string, number>,
   cfg: RuntimeConfig
 ): { symbol: string; trade: PaperTrade; loss: number }[] {
   return checkExitConditions(prices, cfg)
-    .filter((r) => r.reason === "stop_loss")
+    .filter((r) => r.reason === "stop_loss" || r.reason === "time_stop")
     .map((r) => ({ symbol: r.symbol, trade: r.trade, loss: r.pnlPercent / 100 }));
 }
 

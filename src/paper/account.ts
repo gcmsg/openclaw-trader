@@ -149,13 +149,14 @@ export function paperBuy(
 
   if (usdtToSpend < minOrderUsdt || usdtToSpend > account.usdt) return null;
 
-  // 滑点：买入时成交价略高于当前价
+  // 滑点：买入时成交价略高于当前价（正向滑点）
+  // 仅通过提高 execPrice 模拟，不另行扣除 slippageUsdt（避免双重计算）
   const slippageAmount = (price * slippagePercent) / 100;
   const execPrice = price + slippageAmount;
-  const slippageUsdt = (usdtToSpend * slippagePercent) / 100;
+  const slippageUsdt = usdtToSpend * (slippagePercent / 100); // 仅用于 trade 记录，不重复扣除
 
   const fee = usdtToSpend * feeRate;
-  const actualUsdt = usdtToSpend - fee - slippageUsdt;
+  const actualUsdt = usdtToSpend - fee; // execPrice 已含滑点，无需额外扣除
   const quantity = actualUsdt / execPrice;
 
   // 计算止损/止盈价格
