@@ -13,6 +13,8 @@
 
 import { getKlines } from "../exchange/binance.js";
 import { calculateIndicators } from "./indicators.js";
+import { classifyRegime } from "./regime.js";
+import type { RegimeAnalysis } from "./regime.js";
 import type { StrategyConfig, Timeframe } from "../types.js";
 
 // ─── 类型定义 ──────────────────────────────────────────
@@ -38,6 +40,9 @@ export interface MultiTfContext {
   symbol: string;
   fetchedAt: number;
   timeframes: Partial<Record<Timeframe, TfAnalysis>>;
+
+  // 市场状态分类（Phase 1 新增）
+  regime: RegimeAnalysis | null;
 
   // 综合判断
   overallTrend: TfTrend;
@@ -187,10 +192,11 @@ export async function getMultiTfContext(
   cfg: StrategyConfig,
   timeframes: Timeframe[] = ["1h", "4h", "1d"]
 ): Promise<MultiTfContext> {
-  // 并发获取所有 TF 数据
-  const [tfResults, levels] = await Promise.all([
+  // 并发获取所有 TF 数据（含 4h klines 用于 Regime 分类）
+  const [tfResults, levels, regimeKlines] = await Promise.all([
     Promise.allSettled(timeframes.map((tf) => analyzeTf(symbol, tf, cfg))),
     estimateKeyLevels(symbol),
+    getKlines(symbol, "4h", 100).catch(() => null),
   ]);
 
   const tfMap: Partial<Record<Timeframe, TfAnalysis>> = {};
@@ -287,13 +293,37 @@ export async function getMultiTfContext(
                         signalStrength === "weak"   ? "⭐ 弱" : "─ 无";
   lines.push(`\n🎯 **操作建议**: ${dirLabel}  信号强度: ${strengthLabel}`);
 
+  // 计算市场状态（Regime）
+  const regime = regimeKlines && regimeKlines.length >= 60 ? classifyRegime(regimeKlines) : null;
+
+  // 如果 regime 是震荡或等待突破，降低信号强度
+  let adjustedStrength = signalStrength;
+  let adjustedDirection = tradeDirection;
+  if (regime && regime.confidence >= 60) {
+    if (regime.signalFilter === "breakout_watch") {
+      adjustedStrength = "none";
+      adjustedDirection = "wait";
+    } else if (regime.signalFilter === "reduced_size" && signalStrength === "strong") {
+      adjustedStrength = "medium"; // 降一档
+    }
+  }
+
+  // 把 regime 信息加入详情
+  if (regime) {
+    lines.push(`\n🎯 **市场状态**: ${regime.label}（置信度 ${regime.confidence}%）`);
+    if (regime.signalFilter !== "all" && regime.signalFilter !== "trend_signals_only") {
+      lines.push(`⚠️ ${regime.detail}`);
+    }
+  }
+
   return {
     symbol,
     fetchedAt: Date.now(),
     timeframes: tfMap,
+    regime,
     overallTrend,
-    tradeDirection,
-    signalStrength,
+    tradeDirection: adjustedDirection,
+    signalStrength: adjustedStrength,
     confluence,
     supportLevel: levels.support,
     resistanceLevel: levels.resistance,

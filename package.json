@@ -25,7 +25,8 @@
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "check": "npm run typecheck && npm run lint && npm run format:check",
-    "analysis": "tsx src/scripts/market-analysis.ts"
+    "analysis": "tsx src/scripts/market-analysis.ts",
+    "analyze": "tsx src/scripts/analyze-strategy.ts"
   },
   "dependencies": {
     "axios": "^1.7.0",
