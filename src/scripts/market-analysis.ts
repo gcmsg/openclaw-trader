@@ -15,7 +15,8 @@ import { getBatchMultiTfContext, formatMultiTfReport } from "../strategy/market-
 import { getDerivativesSnapshot, formatDerivativesReport } from "../exchange/derivatives-data.js";
 import { getOnChainContext, formatOnChainReport } from "../exchange/onchain-data.js";
 import { getNewsDigest, formatNewsDigest } from "../news/digest.js";
-import { loadNewsReport } from "../news/sentiment-gate.js";
+import { loadNewsReport, scoreNewsTitles } from "../news/sentiment-gate.js";
+import { writeKeywordSentimentCache } from "../news/sentiment-cache.js";
 import { loadStrategyConfig } from "../config/loader.js";
 import { getKlines } from "../exchange/binance.js";
 import type { Timeframe } from "../types.js";
@@ -173,6 +174,19 @@ async function main() {
   sections.push(`\n${separator}\n⏱️ 分析耗时 ${elapsed}s`);
 
   const fullReport = sections.join("\n");
+
+  // ── 自动更新情绪缓存（关键词版本，LLM 版本由 cron announce 回调写入）──
+  try {
+    const newsReport = loadNewsReport();
+    if (newsReport?.importantNews) {
+      const kwScore = scoreNewsTitles(newsReport.importantNews.map((n) => n.title));
+      const fg = newsReport.fearGreed.value;
+      // 综合评分：关键词 + FGI 调整
+      const fgAdjust = fg < 20 ? -2 : fg > 75 ? +2 : 0; // 极恐偏空，极贪偏多（反向修正）
+      const combined = kwScore - fgAdjust; // 极恐时关键词可能过度偏空
+      writeKeywordSentimentCache(combined, newsReport.importantNews.length);
+    }
+  } catch { /* 不影响主流程 */ }
 
   // 输出到 console（cron 任务会通过 announce 发到 Telegram）
   console.log("\n" + fullReport);

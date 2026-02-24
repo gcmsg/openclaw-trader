@@ -19,8 +19,10 @@ import {
   formatSummaryMessage,
 } from "./paper/engine.js";
 import { loadNewsReport, evaluateSentimentGate } from "./news/sentiment-gate.js";
+import { readSentimentCache } from "./news/sentiment-cache.js";
 import { checkCorrelation } from "./strategy/correlation.js";
-import { loadAccount } from "./paper/account.js";
+import { calcCorrelationAdjustedSize } from "./strategy/portfolio-risk.js";
+import { loadAccount, calcTotalEquity } from "./paper/account.js";
 import { ping } from "./health/heartbeat.js";
 import { loadRuntimeConfigs } from "./config/loader.js";
 import type { RuntimeConfig, Signal, Indicators, Kline } from "./types.js";
@@ -156,44 +158,83 @@ async function scanSymbol(
 
     if (signal.type === "none") return;
 
-    // ── 相关性过滤（仅对买入信号）──────────────────────────
-    if (signal.type === "buy" && cfg.risk.correlation_filter?.enabled) {
+    // portfolioRatioOverride：相关性调整后的仓位比例（覆盖 cfg.risk.position_ratio）
+    let portfolioRatioOverride: number | undefined;
+
+    // ── 相关性过滤 + 组合暴露度调整（仅对开仓信号）────────────
+    if ((signal.type === "buy" || signal.type === "short") && cfg.risk.correlation_filter?.enabled) {
       const corrCfg = cfg.risk.correlation_filter;
       const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
       const heldSymbols = Object.keys(account.positions);
       if (heldSymbols.length > 0) {
-        const heldKlines = new Map<string, Kline[]>();
+        // 拉取所有已持仓 K 线（用于相关性 + 暴露度计算）
+        const heldKlinesMap = new Map<string, Kline[]>();
         await Promise.all(
           heldSymbols.map(async (sym) => {
             try {
               const k = await getKlines(sym, cfg.timeframe, corrCfg.lookback + 1);
-              heldKlines.set(sym, k);
-            } catch {
-              // 获取失败跳过，不阻断买入
-            }
+              heldKlinesMap.set(sym, k);
+            } catch { /* 获取失败跳过 */ }
           })
         );
-        const corrResult = checkCorrelation(symbol, klines, heldKlines, corrCfg.threshold);
-        if (corrResult.correlated) {
-          log(`${scenarioPrefix}${symbol}: 🔗 相关性过滤 → ${corrResult.reason}`);
+
+        // ── 旧二值检查（保留兼容）───────────────────────
+        const heldKlinesObj = Object.fromEntries(heldKlinesMap);
+        const corrResult = checkCorrelation(symbol, klines, heldKlinesMap, corrCfg.threshold);
+
+        // ── 新：相关性加权仓位调整 ────────────────────────
+        const totalEquity = calcTotalEquity(account, Object.fromEntries(
+          [...heldKlinesMap.entries()].map(([s, k]) => [s, k[k.length - 1]?.close ?? 0])
+        ));
+        const positionWeights = Object.entries(account.positions).map(([sym, pos]) => {
+          const lastClose = heldKlinesMap.get(sym)?.at(-1)?.close ?? pos.entryPrice;
+          const notional = pos.quantity * lastClose;
+          return {
+            symbol: sym,
+            side: (pos.side ?? "long") as "long" | "short",
+            notionalUsdt: notional,
+            weight: totalEquity > 0 ? notional / totalEquity : 0,
+          };
+        });
+
+        const portfolioHeat = calcCorrelationAdjustedSize(
+          symbol,
+          signal.type === "short" ? "short" : "long",
+          cfg.risk.position_ratio,
+          positionWeights,
+          { ...heldKlinesObj, [symbol]: klines },
+          corrCfg.lookback,
+          0.9  // 热度上限 90%（高于此则拒绝）
+        );
+
+        if (portfolioHeat.decision === "blocked") {
+          log(`${scenarioPrefix}${symbol}: 🔗 组合热度过高 → ${portfolioHeat.reason}`);
           return;
         }
-        if (corrResult.maxCorrelation > 0) {
-          log(`${scenarioPrefix}${symbol}: 相关性 ${corrResult.correlatedWith}=${corrResult.maxCorrelation.toFixed(3)}（低于阈值 ${corrCfg.threshold}，允许开仓）`);
+
+        if (portfolioHeat.decision === "reduced") {
+          log(`${scenarioPrefix}${symbol}: 📉 组合暴露度调整 → ${portfolioHeat.reason}`);
+          // portfolioRatioOverride 在后续情绪门控和 handleSignal 时替代 cfg.risk.position_ratio
+          portfolioRatioOverride = portfolioHeat.adjustedPositionRatio;
+        } else if (corrResult.maxCorrelation > 0) {
+          log(`${scenarioPrefix}${symbol}: 相关性 ${corrResult.correlatedWith}=${corrResult.maxCorrelation.toFixed(3)}，热度 ${(portfolioHeat.heat * 100).toFixed(0)}%，正常开仓`);
         }
       }
     }
 
     // 情绪门控
     const newsReport = loadNewsReport();
-    const gate = evaluateSentimentGate(signal, newsReport, cfg.risk.position_ratio);
+    // 情绪门控以「组合调整后的仓位比例」为基准（双重叠加缩减）
+    const baseForGate = portfolioRatioOverride ?? cfg.risk.position_ratio;
+    const sentimentCache = readSentimentCache();  // 从磁盘读取 LLM 情绪缓存
+    const gate = evaluateSentimentGate(signal, newsReport, baseForGate, sentimentCache);
     log(`${scenarioPrefix}${symbol}: 情绪门控 → ${gate.action}（${gate.reason}）`);
     if (gate.action === "skip") return;
 
     if (cfg.mode === "paper") {
       if (!shouldNotify(state, signal, cfg.notify.min_interval_minutes)) return;
 
-      const effectiveRatio = "positionRatio" in gate ? gate.positionRatio : cfg.risk.position_ratio;
+      const effectiveRatio = "positionRatio" in gate ? gate.positionRatio : baseForGate;
       const adjustedCfg = { ...cfg, risk: { ...cfg.risk, position_ratio: effectiveRatio } };
       const result = handleSignal(signal, adjustedCfg);
 

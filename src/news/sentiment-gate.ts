@@ -8,6 +8,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import type { Signal } from "../types.js";
+import { evaluateCachedSentiment, type SentimentCache } from "./sentiment-cache.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = path.resolve(__dirname, "../../logs/news-report.json");
@@ -87,28 +88,51 @@ export function loadNewsReport(): NewsReport | null {
 /**
  * 根据新闻情绪决定信号如何处理
  *
- * 规则：
- * - 新闻与信号同向 → 正常执行
- * - 新闻中性       → 正常执行（技术面优先）
- * - 新闻与信号反向 → 减半仓位 + 警告
- * - 极度贪婪时买入 → 减半仓位（谨慎）
- * - 极度恐惧时卖出 → 提示可能是底部，仍执行但警告
- * - 大额新闻冲击   → 强制跳过，等待情绪稳定
+ * 优先级：
+ *   1. LLM 情绪缓存（调用方可选传入，由晚间 cron 写入）
+ *   2. 关键词匹配（降级兜底）
+ *   3. FGI + 报告全局情绪（辅助判断）
+ *
+ * @param sentimentCache  可选：由调用方从磁盘读取后传入（测试友好，无文件 I/O 副作用）
  */
 export function evaluateSentimentGate(
   signal: Signal,
   report: NewsReport | null,
-  baseRatio: number
+  baseRatio: number,
+  sentimentCache?: SentimentCache | null
 ): GateDecision {
-  // 没有报告 → 信任技术面，正常执行
+  // ── 优先：使用 LLM 情绪缓存（由调用方传入，无文件读取副作用）──
+  if ((signal.type === "buy" || signal.type === "short") && sentimentCache) {
+    const cached = evaluateCachedSentiment(signal.type, sentimentCache);
+    if (cached.action === "skip") {
+      return { action: "skip", reason: cached.reason };
+    }
+    if (cached.action === "reduce_size") {
+      return { action: "reduce", positionRatio: baseRatio * cached.ratio, reason: cached.reason };
+    }
+    // action === "proceed"：缓存放行，还需检查 FGI 极端值
+    if (report) {
+      const fg = report.fearGreed.value;
+      if (signal.type === "buy" && fg > 85) {
+        return { action: "reduce", positionRatio: baseRatio * 0.5, reason: `LLM 情绪放行但极度贪婪（FGI=${fg}），减半谨慎入场` };
+      }
+      if (signal.type === "buy" && fg < 15) {
+        return { action: "execute", positionRatio: baseRatio, reason: `LLM 情绪放行 + 极度恐惧（FGI=${fg}），历史底部，正常入场` };
+      }
+    }
+    return { action: "execute", positionRatio: baseRatio, reason: cached.reason };
+  }
+
+  // ── 降级：没有 LLM 缓存，使用关键词匹配（原逻辑）────────
   if (!report) {
     return { action: "execute", positionRatio: baseRatio, reason: "无情绪数据，依赖技术面" };
   }
 
+  // 关键词评分完成后，将结果写入缓存供下次使用（避免下次还要关键词扫描）
   const { fearGreed, sentiment, importantNews, fgAlert } = report;
   const fg = fearGreed.value;
 
-  // ── 关键词情绪打分（基于新闻标题内容）────────────────
+  // ── 关键词情绪打分 ─────────────────────────────────────
   const newsScore = scoreNewsTitles(importantNews.map((n) => n.title));
   const newsScoreLabel =
     newsScore > 0 ? `+${newsScore} 偏多` : newsScore < 0 ? `${newsScore} 偏空` : "0 中性";
