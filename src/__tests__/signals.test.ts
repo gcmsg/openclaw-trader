@@ -233,3 +233,63 @@ describe("detectSignal() - AND 逻辑", () => {
     expect(result.type).toBe("buy");
   });
 });
+
+// ─────────────────────────────────────────────────────
+// 新信号条件（P0 修复：解决信号逻辑矛盾）
+// ─────────────────────────────────────────────────────
+describe("新信号条件 — rsi_not_overbought / rsi_not_oversold / rsi_bullish_zone", () => {
+  it("rsi_not_overbought: RSI < overbought 时触发", () => {
+    const ind = makeIndicators({ rsi: 50 }); // RSI 50 < 65
+    const cfg = makeConfig(["rsi_not_overbought"], []);
+    expect(detectSignal("X", ind, cfg).type).toBe("buy");
+  });
+
+  it("rsi_not_overbought: RSI >= overbought 时不触发", () => {
+    const ind = makeIndicators({ rsi: 70 }); // RSI 70 >= 65
+    const cfg = makeConfig(["rsi_not_overbought"], []);
+    expect(detectSignal("X", ind, cfg).type).toBe("none");
+  });
+
+  it("rsi_not_oversold: RSI > oversold 时触发", () => {
+    const ind = makeIndicators({ rsi: 50 }); // RSI 50 > 35
+    const cfg = makeConfig(["rsi_not_oversold"], []);
+    expect(detectSignal("X", ind, cfg).type).toBe("buy");
+  });
+
+  it("rsi_not_oversold: RSI <= oversold 时不触发", () => {
+    const ind = makeIndicators({ rsi: 30 }); // RSI 30 <= 35
+    const cfg = makeConfig(["rsi_not_oversold"], []);
+    expect(detectSignal("X", ind, cfg).type).toBe("none");
+  });
+
+  it("rsi_bullish_zone: RSI 在 40–overbought 之间触发", () => {
+    const ind = makeIndicators({ rsi: 55 }); // 40 < 55 < 65
+    const cfg = makeConfig(["rsi_bullish_zone"], []);
+    expect(detectSignal("X", ind, cfg).type).toBe("buy");
+  });
+
+  it("rsi_bullish_zone: RSI < 40 时不触发", () => {
+    const ind = makeIndicators({ rsi: 35 }); // RSI 35 < 40
+    const cfg = makeConfig(["rsi_bullish_zone"], []);
+    expect(detectSignal("X", ind, cfg).type).toBe("none");
+  });
+
+  it("rsi_bullish_zone: RSI >= overbought 时不触发", () => {
+    const ind = makeIndicators({ rsi: 70 }); // RSI 70 >= 65
+    const cfg = makeConfig(["rsi_bullish_zone"], []);
+    expect(detectSignal("X", ind, cfg).type).toBe("none");
+  });
+
+  it("默认策略修复验证：ma_bullish + macd_bullish + rsi_not_overbought 可以同时成立", () => {
+    // 上升趋势（MA 多头）+ MACD 多头 + RSI 50（未超买）
+    // → 三个条件兼容，能触发买入
+    const ind = makeIndicators({
+      maShort: 110,
+      maLong: 100,
+      rsi: 50,
+      macd: { macd: 10, signal: 5, histogram: 5, prevMacd: 8, prevSignal: 5, prevHistogram: 3 },
+    });
+    const cfg = makeConfig(["ma_bullish", "macd_bullish", "rsi_not_overbought"], []);
+    expect(detectSignal("X", ind, cfg).type).toBe("buy");
+  });
+});

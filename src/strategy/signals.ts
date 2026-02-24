@@ -26,11 +26,20 @@ const SIGNAL_CHECKERS: Record<string, SignalChecker> = {
   ma_bearish: (ind) => ind.maShort < ind.maLong,
 
   // ── RSI ─────────────────────────────────────────
-  /** RSI 超卖 */
+  /** RSI 超卖（RSI < oversold 阈值） */
   rsi_oversold: (ind, cfg) => ind.rsi < cfg.strategy.rsi.oversold,
 
-  /** RSI 超买 */
+  /** RSI 超买（RSI > overbought 阈值） */
   rsi_overbought: (ind, cfg) => ind.rsi > cfg.strategy.rsi.overbought,
+
+  /** RSI 未超买（RSI < overbought 阈值）——趋势跟随策略的买入过滤条件 */
+  rsi_not_overbought: (ind, cfg) => ind.rsi < cfg.strategy.rsi.overbought,
+
+  /** RSI 未超卖（RSI > oversold 阈值）——避免在深度下跌中追加仓位 */
+  rsi_not_oversold: (ind, cfg) => ind.rsi > cfg.strategy.rsi.oversold,
+
+  /** RSI 中性偏多（RSI 40–overbought 区间）——有动能但尚未过热 */
+  rsi_bullish_zone: (ind, cfg) => ind.rsi > 40 && ind.rsi < cfg.strategy.rsi.overbought,
 
   // ── MACD ────────────────────────────────────────
   /** MACD 金叉：MACD 线上穿信号线 */

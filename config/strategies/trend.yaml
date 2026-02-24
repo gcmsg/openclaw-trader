@@ -22,16 +22,18 @@ strategy:
     surge_ratio: 1.5
     low_ratio: 0.5
 
+# 趋势策略：等待趋势真正确立（50 穿越 200），买在金叉当下
+#   买入：均线多头 + MA 金叉（精确等待长周期趋势翻多）+ MACD 多头 + RSI 未超买
+#   卖出：MA 死叉（趋势翻空，坚决离场）
+#   注：信号少但质量高，MA(50/200) 金叉在 4h 周期非常罕见且有效
 signals:
   buy:
-    - ma_bullish
-    - ma_golden_cross   # 金叉才买（50 穿越 200 向上）
-    - rsi_oversold
-    - macd_bullish
+    - ma_bullish           # EMA50 > EMA200（大趋势多头）
+    - ma_golden_cross      # EMA50 刚刚上穿 EMA200（入场时机）
+    - macd_bullish         # MACD 多头（动能确认）
+    - rsi_not_overbought   # RSI < 65（未追高）
   sell:
-    - ma_bearish
-    - ma_death_cross    # 死叉才卖
-    - macd_bearish
+    - ma_death_cross       # EMA50 下穿 EMA200（大趋势翻空，离场）
 
 risk:
   stop_loss_percent: 8    # 止损宽，趋势回调空间大

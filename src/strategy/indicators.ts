@@ -19,24 +19,40 @@ export function ema(values: number[], period: number): number {
   return result;
 }
 
-/** 相对强弱指数（RSI） */
+/**
+ * 相对强弱指数（RSI）— Wilder 平滑移动平均（标准算法）
+ *
+ * 与 TradingView / Binance 保持一致：
+ * 1. 计算前 period 根 K 线的涨跌幅，取 SMA 作为初始均值
+ * 2. 后续每根 K 线用 Wilder 平滑：avgGain = (prevAvgGain*(period-1) + gain) / period
+ * 3. 数据越多，结果越收敛（建议至少 3×period 根 K 线）
+ */
 export function rsi(closes: number[], period = 14): number {
   if (closes.length < period + 1) return NaN;
   // closes.slice(1).map 的 index 与 closes 对齐（i 在 0..length-2 范围内）
   const changes = closes.slice(1).map((c, i) => c - closes[i]!);
-  const recent = changes.slice(-period);
 
-  let gains = 0;
-  let losses = 0;
-  for (const change of recent) {
-    if (change > 0) gains += change;
-    else losses -= change;
+  // ── 步骤 1：前 period 根取 SMA 作为初始均值 ──
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 0; i < period; i++) {
+    const change = changes[i]!;
+    if (change > 0) avgGain += change;
+    else avgLoss -= change;
+  }
+  avgGain /= period;
+  avgLoss /= period;
+
+  // ── 步骤 2：Wilder 平滑剩余变化 ──
+  for (let i = period; i < changes.length; i++) {
+    const change = changes[i]!;
+    const gain = change > 0 ? change : 0;
+    const loss = change < 0 ? -change : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
   }
 
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
   if (avgLoss === 0) return 100;
-
   const rs = avgGain / avgLoss;
   return 100 - 100 / (1 + rs);
 }
@@ -116,10 +132,11 @@ export function calculateIndicators(
   const volumes = klines.map((k) => k.volume);
   const prevCloses = closes.slice(0, -1);
 
-  const maShort = sma(closes, maShortPeriod);
-  const maLong = sma(closes, maLongPeriod);
-  const prevMaShort = sma(prevCloses, maShortPeriod);
-  const prevMaLong = sma(prevCloses, maLongPeriod);
+  // 使用 EMA 而非 SMA：对近期价格更敏感，与 TradingView / 主流机器人一致
+  const maShort = ema(closes, maShortPeriod);
+  const maLong = ema(closes, maLongPeriod);
+  const prevMaShort = ema(prevCloses, maShortPeriod);
+  const prevMaLong = ema(prevCloses, maLongPeriod);
   const rsiValue = rsi(closes, rsiPeriod);
 
   if (isNaN(maShort) || isNaN(maLong) || isNaN(rsiValue)) return null;

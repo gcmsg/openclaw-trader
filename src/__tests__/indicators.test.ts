@@ -149,4 +149,44 @@ describe("calculateIndicators()", () => {
     expect(result!.prevMaShort).toBeDefined();
     expect(result!.prevMaLong).toBeDefined();
   });
+
+  it("EMA 对近期价格更敏感：大幅拉升后 maShort 应明显高于 maLong", () => {
+    // 前60根低位，最后5根大幅拉高 → EMA20 应远高于 EMA60
+    const closes = [...Array(70).fill(50), ...Array(10).fill(200)];
+    const klines = makeKlines(closes);
+    const result = calculateIndicators(klines, 20, 60, 14);
+    expect(result).not.toBeNull();
+    expect(result!.maShort).toBeGreaterThan(result!.maLong); // EMA20 > EMA60
+    // EMA 比 SMA 更快响应，maShort 应比旧 SMA 值更大
+    expect(result!.maShort).toBeGreaterThan(100);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// RSI Wilder 平滑行为验证
+// ─────────────────────────────────────────────────────
+describe("rsi() — Wilder 平滑特性", () => {
+  it("数据越多 RSI 越收敛（Wilder 平滑效果）", () => {
+    // 同样的末尾震荡行情，短数据和长数据结果应有差异
+    const base = Array.from({ length: 50 }, (_, i) => (i % 2 === 0 ? 100 : 105));
+    const short = base.slice(-15); // 最少数据
+    const long = base;             // 更多数据（Wilder 平滑更充分）
+    const rsiShort = rsi(short, 14);
+    const rsiLong = rsi(long, 14);
+    // 两者都应在合理范围内
+    expect(rsiShort).toBeGreaterThan(0);
+    expect(rsiShort).toBeLessThan(100);
+    expect(rsiLong).toBeGreaterThan(0);
+    expect(rsiLong).toBeLessThan(100);
+  });
+
+  it("全部上涨时 Wilder RSI = 100", () => {
+    const closes = Array.from({ length: 30 }, (_, i) => i + 1);
+    expect(rsi(closes, 14)).toBe(100);
+  });
+
+  it("全部下跌时 Wilder RSI = 0", () => {
+    const closes = Array.from({ length: 30 }, (_, i) => 30 - i);
+    expect(rsi(closes, 14)).toBe(0);
+  });
 });

@@ -46,15 +46,17 @@ strategy:
 # ───────────────────────────────────────
 # 信号触发条件（需同时满足）
 # ───────────────────────────────────────
+# 默认策略：趋势跟随
+#   买入：均线多头（EMA20 > EMA60）+ MACD 多头动能 + RSI 未超买
+#   卖出：均线空头（EMA20 < EMA60）
+# 注：不要求 rsi_oversold，避免与 ma_bullish 矛盾
 signals:
   buy:
-    - ma_bullish
-    - rsi_oversold
-    - macd_bullish
+    - ma_bullish           # EMA20 > EMA60（上升趋势）
+    - macd_bullish         # MACD > 信号线，柱状图为正（动能向上）
+    - rsi_not_overbought   # RSI < 65（未超买，避免追高）
   sell:
-    - ma_bearish
-    - rsi_overbought
-    - macd_bearish
+    - ma_bearish           # EMA20 < EMA60（趋势反转，离场）
 
 # ───────────────────────────────────────
 # 风险控制（各场景可单独覆盖部分字段）

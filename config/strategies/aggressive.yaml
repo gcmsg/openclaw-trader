@@ -22,13 +22,16 @@ strategy:
     surge_ratio: 1.2   # 成交量要求更宽松
     low_ratio: 0.5
 
+# 激进策略：超卖反弹（均值回归）
+#   买入：RSI 超卖（<40）+ MACD 金叉（动能开始转正）
+#   卖出：RSI 超买（>60）或 MACD 死叉
+#   注：不要求 ma_bullish，专门捕捉超卖反弹机会
 signals:
   buy:
-    - ma_bullish
-    - rsi_oversold     # 只需 MA + RSI（去掉 MACD 要求，更多信号）
+    - rsi_oversold         # RSI < 40（超卖，价格可能反弹）
+    - macd_golden_cross    # MACD 金叉（反弹动能刚刚启动）
   sell:
-    - ma_bearish
-    - rsi_overbought
+    - rsi_overbought       # RSI > 60（反弹目标达到，离场）
 
 risk:
   stop_loss_percent: 6    # 止损宽一点，容忍更大波动

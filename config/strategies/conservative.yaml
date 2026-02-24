@@ -22,16 +22,18 @@ strategy:
     surge_ratio: 2.0   # 需要更明显放量（2x 均量）才认可信号
     low_ratio: 0.5
 
+# 保守策略：趋势确立 + 动能金叉 + RSI 健康区间（三重确认）
+#   买入：均线多头 + MACD 金叉 + RSI 在 40-70 健康区间
+#   卖出：均线空头 + MACD 死叉（两重确认才出场，避免误判）
+#   注：不要求 rsi_oversold，而是要求 rsi_bullish_zone（40-70）
 signals:
   buy:
-    - ma_bullish
-    - rsi_oversold
-    - macd_bullish
-    - macd_golden_cross  # 额外要求 MACD 金叉
+    - ma_bullish           # EMA20 > EMA60（趋势确立）
+    - macd_golden_cross    # MACD 金叉（动能刚开始向上，精确入场点）
+    - rsi_bullish_zone     # RSI 在 40-70 区间（有动能且未过热）
   sell:
-    - ma_bearish
-    - rsi_overbought
-    - macd_bearish
+    - ma_bearish           # EMA20 < EMA60（趋势反转）
+    - macd_death_cross     # MACD 死叉（动能确认向下）
 
 risk:
   stop_loss_percent: 4
