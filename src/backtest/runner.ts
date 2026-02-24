@@ -244,14 +244,17 @@ function updateTrailingStop(
 /**
  * 多币种共享账户回测
  *
- * @param klinesBySymbol  每个 symbol 的完整历史 K 线（已按时间排序）
- * @param cfg             策略配置（strategy.yaml + 策略文件合并后）
- * @param opts            回测选项（初始资金、手续费、滑点）
+ * @param klinesBySymbol       每个 symbol 的完整历史 K 线（主时间框架，已按时间排序）
+ * @param cfg                  策略配置（strategy.yaml + 策略文件合并后）
+ * @param opts                 回测选项（初始资金、手续费、滑点）
+ * @param trendKlinesBySymbol  可选：高级时间框架 K 线（MTF 趋势过滤，如 4h）
+ *                             提供后，买入信号只在趋势 MA 多头时执行
  */
 export function runBacktest(
   klinesBySymbol: Record<string, Kline[]>,
   cfg: StrategyConfig,
-  opts: BacktestOptions = {}
+  opts: BacktestOptions = {},
+  trendKlinesBySymbol?: Record<string, Kline[]>
 ): BacktestResult {
   const { initialUsdt = 1000, feeRate = 0.001, slippagePercent = 0.05 } = opts;
   const resolvedOpts: Required<BacktestOptions> = {
@@ -301,6 +304,47 @@ export function runBacktest(
   // 滑动窗口（每个 symbol 独立）
   const windows: Record<string, Kline[]> = {};
   for (const sym of symbols) windows[sym] = [];
+
+  // ── MTF 趋势过滤设置 ──────────────────────────────
+  const useMtf = trendKlinesBySymbol !== undefined;
+  const trendWarmup = cfg.strategy.ma.long + 10;
+  // 趋势 K 线按 closeTime 排序（用于按时间顺序追加到趋势窗口）
+  const trendSorted: Record<string, Kline[]> = {};
+  const trendWindowPos: Record<string, number> = {}; // 已处理到第几根
+  const trendWindows: Record<string, Kline[]> = {};
+  if (useMtf) {
+    for (const sym of symbols) {
+      trendSorted[sym] = [...(trendKlinesBySymbol[sym] ?? [])].sort(
+        (a, b) => a.closeTime - b.closeTime
+      );
+      trendWindowPos[sym] = 0;
+      trendWindows[sym] = [];
+    }
+  }
+  /** 获取 sym 在时刻 time 时的趋势 MA 状态（多头=true，空头=false，无数据=null） */
+  function getTrendBull(sym: string, time: number): boolean | null {
+    if (!useMtf) return null;
+    const sorted = trendSorted[sym] ?? [];
+    const pos = trendWindowPos[sym] ?? 0;
+    let nextPos = pos;
+    // 将 closeTime < time 的趋势 K 线推入窗口（已关闭的才算，避免前瞻偏差）
+    while (nextPos < sorted.length && sorted[nextPos]!.closeTime < time) {
+      trendWindows[sym]!.push(sorted[nextPos]!);
+      nextPos++;
+    }
+    trendWindowPos[sym] = nextPos;
+    const tw = trendWindows[sym]!;
+    if (tw.length < trendWarmup) return null; // 数据不足，放行
+    const ind = calculateIndicators(
+      tw,
+      cfg.strategy.ma.short,
+      cfg.strategy.ma.long,
+      cfg.strategy.rsi.period,
+      { enabled: false, fast: 12, slow: 26, signal: 9 } // MTF 只需 MA，不算 MACD
+    );
+    if (!ind) return null;
+    return ind.maShort > ind.maLong;
+  }
 
   // ── 主循环：逐根 K 线前进 ──
   for (const time of allTimes) {
@@ -363,6 +407,9 @@ export function runBacktest(
       const signal = detectSignal(sym, indicators, cfg);
 
       if (signal.type === "buy" && !account.positions[sym]) {
+        // MTF 趋势过滤：仅在高级时间框架 MA 多头时买入
+        const trendBull = getTrendBull(sym, time);
+        if (trendBull === false) continue; // 趋势空头，跳过买入
         doBuy(account, sym, kline.close, time, cfg, resolvedOpts);
       } else if (signal.type === "sell" && account.positions[sym]) {
         doSell(account, sym, kline.close, time, "signal", resolvedOpts);

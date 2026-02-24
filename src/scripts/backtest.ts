@@ -126,6 +126,12 @@ function buildBacktestConfig(
         sell: profile.signals?.sell ?? cfg.signals.sell,
       },
       risk: mergeRisk(cfg.risk, profile.risk),
+      // MTF：profile 优先，其次全局 strategy.yaml
+      ...(profile.trend_timeframe !== undefined
+        ? { trend_timeframe: profile.trend_timeframe }
+        : base.trend_timeframe !== undefined
+          ? { trend_timeframe: base.trend_timeframe }
+          : {}),
     };
   } else {
     cfg = {
@@ -172,13 +178,29 @@ async function runOne(strategyId: string | undefined, args: CliArgs): Promise<vo
     klinesBySymbol[symbol] = klines;
   }
 
+  // 可选：MTF 趋势 K 线（如果配置了 trend_timeframe）
+  let trendKlinesBySymbol: Record<string, Kline[]> | undefined;
+  if (cfg.trend_timeframe) {
+    console.log(`\n📥 获取趋势时间框架 K 线 (${cfg.trend_timeframe})...`);
+    trendKlinesBySymbol = {};
+    for (const symbol of cfg.symbols) {
+      trendKlinesBySymbol[symbol] = await fetchHistoricalKlines(
+        symbol,
+        cfg.trend_timeframe,
+        startMs,
+        endMs
+      );
+    }
+    console.log(`   ✓ MTF ${cfg.trend_timeframe} 数据已加载`);
+  }
+
   // 运行回测
-  console.log(`\n🔄 运行回测...`);
+  console.log(`\n🔄 运行回测${cfg.trend_timeframe ? `（含 ${cfg.trend_timeframe} MTF 过滤）` : ""}...`);
   const result = runBacktest(klinesBySymbol, cfg, {
     initialUsdt: args.initialUsdt,
     feeRate: 0.001,
     slippagePercent: 0.05,
-  });
+  }, trendKlinesBySymbol);
 
   // 输出报告
   console.log("\n" + formatReport(result));
@@ -221,16 +243,24 @@ async function runCompare(args: CliArgs): Promise<void> {
     const endMs = Date.now();
     const startMs = endMs - args.days * 86_400_000;
 
-    console.log(`⏳ 正在回测：${strategyId}...`);
+    console.log(`⏳ 正在回测：${strategyId}${cfg.trend_timeframe ? ` (MTF:${cfg.trend_timeframe})` : ""}...`);
     const klinesBySymbol: Record<string, Kline[]> = {};
 
     for (const symbol of cfg.symbols) {
       klinesBySymbol[symbol] = await fetchHistoricalKlines(symbol, cfg.timeframe, startMs, endMs);
     }
 
+    let trendKlines: Record<string, Kline[]> | undefined;
+    if (cfg.trend_timeframe) {
+      trendKlines = {};
+      for (const symbol of cfg.symbols) {
+        trendKlines[symbol] = await fetchHistoricalKlines(symbol, cfg.trend_timeframe, startMs, endMs);
+      }
+    }
+
     const result = runBacktest(klinesBySymbol, cfg, {
       initialUsdt: args.initialUsdt,
-    });
+    }, trendKlines);
 
     const m = result.metrics;
     results.push({
