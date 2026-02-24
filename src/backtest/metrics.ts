@@ -9,7 +9,8 @@
 
 export interface BacktestTrade {
   symbol: string;
-  side: "buy" | "sell";
+  /** buy=开多, sell=平多, short=开空, cover=平空 */
+  side: "buy" | "sell" | "short" | "cover";
   entryTime: number;
   exitTime: number;
   entryPrice: number;
@@ -89,7 +90,8 @@ export function calculateMetrics(
   initialUsdt: number,
   equityCurve: EquityPoint[]
 ): BacktestMetrics {
-  const sellTrades = trades.filter((t) => t.side === "sell");
+  // sell = 平多；cover = 平空（两者都是已实现交易，用于计算绩效）
+  const sellTrades = trades.filter((t) => t.side === "sell" || t.side === "cover");
   const wins = sellTrades.filter((t) => t.pnl > 0);
   const losses = sellTrades.filter((t) => t.pnl <= 0);
 

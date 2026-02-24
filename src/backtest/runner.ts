@@ -24,15 +24,18 @@ import {
 
 interface BacktestPosition {
   symbol: string;
+  side?: "long" | "short"; // undefined 视为 long（向后兼容）
   entryTime: number;
   entryPrice: number; // 含滑点
   quantity: number;
-  cost: number; // 买入时花费的 USDT（含手续费+滑点）
+  cost: number;      // 多头：买入花费的 USDT；空头：锁定的保证金（含手续费）
+  marginUsdt?: number; // 空头专用：净保证金（扣除手续费后，用于归还）
   stopLoss: number;
   takeProfit: number;
   trailingStop?: {
     active: boolean;
-    highestPrice: number;
+    highestPrice: number; // 多头：持仓最高价
+    lowestPrice?: number; // 空头：持仓最低价
     stopPrice: number;
   };
 }
@@ -88,7 +91,12 @@ function calcEquity(account: BacktestAccount, prices: Record<string, number>): n
   let equity = account.usdt;
   for (const [sym, pos] of Object.entries(account.positions)) {
     const price = prices[sym] ?? pos.entryPrice;
-    equity += pos.quantity * price;
+    if (pos.side === "short") {
+      const margin = pos.marginUsdt ?? pos.quantity * pos.entryPrice;
+      equity += margin + (pos.entryPrice - price) * pos.quantity;
+    } else {
+      equity += pos.quantity * price;
+    }
   }
   return equity;
 }
@@ -168,6 +176,96 @@ function doBuy(
   });
 }
 
+function doOpenShort(
+  account: BacktestAccount,
+  symbol: string,
+  price: number,
+  time: number,
+  cfg: StrategyConfig,
+  opts: Required<BacktestOptions>
+): void {
+  if (account.positions[symbol]) return;
+  if (Object.keys(account.positions).length >= cfg.risk.max_positions) return;
+
+  const today = new Date(time).toISOString().slice(0, 10);
+  if (account.dailyLoss.date !== today) account.dailyLoss = { date: today, loss: 0 };
+
+  const equity = calcEquity(account, { [symbol]: price });
+  if ((account.dailyLoss.loss / equity) * 100 >= cfg.risk.daily_loss_limit_percent) return;
+
+  const marginToLock = equity * cfg.risk.position_ratio;
+  if (marginToLock < cfg.execution.min_order_usdt || marginToLock > account.usdt) return;
+
+  // 开空时成交价略低（对做空方不利）
+  const execPrice = price * (1 - opts.slippagePercent / 100);
+  const fee = marginToLock * opts.feeRate;
+  const actualMargin = marginToLock - fee;
+  const quantity = actualMargin / execPrice;
+
+  account.usdt -= marginToLock;
+
+  const pos: BacktestPosition = {
+    symbol,
+    side: "short",
+    entryTime: time,
+    entryPrice: execPrice,
+    quantity,
+    cost: marginToLock,     // 锁定的总保证金（含手续费）
+    marginUsdt: actualMargin, // 净保证金（用于归还）
+    stopLoss: execPrice * (1 + cfg.risk.stop_loss_percent / 100),   // 涨破 = 亏损
+    takeProfit: execPrice * (1 - cfg.risk.take_profit_percent / 100), // 跌破 = 盈利
+  };
+
+  if (cfg.risk.trailing_stop.enabled) {
+    pos.trailingStop = { active: false, highestPrice: execPrice, lowestPrice: execPrice, stopPrice: 0 };
+  }
+
+  account.positions[symbol] = pos;
+}
+
+function doCoverShort(
+  account: BacktestAccount,
+  symbol: string,
+  exitPrice: number,
+  exitTime: number,
+  exitReason: BacktestTrade["exitReason"],
+  opts: Required<BacktestOptions>
+): void {
+  const pos = account.positions[symbol];
+  if (pos?.side !== "short") return;
+
+  // 平空时买入：成交价略高（对买入方不利）
+  const execPrice = exitPrice * (1 + opts.slippagePercent / 100);
+  const grossUsdt = pos.quantity * execPrice; // 买回所需花费
+  const fee = grossUsdt * opts.feeRate;
+  const margin = pos.marginUsdt ?? pos.quantity * pos.entryPrice;
+  const pnl = (pos.entryPrice - execPrice) * pos.quantity - fee;
+  const pnlPercent = pnl / margin;
+  const proceeds = Math.max(0, margin + pnl); // 归还：保证金 ± 盈亏（最多归零）
+
+  const today = new Date(exitTime).toISOString().slice(0, 10);
+  if (account.dailyLoss.date !== today) account.dailyLoss = { date: today, loss: 0 };
+  if (pnl < 0) account.dailyLoss.loss += Math.abs(pnl);
+
+  account.usdt += proceeds;
+  delete account.positions[symbol];
+
+  account.trades.push({
+    symbol,
+    side: "cover",
+    entryTime: pos.entryTime,
+    exitTime,
+    entryPrice: pos.entryPrice,
+    exitPrice: execPrice,
+    quantity: pos.quantity,
+    cost: pos.cost,
+    proceeds,
+    pnl,
+    pnlPercent,
+    exitReason,
+  });
+}
+
 function doSell(
   account: BacktestAccount,
   symbol: string,
@@ -221,17 +319,28 @@ function updateTrailingStop(
 ): boolean {
   if (!pos.trailingStop || !cfg.risk.trailing_stop.enabled) return false;
   const ts = pos.trailingStop;
+  const { activation_percent, callback_percent } = cfg.risk.trailing_stop;
 
-  if (high > ts.highestPrice) ts.highestPrice = high;
-
-  const gainPct = ((ts.highestPrice - pos.entryPrice) / pos.entryPrice) * 100;
-  if (!ts.active && gainPct >= cfg.risk.trailing_stop.activation_percent) {
-    ts.active = true;
-  }
-
-  if (ts.active) {
-    ts.stopPrice = ts.highestPrice * (1 - cfg.risk.trailing_stop.callback_percent / 100);
-    return low <= ts.stopPrice;
+  if (pos.side === "short") {
+    // 空头：追踪最低价，从低点反弹时平仓
+    ts.lowestPrice ??= pos.entryPrice;
+    if (low < ts.lowestPrice) ts.lowestPrice = low;
+    const lowestPrice = ts.lowestPrice;
+    const gainPct = ((pos.entryPrice - lowestPrice) / pos.entryPrice) * 100;
+    if (!ts.active && gainPct >= activation_percent) ts.active = true;
+    if (ts.active) {
+      ts.stopPrice = lowestPrice * (1 + callback_percent / 100);
+      return high >= ts.stopPrice; // 高价触碰止损价，平空
+    }
+  } else {
+    // 多头：追踪最高价，从高点回撤时平仓
+    if (high > ts.highestPrice) ts.highestPrice = high;
+    const gainPct = ((ts.highestPrice - pos.entryPrice) / pos.entryPrice) * 100;
+    if (!ts.active && gainPct >= activation_percent) ts.active = true;
+    if (ts.active) {
+      ts.stopPrice = ts.highestPrice * (1 - callback_percent / 100);
+      return low <= ts.stopPrice; // 低价触碰止损价，平多
+    }
   }
 
   return false;
@@ -373,18 +482,26 @@ export function runBacktest(
       const kline = klineIndex[sym]![time];
       if (!kline) continue;
 
-      // 追踪止损更新
       const trailingTriggered = updateTrailingStop(pos, kline.high, kline.low, cfg);
 
-      if (kline.low <= pos.stopLoss) {
-        // 止损（用止损价出场，比收盘价更真实）
-        doSell(account, sym, pos.stopLoss, time, "stop_loss", resolvedOpts);
-      } else if (kline.high >= pos.takeProfit) {
-        // 止盈
-        doSell(account, sym, pos.takeProfit, time, "take_profit", resolvedOpts);
-      } else if (trailingTriggered && pos.trailingStop?.stopPrice) {
-        // 追踪止损
-        doSell(account, sym, pos.trailingStop.stopPrice, time, "trailing_stop", resolvedOpts);
+      if (pos.side === "short") {
+        // ── 空头出场（止损=涨破，止盈=跌破）──
+        if (kline.high >= pos.stopLoss) {
+          doCoverShort(account, sym, pos.stopLoss, time, "stop_loss", resolvedOpts);
+        } else if (kline.low <= pos.takeProfit) {
+          doCoverShort(account, sym, pos.takeProfit, time, "take_profit", resolvedOpts);
+        } else if (trailingTriggered && pos.trailingStop?.stopPrice) {
+          doCoverShort(account, sym, pos.trailingStop.stopPrice, time, "trailing_stop", resolvedOpts);
+        }
+      } else {
+        // ── 多头出场（止损=跌破，止盈=涨破）──
+        if (kline.low <= pos.stopLoss) {
+          doSell(account, sym, pos.stopLoss, time, "stop_loss", resolvedOpts);
+        } else if (kline.high >= pos.takeProfit) {
+          doSell(account, sym, pos.takeProfit, time, "take_profit", resolvedOpts);
+        } else if (trailingTriggered && pos.trailingStop?.stopPrice) {
+          doSell(account, sym, pos.trailingStop.stopPrice, time, "trailing_stop", resolvedOpts);
+        }
       }
     }
 
@@ -406,13 +523,24 @@ export function runBacktest(
 
       const signal = detectSignal(sym, indicators, cfg);
 
-      if (signal.type === "buy" && !account.positions[sym]) {
-        // MTF 趋势过滤：仅在高级时间框架 MA 多头时买入
+      const currentPos = account.positions[sym];
+
+      if (signal.type === "buy" && !currentPos) {
+        // MTF 过滤：多头信号需高级别 MA 也是多头
         const trendBull = getTrendBull(sym, time);
-        if (trendBull === false) continue; // 趋势空头，跳过买入
+        if (trendBull === false) continue;
         doBuy(account, sym, kline.close, time, cfg, resolvedOpts);
-      } else if (signal.type === "sell" && account.positions[sym]) {
+      } else if (signal.type === "sell" && currentPos?.side !== "short") {
+        // 平多（仅在持有多头仓位时）
         doSell(account, sym, kline.close, time, "signal", resolvedOpts);
+      } else if (signal.type === "short" && !currentPos) {
+        // MTF 过滤：空头信号需高级别 MA 也是空头（反向过滤）
+        const trendBull = getTrendBull(sym, time);
+        if (trendBull === true) continue; // 大趋势多头，不开空
+        doOpenShort(account, sym, kline.close, time, cfg, resolvedOpts);
+      } else if (signal.type === "cover" && currentPos?.side === "short") {
+        // 平空（仅在持有空头仓位时）
+        doCoverShort(account, sym, kline.close, time, "signal", resolvedOpts);
       }
     }
 
@@ -424,11 +552,14 @@ export function runBacktest(
   }
 
   // ── 强制平仓（回测结束时，按最后收盘价）──
-  // allTimes 已过滤后可能为空（数据不足），需要守卫
   const lastTime = allTimes[allTimes.length - 1] ?? 0;
   for (const sym of Object.keys(account.positions)) {
+    const pos = account.positions[sym];
     const lastKline = lastTime > 0 ? klineIndex[sym]?.[lastTime] : undefined;
-    if (lastKline) {
+    if (!lastKline || !pos) continue;
+    if (pos.side === "short") {
+      doCoverShort(account, sym, lastKline.close, lastTime, "end_of_data", resolvedOpts);
+    } else {
       doSell(account, sym, lastKline.close, lastTime, "end_of_data", resolvedOpts);
     }
   }
@@ -437,10 +568,11 @@ export function runBacktest(
   const metrics = calculateMetrics(account.trades, initialUsdt, account.equityCurve);
 
   // ── 各币种统计 ──
-  const sellTrades = account.trades.filter((t) => t.side === "sell");
+  // sell=平多，cover=平空（均为已实现交易）
+  const closedTrades = account.trades.filter((t) => t.side === "sell" || t.side === "cover");
   const perSymbol: BacktestResult["perSymbol"] = {};
   for (const sym of symbols) {
-    const symTrades = sellTrades.filter((t) => t.symbol === sym);
+    const symTrades = closedTrades.filter((t) => t.symbol === sym);
     const symWins = symTrades.filter((t) => t.pnl > 0);
     const symLosses = symTrades.filter((t) => t.pnl <= 0);
     perSymbol[sym] = {
