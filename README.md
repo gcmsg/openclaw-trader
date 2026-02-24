@@ -8,16 +8,23 @@
 
 ### Features
 
-- 📊 **Technical Analysis** — MA (20/60) + RSI (14) + MACD (12/26/9) indicator engine
+- 📊 **Technical Analysis** — EMA (20/60) + RSI Wilder (14) + MACD (12/26/9) indicator engine
 - ⚙️ **Config-driven Strategy** — Edit `config/strategy.yaml`, no code changes needed
 - 🗞️ **News & Sentiment** — Fear & Greed Index + CryptoCompare headlines with sentiment gate
 - 🎭 **Paper Trading Mode** — Simulates trades using real market prices; tracks P&L, win rate, positions
 - 🔬 **Backtesting Engine** — Test any strategy against months of historical data; Sharpe ratio, max drawdown, profit factor
+- 📉 **Short / Bearish Engine** — Open short + cover signals for Futures/Margin markets; inverted SL/TP/trailing stop; shared position pool
+- 🏦 **Binance Testnet & Live** — Spot Testnet + Futures Testnet fully verified; one-way mode; `marketSell` = open short, `marketBuyByQty` = cover
 - 🔔 **AI-triggered Signals** — Zero token cost when idle; only wakes the AI agent on signal detection
 - 🛡️ **Risk Management** — Stop-loss, take-profit, trailing stop, daily loss limit, total drawdown auto-pause
+- 📐 **ATR Dynamic Sizing** — Position size calculated from ATR to normalize per-trade risk
+- 🎯 **Staged Take-Profit** — Close position in multiple tranches at configurable profit levels
+- ⏱️ **Time Stop** — Force-exit stagnant positions after configurable hours
+- 🔗 **Correlation Filter** — Skip correlated assets already in portfolio (Pearson > 0.7)
+- 📡 **WebSocket Monitor** — Real-time kline stream with < 1s signal latency
 - 🪙 **Multi-symbol** — BTC, ETH, BNB, SOL, XRP, ADA, DOGE, AVAX
-- 🧪 **Multi-strategy Scenarios** — Run aggressive/conservative/rsi-pure strategies in parallel with isolated accounts
-- ✅ **Tested** — 171 unit tests across indicators, signals, paper trading, backtest metrics
+- 🧪 **Multi-strategy Scenarios** — Run long-only / short-only / bidirectional strategies in parallel
+- ✅ **Tested** — 269 unit tests across indicators, signals, paper trading, backtest metrics, short engine
 
 ### Architecture
 
@@ -136,53 +143,70 @@ paper:
 
 ### Buy / Sell Logic
 
-| Signal | Conditions |
-|---|---|
-| **Buy** | MA short > MA long (bullish trend) **AND** RSI < 35 (oversold) |
-| **Sell** | MA short < MA long (bearish trend) **AND** RSI > 65 (overbought) |
-| **Stop Loss** | Position drops ≥ 5% from entry |
+| Signal | Conditions | Market |
+|---|---|---|
+| **Buy** | EMA20 > EMA60 (bullish) + MACD golden cross + RSI not overbought | Spot / Futures |
+| **Sell** | EMA20 < EMA60 (bearish) | Spot / Futures |
+| **Short** | EMA20 < EMA60 (bearish) + MACD death cross + RSI not oversold | **Futures / Margin only** |
+| **Cover** | EMA20 > EMA60 (trend reversal) | **Futures / Margin only** |
+| **Stop Loss** | Long: price ≤ entry × (1 - SL%) · Short: price ≥ entry × (1 + SL%) | — |
+| **Take Profit** | Long: price ≥ entry × (1 + TP%) · Short: price ≤ entry × (1 - TP%) | — |
+| **Trailing Stop** | Activates after activation_percent gain; triggers on callback_percent reversal | — |
+
+> **Short engine**: single-direction (no hedge mode). Longs and shorts share the `max_positions` pool.  
+> `marketSell` = open short · `marketBuyByQty` = cover short
 
 ### Project Structure
 
 ```
 src/
-├── monitor.ts              Main entry point
+├── monitor.ts              Polling monitor (cron mode, 1-min intervals)
 ├── types.ts                Global TypeScript types
 ├── exchange/
-│   └── binance.ts          Binance REST API wrapper
+│   ├── binance-client.ts   Binance REST (Spot + Futures, live + testnet)
+│   └── ws.ts               WebSocket kline stream manager
 ├── strategy/
-│   ├── indicators.ts       SMA / EMA / RSI / MACD calculation
-│   └── signals.ts          Signal detection engine
+│   ├── indicators.ts       EMA / RSI Wilder / MACD / ATR calculation
+│   ├── signals.ts          Signal detection (buy/sell/short/cover)
+│   └── correlation.ts      Pearson correlation filter
 ├── paper/
-│   ├── account.ts          Virtual account (buy/sell/P&L)
-│   ├── engine.ts           Stop-loss & drawdown checks
+│   ├── account.ts          Virtual account (long + short, P&L, trailing stop)
+│   ├── engine.ts           Signal handler + exit conditions (SL/TP/trailing/time)
 │   └── status.ts           CLI account status viewer
 ├── backtest/
 │   ├── fetcher.ts          Historical K-line fetcher (paginated + cached)
-│   ├── metrics.ts          Performance metrics (Sharpe, drawdown, profit factor…)
-│   ├── runner.ts           Multi-symbol backtest simulation engine
+│   ├── metrics.ts          Performance metrics (Sharpe, Sortino, drawdown…)
+│   ├── runner.ts           Multi-symbol backtest engine (long + short)
 │   └── report.ts           Console output + JSON report saver
+├── live/
+│   └── executor.ts         Live executor (Spot buy/sell + Futures short/cover)
 ├── news/
 │   ├── fetcher.ts          Fear & Greed + CryptoCompare headlines
-│   └── monitor.ts          News scan entry point
+│   ├── monitor.ts          News scan entry point
+│   └── sentiment-gate.ts   Keyword scoring gate (bull/bear word lists)
+├── config/
+│   └── loader.ts           Runtime config loader (merges strategy profiles)
 ├── notify/
 │   └── openclaw.ts         OpenClaw agent notifications
-├── scripts/
-│   ├── backtest.ts         Backtest CLI (npm run backtest)
-│   └── sync-cron.ts        Cron sync utility
-└── __tests__/
-    ├── indicators.test.ts
-    ├── signals.test.ts
-    ├── paper-account.test.ts
-    ├── paper-engine.test.ts
-    └── backtest-metrics.test.ts
+├── report/
+│   └── weekly.ts           Weekly performance report (Sharpe, drawdown, win rate)
+└── scripts/
+    ├── backtest.ts         Backtest CLI  (npm run backtest)
+    ├── live-monitor.ts     Testnet live monitor (npm run live)
+    ├── ws-monitor.ts       WebSocket realtime monitor (npm run ws-monitor)
+    ├── sync-cron.ts        Cron sync utility (npm run cron:sync)
+    └── test-futures.ts     Futures testnet connectivity test
 config/
-├── strategy.yaml           Strategy & risk configuration
+├── strategy.yaml           Global strategy + schedule config
+├── paper.yaml              Paper / testnet trading scenarios
 └── strategies/             Named strategy profiles
-    ├── aggressive.yaml
-    ├── conservative.yaml
-    ├── rsi-pure.yaml
-    └── trend.yaml
+    ├── default.yaml        Default balanced strategy
+    ├── aggressive.yaml     High-frequency signals
+    ├── conservative.yaml   Triple-confirmation (MA+RSI+MACD)
+    ├── trend.yaml          Long-period trend following
+    ├── rsi-pure.yaml       RSI-only signals
+    ├── short-trend.yaml    Short-only bearish strategy  ← NEW
+    └── long-short.yaml     Bidirectional (long + short)  ← NEW
 logs/
 ├── monitor.log
 ├── news-report.json        Latest market sentiment report
@@ -266,12 +290,16 @@ MIT
 - ⚙️ **配置驱动策略** — 编辑 `config/strategy.yaml` 即可调整，无需改代码
 - 🗞️ **新闻情绪分析** — 恐惧贪婪指数 + CryptoCompare 新闻 + 情绪门控仓位调整
 - 🎭 **模拟盘模式** — 使用真实价格模拟交易，完整记录盈亏、胜率、持仓
-- 🔬 **回测引擎** — 用历史 K 线验证任意策略；输出夏普比率、最大回撤、利润因子等专业指标
+- 🔬 **回测引擎** — 用历史 K 线验证任意策略；输出夏普/索提诺/最大回撤/利润因子
+- 📉 **空头引擎** — Futures/Margin 市场开空/平空；反向止损止盈/追踪止损；与多头共享仓位池
+- 🏦 **Binance Testnet & 实盘** — Spot Testnet + Futures Testnet 已验证；单向持仓模式
 - 🔔 **AI 信号触发** — 无信号时零 token 消耗，仅在发现信号时唤醒 AI Agent
-- 🛡️ **风险管理** — 止损/止盈/追踪止损/日亏限额/总亏上限 五重保障
-- 🧪 **多策略并行** — 激进/保守/RSI 等多套策略独立账户同时跑
+- 🛡️ **风险管理** — 止损/止盈/追踪止损/日亏限额/总亏上限/ATR 动态仓位/分批止盈/时间止损
+- 📡 **WebSocket 实时流** — 毫秒级 K 线推送，信号延迟 < 1 秒
+- 🔗 **相关性过滤** — Pearson 相关 > 0.7 自动跳过，避免仓位集中
+- 🧪 **多策略并行** — 纯多头 / 纯空头 / 双向等多套策略独立账户同时跑
 - 🪙 **多币种监控** — BTC、ETH、BNB、SOL、XRP、ADA、DOGE、AVAX
-- ✅ **完整测试** — 171 条单元测试，覆盖指标、信号、模拟盘、回测指标
+- ✅ **完整测试** — 269 条单元测试，覆盖指标、信号、多空引擎、回测、Futures 验证
 
 ### 运行架构
 
@@ -326,23 +354,32 @@ npm test
 
 ### 买卖逻辑
 
-| 信号 | 触发条件 |
-|---|---|
-| **买入** | MA 短期 > 长期（多头趋势）**且** RSI < 35（超卖） |
-| **卖出** | MA 短期 < 长期（空头趋势）**且** RSI > 65（超买） |
-| **止损** | 持仓亏损达到 5% 自动平仓 |
+| 信号 | 触发条件 | 市场 |
+|---|---|---|
+| **买入** | EMA20 > EMA60（多头）+ MACD 金叉 + RSI 未超买 | Spot / Futures |
+| **卖出** | EMA20 < EMA60（趋势反转） | Spot / Futures |
+| **开空** | EMA20 < EMA60（空头）+ MACD 死叉 + RSI 未超卖 | **Futures / Margin** |
+| **平空** | EMA20 > EMA60（趋势反转） | **Futures / Margin** |
+| **止损** | 多头：价格 ≤ 入场价×(1-SL%) · 空头：价格 ≥ 入场价×(1+SL%) | — |
+| **止盈** | 多头：价格 ≥ 入场价×(1+TP%) · 空头：价格 ≤ 入场价×(1-TP%) | — |
+| **追踪止损** | 盈利达激活阈值后，从极值回撤 callback% 触发 | — |
+
+> 空头引擎采用单向模式（非对冲），多空仓位共享 `max_positions` 上限
 
 ### 进度
 
-- [x] 技术指标引擎（MA + RSI）
-- [x] 可插拔信号检测
-- [x] 模拟盘（使用真实价格）
-- [x] 新闻情绪分析（每 4 小时）
-- [x] 风险管理（止损 / 最大回撤）
-- [x] MACD + 成交量指标与信号
-- [x] 新闻情绪门控（仓位随情绪动态调整）
-- [x] 周报复盘功能（AI 深度分析，每周日 22:00）
-- [x] 健康监控 + 心跳系统（每 30 分钟检查，异常告警）
+- [x] 技术指标引擎（EMA + RSI Wilder + MACD + ATR）
+- [x] 可插拔信号检测（buy / sell / short / cover）
+- [x] 模拟盘（使用真实价格，多空均支持）
+- [x] 回测引擎（夏普/索提诺/最大回撤/利润因子，多空均支持）
+- [x] 新闻情绪分析（每 4 小时）+ 情绪门控仓位调整
+- [x] 风险管理（止损/止盈/追踪止损/日亏限额/ATR仓位/分批止盈/时间止损）
+- [x] MTF 多时间框架趋势确认 + 相关性过滤
+- [x] WebSocket 实时 K 线流（< 1s 延迟）
+- [x] **空头引擎全链路**（类型层→账户层→引擎层→信号层→回测层→实盘层）
+- [x] **Binance Testnet 验证**（Spot Testnet + Futures Testnet 开空/平空已验证）
+- [x] 策略文件（default / aggressive / conservative / trend / short-trend / long-short）
+- [x] 周报复盘功能 + 健康监控心跳
 - [x] 配置驱动的定时任务管理（`cron:sync` 一键同步）
 - [x] 171 条单元测试
 - [x] 回测引擎（夏普/最大回撤/利润因子/多策略对比）
