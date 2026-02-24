@@ -126,10 +126,20 @@ export function buildPaperRuntime(
   // strategy section：profile 覆盖全局
   const strategy = mergeStrategySection(base.strategy, profile.strategy);
 
-  // signals：profile > 全局
-  const signals = {
+  // signals：profile > 全局（short/cover 仅在配置了且为非空数组时覆盖）
+  const signals: StrategyConfig["signals"] = {
     buy: profile.signals?.buy ?? base.signals.buy,
     sell: profile.signals?.sell ?? base.signals.sell,
+    ...(profile.signals?.short !== undefined
+      ? { short: profile.signals.short }
+      : base.signals.short !== undefined
+        ? { short: base.signals.short }
+        : {}),
+    ...(profile.signals?.cover !== undefined
+      ? { cover: profile.signals.cover }
+      : base.signals.cover !== undefined
+        ? { cover: base.signals.cover }
+        : {}),
   };
 
   // risk：场景覆盖 > profile 覆盖 > 全局

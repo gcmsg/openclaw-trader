@@ -84,65 +84,67 @@ const SIGNAL_CHECKERS: Record<string, SignalChecker> = {
   },
 };
 
-/** 检测信号 */
+/** 内部辅助：检查一组条件是否全部满足，返回 [是否满足, 满足的条件名列表] */
+function checkConditions(
+  conditions: string[],
+  indicators: Indicators,
+  cfg: StrategyConfig,
+  label: string
+): [boolean, string[]] {
+  if (conditions.length === 0) return [false, []];
+  const reasons: string[] = [];
+  const met = conditions.every((name) => {
+    const checker = SIGNAL_CHECKERS[name];
+    if (!checker) {
+      console.warn(`[signals] 未知${label}条件: "${name}"，请检查策略配置`);
+      return false;
+    }
+    const ok = checker(indicators, cfg);
+    if (ok) reasons.push(name);
+    return ok;
+  });
+  return [met, reasons];
+}
+
+/**
+ * 检测信号
+ *
+ * 优先级：buy → sell → short → cover
+ * - buy/sell 管理多头持仓
+ * - short/cover 管理空头持仓（仅 futures/margin 市场有意义）
+ *
+ * 引擎层负责根据当前持仓状态决定是否执行该信号。
+ */
 export function detectSignal(symbol: string, indicators: Indicators, cfg: StrategyConfig): Signal {
-  const buyConditions = cfg.signals.buy;
-  const sellConditions = cfg.signals.sell;
-
-  // 检查买入条件（需全部满足）
-  const buyReasons: string[] = [];
-  const buyMet = buyConditions.every((name) => {
-    const checker = SIGNAL_CHECKERS[name];
-    if (!checker) {
-      console.warn(`[signals] 未知买入条件: "${name}"，请检查策略配置`);
-      return false;
-    }
-    const met = checker(indicators, cfg);
-    if (met) buyReasons.push(name);
-    return met;
-  });
-
-  if (buyMet && buyConditions.length > 0) {
-    return {
-      symbol,
-      type: "buy",
-      price: indicators.price,
-      indicators,
-      reason: buyReasons,
-      timestamp: Date.now(),
-    };
-  }
-
-  // 检查卖出条件（需全部满足）
-  const sellReasons: string[] = [];
-  const sellMet = sellConditions.every((name) => {
-    const checker = SIGNAL_CHECKERS[name];
-    if (!checker) {
-      console.warn(`[signals] 未知卖出条件: "${name}"，请检查策略配置`);
-      return false;
-    }
-    const met = checker(indicators, cfg);
-    if (met) sellReasons.push(name);
-    return met;
-  });
-
-  if (sellMet && sellConditions.length > 0) {
-    return {
-      symbol,
-      type: "sell",
-      price: indicators.price,
-      indicators,
-      reason: sellReasons,
-      timestamp: Date.now(),
-    };
-  }
-
-  return {
+  const makeSignal = (
+    type: Signal["type"],
+    reason: string[]
+  ): Signal => ({
     symbol,
-    type: "none",
+    type,
     price: indicators.price,
     indicators,
-    reason: [],
+    reason,
     timestamp: Date.now(),
-  };
+  });
+
+  // 1. 买入（开多）
+  const [buyMet, buyReasons] = checkConditions(cfg.signals.buy, indicators, cfg, "买入");
+  if (buyMet) return makeSignal("buy", buyReasons);
+
+  // 2. 卖出（平多）
+  const [sellMet, sellReasons] = checkConditions(cfg.signals.sell, indicators, cfg, "卖出");
+  if (sellMet) return makeSignal("sell", sellReasons);
+
+  // 3. 开空（short，需 signals.short 配置，引擎层还会检查市场类型）
+  const shortConditions = cfg.signals.short ?? [];
+  const [shortMet, shortReasons] = checkConditions(shortConditions, indicators, cfg, "开空");
+  if (shortMet) return makeSignal("short", shortReasons);
+
+  // 4. 平空（cover）
+  const coverConditions = cfg.signals.cover ?? [];
+  const [coverMet, coverReasons] = checkConditions(coverConditions, indicators, cfg, "平空");
+  if (coverMet) return makeSignal("cover", coverReasons);
+
+  return makeSignal("none", []);
 }

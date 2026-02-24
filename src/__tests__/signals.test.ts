@@ -293,3 +293,65 @@ describe("新信号条件 — rsi_not_overbought / rsi_not_oversold / rsi_bullis
     expect(detectSignal("X", ind, cfg).type).toBe("buy");
   });
 });
+
+// ─── short / cover 信号 ──────────────────────────────
+
+describe("detectSignal() - short / cover 信号", () => {
+  it("开空条件满足时返回 short 信号", () => {
+    const ind = makeIndicators({
+      maShort: 90, maLong: 100,  // ma_bearish
+      macd: { macd: -1, signal: 0, histogram: -1 }, // macd_bearish
+    });
+    const cfg = makeConfig([], [], 35, 65);
+    // 注入 short 条件
+    cfg.signals.short = ["ma_bearish", "macd_bearish"];
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("short");
+    expect(sig.reason).toContain("ma_bearish");
+    expect(sig.reason).toContain("macd_bearish");
+  });
+
+  it("buy 优先级高于 short（同策略下 buy 先被检测）", () => {
+    const ind = makeIndicators({ maShort: 110, maLong: 100 }); // ma_bullish
+    const cfg = makeConfig(["ma_bullish"], ["ma_bearish"]);
+    cfg.signals.short = ["ma_bullish"]; // 同条件，但 buy 先检测
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("buy");
+  });
+
+  it("sell 优先级高于 short（卖出先于开空）", () => {
+    const ind = makeIndicators({ maShort: 90, maLong: 100 }); // ma_bearish
+    const cfg = makeConfig([], ["ma_bearish"]);
+    cfg.signals.short = ["ma_bearish"];
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("sell"); // sell 优先
+  });
+
+  it("平空条件满足时返回 cover 信号", () => {
+    const ind = makeIndicators({ maShort: 110, maLong: 100, rsi: 25 }); // ma_bullish + oversold
+    const cfg = makeConfig([], []); // 无 buy/sell 条件
+    cfg.signals.cover = ["ma_bullish", "rsi_oversold"];
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("cover");
+    expect(sig.reason).toContain("ma_bullish");
+    expect(sig.reason).toContain("rsi_oversold");
+  });
+
+  it("signals.short 未配置时不产生 short 信号（返回 none）", () => {
+    const ind = makeIndicators({ maShort: 90, maLong: 100 }); // ma_bearish
+    const cfg = makeConfig([], []); // 无 sell 条件，且无 short 配置
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("none");
+  });
+
+  it("开空条件部分满足时不触发 short", () => {
+    const ind = makeIndicators({
+      maShort: 90, maLong: 100,  // ma_bearish ✓
+      macd: { macd: 1, signal: 0, histogram: 1 }, // macd_bearish ✗（MACD 多头）
+    });
+    const cfg = makeConfig([], []);
+    cfg.signals.short = ["ma_bearish", "macd_bearish"];
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("none");
+  });
+});
