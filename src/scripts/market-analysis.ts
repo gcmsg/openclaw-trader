@@ -12,6 +12,7 @@
 import { getMacroContext, formatMacroReport } from "../exchange/macro-data.js";
 import { getBatchFuturesData, formatFundingRateReport } from "../exchange/futures-data.js";
 import { getBatchMultiTfContext, formatMultiTfReport } from "../strategy/market-context.js";
+import { getDerivativesSnapshot, formatDerivativesReport } from "../exchange/derivatives-data.js";
 import { loadNewsReport } from "../news/sentiment-gate.js";
 import { loadStrategyConfig } from "../config/loader.js";
 import { getKlines } from "../exchange/binance.js";
@@ -55,10 +56,12 @@ async function main() {
     getMacroContext(),
   ]);
 
-  // 先拿到价格，再拉 OI（需要价格换算 USDT）
-  const [futuresData, multiTf] = await Promise.all([
+  // 先拿到价格，再并发拉其余数据
+  const [futuresData, multiTf, btcDeriv, ethDeriv] = await Promise.all([
     getBatchFuturesData(FUTURES_SYMBOLS, prices),
     getBatchMultiTfContext(symbols, baseCfg, ["1h", "4h", "1d"] as Timeframe[]),
+    getDerivativesSnapshot("BTCUSDT").catch(() => null),
+    getDerivativesSnapshot("ETHUSDT").catch(() => null),
   ]);
 
   // 读取情绪报告（本地缓存）
@@ -94,6 +97,13 @@ async function main() {
   // 4. 资金费率 + OI
   sections.push(`\n${separator}`);
   sections.push(formatFundingRateReport(futuresData));
+
+  // 4.5 衍生品情报（Basis + L/S 比 + 期权）
+  if (btcDeriv ?? ethDeriv) {
+    sections.push(`\n${separator}`);
+    if (btcDeriv) sections.push(formatDerivativesReport(btcDeriv));
+    if (ethDeriv) sections.push(formatDerivativesReport(ethDeriv));
+  }
 
   // 5. 多 TF 技术面扫描
   sections.push(`\n${separator}`);
