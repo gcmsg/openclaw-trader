@@ -172,12 +172,20 @@ async function runStrategy(
     }
   }
 
-  const signal = detectSignal(symbol, indicators, cfg);
+  const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+  const currentPosSide = currentAccount.positions[symbol]?.side;
+  const signal = detectSignal(symbol, indicators, cfg, currentPosSide);
 
   // MTF 过滤
   if (signal.type === "buy" && mtfTrendBull === false) {
     log(
       `[${cfg.paper.scenarioId}] ${symbol}: 🚫 MTF 过滤（${cfg.trend_timeframe} 空头），忽略买入`
+    );
+    return;
+  }
+  if (signal.type === "short" && mtfTrendBull === true) {
+    log(
+      `[${cfg.paper.scenarioId}] ${symbol}: 🚫 MTF 过滤（${cfg.trend_timeframe} 多头），忽略开空`
     );
     return;
   }

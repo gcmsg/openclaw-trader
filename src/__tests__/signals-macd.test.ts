@@ -109,7 +109,7 @@ describe("detectSignal() - MACD 金叉/死叉", () => {
       macd: makeMacd({ macd: -5, signal: 2, prevMacd: 8, prevSignal: 3 }),
     });
     const cfg = makeConfig([], ["macd_death_cross"]);
-    expect(detectSignal("X", ind, cfg).type).toBe("sell");
+    expect(detectSignal("X", ind, cfg, "long").type).toBe("sell");
   });
 
   it("macd_death_cross: MACD 已在信号线下方时不触发", () => {
@@ -153,7 +153,7 @@ describe("detectSignal() - MACD 多头/空头", () => {
       macd: makeMacd({ macd: -10, signal: -3, histogram: -7 }),
     });
     const cfg = makeConfig([], ["macd_bearish"]);
-    expect(detectSignal("X", ind, cfg).type).toBe("sell");
+    expect(detectSignal("X", ind, cfg, "long").type).toBe("sell");
   });
 
   it("macd_bearish: histogram >= 0 时不触发", () => {
@@ -245,7 +245,7 @@ describe("detectSignal() - 成交量条件", () => {
   it("volume_low: 当前量 <= 0.5x 均量时触发", () => {
     const ind = makeIndicators({ volume: 400, avgVolume: 1000 });
     const cfg = makeConfig([], ["volume_low"], { low_ratio: 0.5 });
-    expect(detectSignal("X", ind, cfg).type).toBe("sell");
+    expect(detectSignal("X", ind, cfg, "long").type).toBe("sell");
   });
 
   it("volume_low: avgVolume = 0 时不触发（避免除零）", () => {
@@ -292,6 +292,6 @@ describe("detectSignal() - RSI-Pure 策略组合", () => {
     });
     const cfg = makeConfig([], ["rsi_overbought", "macd_histogram_expanding"]);
     // overbought 需要 rsi > 65（默认）
-    expect(detectSignal("X", ind, cfg).type).toBe("sell");
+    expect(detectSignal("X", ind, cfg, "long").type).toBe("sell");
   });
 });

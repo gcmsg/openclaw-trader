@@ -521,25 +521,27 @@ export function runBacktest(
       );
       if (!indicators) continue;
 
-      const signal = detectSignal(sym, indicators, cfg);
-
       const currentPos = account.positions[sym];
+      // 传入持仓方向，让 detectSignal 使用正确的优先级
+      // long 持仓 → 只检查 sell；short 持仓 → 只检查 cover；无持仓 → 检查 buy/short
+      const posSide = currentPos?.side;
+      const signal = detectSignal(sym, indicators, cfg, posSide);
 
-      if (signal.type === "buy" && !currentPos) {
+      if (signal.type === "buy") {
         // MTF 过滤：多头信号需高级别 MA 也是多头
         const trendBull = getTrendBull(sym, time);
         if (trendBull === false) continue;
         doBuy(account, sym, kline.close, time, cfg, resolvedOpts);
-      } else if (signal.type === "sell" && currentPos?.side !== "short") {
-        // 平多（仅在持有多头仓位时）
+      } else if (signal.type === "sell") {
+        // 平多（detectSignal 已确保只在持多时返回 sell）
         doSell(account, sym, kline.close, time, "signal", resolvedOpts);
-      } else if (signal.type === "short" && !currentPos) {
+      } else if (signal.type === "short") {
         // MTF 过滤：空头信号需高级别 MA 也是空头（反向过滤）
         const trendBull = getTrendBull(sym, time);
         if (trendBull === true) continue; // 大趋势多头，不开空
         doOpenShort(account, sym, kline.close, time, cfg, resolvedOpts);
-      } else if (signal.type === "cover" && currentPos?.side === "short") {
-        // 平空（仅在持有空头仓位时）
+      } else if (signal.type === "cover") {
+        // 平空（detectSignal 已确保只在持空时返回 cover）
         doCoverShort(account, sym, kline.close, time, "signal", resolvedOpts);
       }
     }

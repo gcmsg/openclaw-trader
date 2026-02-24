@@ -74,8 +74,10 @@ async function processSymbol(symbol: string, cfg: RuntimeConfig): Promise<void> 
     return;
   }
 
-  // 检测信号
-  const signal = detectSignal(symbol, indicators, cfg);
+  // 检测信号（传入持仓方向，避免 sell/cover 被入场信号抢占）
+  const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+  const currentPosSide = currentAccount.positions[symbol]?.side;
+  const signal = detectSignal(symbol, indicators, cfg, currentPosSide);
 
   log(
     `${label} ${symbol}: RSI=${indicators.rsi.toFixed(1)} ` +

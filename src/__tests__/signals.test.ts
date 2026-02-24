@@ -130,7 +130,7 @@ describe("detectSignal() - MA 趋势", () => {
   it("ma_bearish: maShort < maLong 时触发", () => {
     const ind = makeIndicators({ maShort: 90, maLong: 100, rsi: 50 });
     const cfg = makeConfig([], ["ma_bearish"]);
-    expect(detectSignal("X", ind, cfg).type).toBe("sell");
+    expect(detectSignal("X", ind, cfg, "long").type).toBe("sell");
   });
 
   it("ma_golden_cross: 短线上穿长线时触发", () => {
@@ -163,7 +163,7 @@ describe("detectSignal() - MA 趋势", () => {
       prevMaLong: 100, // 前一根：短 > 长
     });
     const cfg = makeConfig([], ["ma_death_cross"]);
-    expect(detectSignal("X", ind, cfg).type).toBe("sell");
+    expect(detectSignal("X", ind, cfg, "long").type).toBe("sell");
   });
 });
 
@@ -187,7 +187,7 @@ describe("detectSignal() - RSI", () => {
   it("rsi_overbought: RSI > 阈值时触发", () => {
     const ind = makeIndicators({ rsi: 70 });
     const cfg = makeConfig([], ["rsi_overbought"], 35, 65);
-    expect(detectSignal("X", ind, cfg).type).toBe("sell");
+    expect(detectSignal("X", ind, cfg, "long").type).toBe("sell");
   });
 
   it("rsi_overbought: RSI = 阈值时不触发", () => {
@@ -218,18 +218,18 @@ describe("detectSignal() - AND 逻辑", () => {
     expect(detectSignal("X", ind, cfg).type).toBe("none");
   });
 
-  it("卖出：所有条件满足才触发", () => {
+  it("卖出：所有条件满足才触发（需 positionSide='long'）", () => {
     const ind = makeIndicators({ maShort: 90, maLong: 100, rsi: 70 });
     const cfg = makeConfig([], ["ma_bearish", "rsi_overbought"]);
-    const result = detectSignal("X", ind, cfg);
+    const result = detectSignal("X", ind, cfg, "long");
     expect(result.type).toBe("sell");
   });
 
-  it("买入优先于卖出（同时满足时返回买入）", () => {
-    // 极端情况：买卖条件同时满足（正常情况不会发生，但逻辑应优先买入）
+  it("无持仓时 buy 优先（sell 不在无持仓时评估）", () => {
+    // 无持仓：只评估 buy/short，sell 不参与
     const ind = makeIndicators({ maShort: 110, maLong: 100, rsi: 30 });
     const cfg = makeConfig(["ma_bullish"], ["rsi_oversold"]);
-    const result = detectSignal("X", ind, cfg);
+    const result = detectSignal("X", ind, cfg); // 无 positionSide
     expect(result.type).toBe("buy");
   });
 });
@@ -296,62 +296,121 @@ describe("新信号条件 — rsi_not_overbought / rsi_not_oversold / rsi_bullis
 
 // ─── short / cover 信号 ──────────────────────────────
 
-describe("detectSignal() - short / cover 信号", () => {
-  it("开空条件满足时返回 short 信号", () => {
+describe("detectSignal() - short / cover 信号（持仓感知）", () => {
+  // ── 无持仓：只检查 buy / short ─────────────────────
+
+  it("无持仓：空头条件满足时返回 short", () => {
     const ind = makeIndicators({
       maShort: 90, maLong: 100,  // ma_bearish
-      macd: { macd: -1, signal: 0, histogram: -1 }, // macd_bearish
+      macd: { macd: -1, signal: 0, histogram: -1 },
     });
     const cfg = makeConfig([], [], 35, 65);
-    // 注入 short 条件
     cfg.signals.short = ["ma_bearish", "macd_bearish"];
-    const sig = detectSignal("BTCUSDT", ind, cfg);
+    const sig = detectSignal("BTCUSDT", ind, cfg); // 无 positionSide
     expect(sig.type).toBe("short");
     expect(sig.reason).toContain("ma_bearish");
     expect(sig.reason).toContain("macd_bearish");
   });
 
-  it("buy 优先级高于 short（同策略下 buy 先被检测）", () => {
+  it("无持仓：buy 优先于 short（同时满足时 buy 先触发）", () => {
     const ind = makeIndicators({ maShort: 110, maLong: 100 }); // ma_bullish
-    const cfg = makeConfig(["ma_bullish"], ["ma_bearish"]);
-    cfg.signals.short = ["ma_bullish"]; // 同条件，但 buy 先检测
+    const cfg = makeConfig(["ma_bullish"], []);
+    cfg.signals.short = ["ma_bullish"]; // 同条件，buy 先
     const sig = detectSignal("BTCUSDT", ind, cfg);
     expect(sig.type).toBe("buy");
   });
 
-  it("sell 优先级高于 short（卖出先于开空）", () => {
+  it("无持仓：ma_bearish 满足时，若 sell 有条件配置仍不触发 sell（sell 只在持多时检查）", () => {
+    const ind = makeIndicators({ maShort: 90, maLong: 100 }); // ma_bearish
+    const cfg = makeConfig([], ["ma_bearish"]);
+    cfg.signals.short = []; // 无 short 条件
+    // 无持仓 → detectSignal 只检查 buy/short，不检查 sell
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("none"); // sell 未被评估
+  });
+
+  it("无持仓：sell 不再屏蔽 short（B1 修复验证）", () => {
+    // 原 bug：sell 触发 → short 被跳过；修复后：sell 不在无持仓时评估
     const ind = makeIndicators({ maShort: 90, maLong: 100 }); // ma_bearish
     const cfg = makeConfig([], ["ma_bearish"]);
     cfg.signals.short = ["ma_bearish"];
-    const sig = detectSignal("BTCUSDT", ind, cfg);
-    expect(sig.type).toBe("sell"); // sell 优先
+    const sig = detectSignal("BTCUSDT", ind, cfg); // 无持仓
+    expect(sig.type).toBe("short"); // 修复前是 "sell"
   });
 
-  it("平空条件满足时返回 cover 信号", () => {
-    const ind = makeIndicators({ maShort: 110, maLong: 100, rsi: 25 }); // ma_bullish + oversold
-    const cfg = makeConfig([], []); // 无 buy/sell 条件
-    cfg.signals.cover = ["ma_bullish", "rsi_oversold"];
-    const sig = detectSignal("BTCUSDT", ind, cfg);
-    expect(sig.type).toBe("cover");
-    expect(sig.reason).toContain("ma_bullish");
-    expect(sig.reason).toContain("rsi_oversold");
+  // ── 持多头：只检查 sell ─────────────────────────────
+
+  it("持多头：sell 条件满足时返回 sell", () => {
+    const ind = makeIndicators({ maShort: 90, maLong: 100 }); // ma_bearish → sell
+    const cfg = makeConfig(["ma_bullish"], ["ma_bearish"]);
+    cfg.signals.short = ["ma_bearish"];
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    expect(sig.type).toBe("sell");
   });
 
-  it("signals.short 未配置时不产生 short 信号（返回 none）", () => {
+  it("持多头：即使 short 条件满足，也只返回 none（不检查 short）", () => {
     const ind = makeIndicators({ maShort: 90, maLong: 100 }); // ma_bearish
-    const cfg = makeConfig([], []); // 无 sell 条件，且无 short 配置
+    const cfg = makeConfig([], ["ma_bullish"]); // sell 需 ma_bullish（未满足）
+    cfg.signals.short = ["ma_bearish"];
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    expect(sig.type).toBe("none"); // sell 条件未满足，short 不检查
+  });
+
+  // ── 持空头：只检查 cover ────────────────────────────
+
+  it("持空头：cover 条件满足时返回 cover", () => {
+    const ind = makeIndicators({ maShort: 110, maLong: 100 }); // ma_bullish → cover
+    const cfg = makeConfig([], []);
+    cfg.signals.cover = ["ma_bullish"];
+    const sig = detectSignal("BTCUSDT", ind, cfg, "short");
+    expect(sig.type).toBe("cover");
+  });
+
+  it("持空头：即使 buy 条件满足，也只返回 none（不检查 buy）", () => {
+    const ind = makeIndicators({ maShort: 110, maLong: 100 }); // ma_bullish
+    const cfg = makeConfig(["ma_bullish"], []);
+    cfg.signals.cover = ["ma_bearish"]; // cover 需 ma_bearish（未满足）
+    const sig = detectSignal("BTCUSDT", ind, cfg, "short");
+    expect(sig.type).toBe("none"); // buy 不在持空时检查
+  });
+
+  it("持空头：cover 不被 buy 信号抢占（B1 修复验证）", () => {
+    // 原 bug：buy 条件满足 → buy 先返回 → cover 被跳过
+    const ind = makeIndicators({ maShort: 110, maLong: 100, rsi: 25 }); // ma_bullish
+    const cfg = makeConfig(["ma_bullish"], []);
+    cfg.signals.cover = ["ma_bullish"];
+    const sig = detectSignal("BTCUSDT", ind, cfg, "short");
+    expect(sig.type).toBe("cover"); // 修复前会返回 "buy"
+  });
+
+  // ── 边界情况 ────────────────────────────────────────
+
+  it("signals.short 未配置时无持仓下返回 none", () => {
+    const ind = makeIndicators({ maShort: 90, maLong: 100 }); // ma_bearish
+    const cfg = makeConfig([], []);
+    // cfg.signals.short 未设置
     const sig = detectSignal("BTCUSDT", ind, cfg);
     expect(sig.type).toBe("none");
   });
 
   it("开空条件部分满足时不触发 short", () => {
     const ind = makeIndicators({
-      maShort: 90, maLong: 100,  // ma_bearish ✓
-      macd: { macd: 1, signal: 0, histogram: 1 }, // macd_bearish ✗（MACD 多头）
+      maShort: 90, maLong: 100,           // ma_bearish ✓
+      macd: { macd: 1, signal: 0, histogram: 1 }, // macd_bearish ✗
     });
     const cfg = makeConfig([], []);
     cfg.signals.short = ["ma_bearish", "macd_bearish"];
     const sig = detectSignal("BTCUSDT", ind, cfg);
     expect(sig.type).toBe("none");
+  });
+
+  it("平空条件满足（持空头）时返回 cover 并包含正确原因", () => {
+    const ind = makeIndicators({ maShort: 110, maLong: 100, rsi: 25 });
+    const cfg = makeConfig([], []);
+    cfg.signals.cover = ["ma_bullish", "rsi_oversold"];
+    const sig = detectSignal("BTCUSDT", ind, cfg, "short");
+    expect(sig.type).toBe("cover");
+    expect(sig.reason).toContain("ma_bullish");
+    expect(sig.reason).toContain("rsi_oversold");
   });
 });

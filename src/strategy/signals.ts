@@ -107,19 +107,24 @@ function checkConditions(
 }
 
 /**
- * 检测信号
+ * 检测信号（持仓感知版本）
  *
- * 优先级：buy → sell → short → cover
- * - buy/sell 管理多头持仓
- * - short/cover 管理空头持仓（仅 futures/margin 市场有意义）
+ * 根据当前持仓方向采用不同优先级，避免出场信号被入场信号抢占：
  *
- * 引擎层负责根据当前持仓状态决定是否执行该信号。
+ * - 持多头：sell（平多）优先，忽略 buy/short/cover
+ * - 持空头：cover（平空）优先，忽略 sell/buy/short
+ * - 无持仓：buy（开多）→ short（开空）
+ *           注意：不检查 sell/cover（无仓位没意义）
+ *
+ * @param positionSide 当前持仓方向（undefined = 无持仓）
  */
-export function detectSignal(symbol: string, indicators: Indicators, cfg: StrategyConfig): Signal {
-  const makeSignal = (
-    type: Signal["type"],
-    reason: string[]
-  ): Signal => ({
+export function detectSignal(
+  symbol: string,
+  indicators: Indicators,
+  cfg: StrategyConfig,
+  positionSide?: "long" | "short"
+): Signal {
+  const makeSignal = (type: Signal["type"], reason: string[]): Signal => ({
     symbol,
     type,
     price: indicators.price,
@@ -128,23 +133,29 @@ export function detectSignal(symbol: string, indicators: Indicators, cfg: Strate
     timestamp: Date.now(),
   });
 
-  // 1. 买入（开多）
+  const shortConditions = cfg.signals.short ?? [];
+  const coverConditions = cfg.signals.cover ?? [];
+
+  if (positionSide === "long") {
+    // 持多头：只检查平多信号
+    const [sellMet, sellReasons] = checkConditions(cfg.signals.sell, indicators, cfg, "卖出");
+    if (sellMet) return makeSignal("sell", sellReasons);
+    return makeSignal("none", []);
+  }
+
+  if (positionSide === "short") {
+    // 持空头：只检查平空信号
+    const [coverMet, coverReasons] = checkConditions(coverConditions, indicators, cfg, "平空");
+    if (coverMet) return makeSignal("cover", coverReasons);
+    return makeSignal("none", []);
+  }
+
+  // 无持仓：检查入场信号（多头优先于空头）
   const [buyMet, buyReasons] = checkConditions(cfg.signals.buy, indicators, cfg, "买入");
   if (buyMet) return makeSignal("buy", buyReasons);
 
-  // 2. 卖出（平多）
-  const [sellMet, sellReasons] = checkConditions(cfg.signals.sell, indicators, cfg, "卖出");
-  if (sellMet) return makeSignal("sell", sellReasons);
-
-  // 3. 开空（short，需 signals.short 配置，引擎层还会检查市场类型）
-  const shortConditions = cfg.signals.short ?? [];
   const [shortMet, shortReasons] = checkConditions(shortConditions, indicators, cfg, "开空");
   if (shortMet) return makeSignal("short", shortReasons);
-
-  // 4. 平空（cover）
-  const coverConditions = cfg.signals.cover ?? [];
-  const [coverMet, coverReasons] = checkConditions(coverConditions, indicators, cfg, "平空");
-  if (coverMet) return makeSignal("cover", coverReasons);
 
   return makeSignal("none", []);
 }

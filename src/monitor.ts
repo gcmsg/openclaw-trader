@@ -125,11 +125,19 @@ async function scanSymbol(
       }
     }
 
-    const signal = detectSignal(symbol, indicators, cfg);
+    // 获取当前持仓方向，让 detectSignal 使用正确优先级
+    const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+    const currentPosSide = currentAccount.positions[symbol]?.side;
+    const signal = detectSignal(symbol, indicators, cfg, currentPosSide);
 
     // MTF 过滤：买入信号且大趋势为空头 → 跳过
     if (signal.type === "buy" && mtfTrendBull === false) {
       log(`${scenarioPrefix}${symbol}: 🚫 MTF 趋势过滤：${cfg.trend_timeframe} 空头，忽略 1h 买入信号`);
+      return;
+    }
+    // MTF 过滤：开空信号且大趋势为多头 → 跳过
+    if (signal.type === "short" && mtfTrendBull === true) {
+      log(`${scenarioPrefix}${symbol}: 🚫 MTF 趋势过滤：${cfg.trend_timeframe} 多头，忽略 1h 开空信号`);
       return;
     }
 

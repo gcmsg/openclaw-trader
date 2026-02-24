@@ -70,7 +70,7 @@ async function main() {
       const confirmed = await client.getOrder("BTCUSDT", shortOrderId);
       console.log(`    确认状态: ${confirmed.status}, execQty=${confirmed.executedQty}, avgPrice=${confirmed.price}`);
     } catch (e: unknown) {
-      console.log(`    查询状态失败: ${e instanceof Error ? e.message : e}`);
+      console.log(`    查询状态失败: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

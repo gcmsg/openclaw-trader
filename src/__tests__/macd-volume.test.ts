@@ -199,7 +199,7 @@ describe("detectSignal() - MACD 信号", () => {
         prevHistogram: -2,
       },
     });
-    expect(detectSignal("X", ind, makeConfig([], ["macd_bearish"])).type).toBe("sell");
+    expect(detectSignal("X", ind, makeConfig([], ["macd_bearish"]), "long").type).toBe("sell");
   });
 
   it("macd_golden_cross: MACD 上穿信号线时触发", () => {

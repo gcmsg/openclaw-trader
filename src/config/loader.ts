@@ -71,10 +71,18 @@ export function mergeRisk(
     result = {
       ...result,
       ...override,
+      // 深合并所有嵌套对象，避免 override 只写部分字段时丢失 base 的其他字段
       trailing_stop: {
         ...result.trailing_stop,
         ...(override.trailing_stop ?? {}),
       },
+      // exactOptionalPropertyTypes: 只在有值时设置可选嵌套对象（深合并）
+      ...(result.atr_position !== undefined || override.atr_position !== undefined
+        ? ({ atr_position: { ...result.atr_position, ...override.atr_position } } as Pick<RiskConfig, "atr_position">)
+        : {}),
+      ...(result.correlation_filter !== undefined || override.correlation_filter !== undefined
+        ? ({ correlation_filter: { ...result.correlation_filter, ...override.correlation_filter } } as Pick<RiskConfig, "correlation_filter">)
+        : {}),
     };
   }
   return result;
