@@ -6,6 +6,7 @@
 
 import type { Signal, RuntimeConfig } from "../types.js";
 import { calcAtrPositionSize } from "../strategy/indicators.js";
+import { logSignal, closeSignal } from "../signals/history.js";
 import {
   loadAccount,
   saveAccount,
@@ -98,16 +99,39 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
         }
       );
 
-      // ── 初始化分批止盈进度 ──
-      if (trade && cfg.risk.take_profit_stages?.length && account.positions[signal.symbol]) {
-        account.positions[signal.symbol]!.tpStages = cfg.risk.take_profit_stages.map((s) => ({
-          stagePct: s.at_percent,
-          closeRatio: s.close_ratio,
-          triggered: false,
-        }));
+      // ── 初始化分批止盈进度 + 记录信号历史 ──
+      if (trade && account.positions[signal.symbol]) {
+        if (cfg.risk.take_profit_stages?.length) {
+          account.positions[signal.symbol]!.tpStages = cfg.risk.take_profit_stages.map((s) => ({
+            stagePct: s.at_percent,
+            closeRatio: s.close_ratio,
+            triggered: false,
+          }));
+        }
+        // 记录入场信号
+        try {
+          const sigId = logSignal({
+            symbol: signal.symbol,
+            type: "buy",
+            entryPrice: signal.price,
+            conditions: {
+              maShort: signal.indicators.maShort,
+              maLong: signal.indicators.maLong,
+              rsi: signal.indicators.rsi,
+              ...(signal.indicators.atr !== undefined && { atr: signal.indicators.atr }),
+              triggeredRules: signal.reason,
+            },
+            scenarioId: cfg.paper.scenarioId,
+            source: "paper",
+          });
+          account.positions[signal.symbol]!.signalHistoryId = sigId;
+        } catch { /* 不影响主流程 */ }
       }
     }
   } else if (signal.type === "sell") {
+    // 取出 signalHistoryId 用于关闭记录
+    const posBeforeSell = account.positions[signal.symbol];
+    const sigHistId = posBeforeSell?.signalHistoryId;
     trade = paperSell(
       account,
       signal.symbol,
@@ -115,6 +139,9 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
       signal.reason.join(", "),
       paperOpts(cfg)
     );
+    if (trade && sigHistId) {
+      try { closeSignal(sigHistId, signal.price, "signal", trade.pnl); } catch { /* skip */ }
+    }
   } else if (signal.type === "short") {
     // ── 开空（仅 futures / margin 市场有效）──
     const market = cfg.exchange.market;
@@ -162,9 +189,31 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
           ...(overridePositionUsdt !== undefined ? { overridePositionUsdt } : {}),
         }
       );
+      // 记录开空信号
+      if (trade && account.positions[signal.symbol]) {
+        try {
+          const sigId = logSignal({
+            symbol: signal.symbol,
+            type: "short",
+            entryPrice: signal.price,
+            conditions: {
+              maShort: signal.indicators.maShort,
+              maLong: signal.indicators.maLong,
+              rsi: signal.indicators.rsi,
+              ...(signal.indicators.atr !== undefined && { atr: signal.indicators.atr }),
+              triggeredRules: signal.reason,
+            },
+            scenarioId: cfg.paper.scenarioId,
+            source: "paper",
+          });
+          account.positions[signal.symbol]!.signalHistoryId = sigId;
+        } catch { /* 不影响主流程 */ }
+      }
     }
   } else if (signal.type === "cover") {
     // ── 平空 ──
+    const posBeforeCover = account.positions[signal.symbol];
+    const sigHistIdCover = posBeforeCover?.signalHistoryId;
     trade = paperCoverShort(
       account,
       signal.symbol,
@@ -172,6 +221,9 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
       signal.reason.join(", "),
       paperOpts(cfg)
     );
+    if (trade && sigHistIdCover) {
+      try { closeSignal(sigHistIdCover, signal.price, "signal", trade.pnl); } catch { /* skip */ }
+    }
   }
 
   saveAccount(account, sid);
@@ -294,11 +346,18 @@ export function checkExitConditions(
     }
 
     if (exitReason) {
+      const sigHistId = pos.signalHistoryId;
       // 多头用 paperSell，空头用 paperCoverShort
       const trade = isShort
         ? paperCoverShort(account, symbol, currentPrice, exitLabel, paperOpts(cfg))
         : paperSell(account, symbol, currentPrice, exitLabel, paperOpts(cfg));
-      if (trade) triggered.push({ symbol, trade, reason: exitReason, pnlPercent });
+      if (trade) {
+        triggered.push({ symbol, trade, reason: exitReason, pnlPercent });
+        // 回写信号历史
+        if (sigHistId) {
+          try { closeSignal(sigHistId, currentPrice, exitReason, trade.pnl); } catch { /* skip */ }
+        }
+      }
       continue;
     }
 

@@ -17,10 +17,14 @@ import {
   type BacktestMetrics,
   type EquityPoint,
 } from "./metrics.js";
+import type { FundingRateRecord } from "./fetcher.js";
 
 // ─────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────
+
+/** 交易执行函数仅需要手续费 + 滑点两个参数 */
+interface ExecOpts { feeRate: number; slippagePercent: number; }
 
 interface BacktestPosition {
   symbol: string;
@@ -38,6 +42,9 @@ interface BacktestPosition {
     lowestPrice?: number; // 空头：持仓最低价
     stopPrice: number;
   };
+  // 资金费率追踪（Futures 专用）
+  lastFundingTs?: number;    // 上次资金费率结算时间（毫秒）
+  totalFundingPaid?: number; // 累计已付资金费（正=付出，负=收入）
 }
 
 interface BacktestAccount {
@@ -47,17 +54,27 @@ interface BacktestAccount {
   equityCurve: EquityPoint[];
   // 每日亏损追踪
   dailyLoss: { date: string; loss: number };
+  // 各币种累计资金费率净支出（正=付出成本，负=收入）
+  fundingPaidBySymbol: Record<string, number>;
 }
 
 export interface BacktestOptions {
-  initialUsdt?: number; // 默认 1000
-  feeRate?: number; // 默认 0.001 (0.1%)
-  slippagePercent?: number; // 默认 0.05%
+  initialUsdt?: number;       // 默认 1000
+  feeRate?: number;           // 默认 0.001 (0.1%)
+  slippagePercent?: number;   // 默认 0.05%
+  /**
+   * Futures 资金费率（每 8h 一次结算）
+   * 传入后对 long/short 仓位均自动扣除/计入
+   * ── 两种方式二选一 ──
+   */
+  avgFundingRatePer8h?: number;                             // 全币种平均值（如 -0.0001）
+  fundingHistory?: Record<string, FundingRateRecord[]>;    // 各币种历史费率（精确）
 }
 
 export interface BacktestResult {
   metrics: BacktestMetrics;
   trades: BacktestTrade[];
+  totalFundingPaid: number;  // 正 = 净支出（对账户不利），负 = 净收入
   perSymbol: Record<
     string,
     {
@@ -66,6 +83,7 @@ export interface BacktestResult {
       losses: number;
       pnl: number;
       winRate: number;
+      fundingPaid: number; // 该币种的资金费率净支出
     }
   >;
   config: {
@@ -76,6 +94,7 @@ export interface BacktestResult {
     endDate: string;
     days: number;
     initialUsdt: number;
+    fundingEnabled: boolean;
   };
 }
 
@@ -107,7 +126,7 @@ function doBuy(
   price: number,
   time: number,
   cfg: StrategyConfig,
-  opts: Required<BacktestOptions>
+  opts: ExecOpts
 ): void {
   // 已持仓则跳过
   if (account.positions[symbol]) return;
@@ -182,7 +201,7 @@ function doOpenShort(
   price: number,
   time: number,
   cfg: StrategyConfig,
-  opts: Required<BacktestOptions>
+  opts: ExecOpts
 ): void {
   if (account.positions[symbol]) return;
   if (Object.keys(account.positions).length >= cfg.risk.max_positions) return;
@@ -229,7 +248,7 @@ function doCoverShort(
   exitPrice: number,
   exitTime: number,
   exitReason: BacktestTrade["exitReason"],
-  opts: Required<BacktestOptions>
+  opts: ExecOpts
 ): void {
   const pos = account.positions[symbol];
   if (pos?.side !== "short") return;
@@ -272,7 +291,7 @@ function doSell(
   exitPrice: number,
   exitTime: number,
   exitReason: BacktestTrade["exitReason"],
-  opts: Required<BacktestOptions>
+  opts: ExecOpts
 ): void {
   const pos = account.positions[symbol];
   if (!pos) return;
@@ -359,18 +378,50 @@ function updateTrailingStop(
  * @param trendKlinesBySymbol  可选：高级时间框架 K 线（MTF 趋势过滤，如 4h）
  *                             提供后，买入信号只在趋势 MA 多头时执行
  */
+// ─────────────────────────────────────────────────────
+// 资金费率工具
+// ─────────────────────────────────────────────────────
+
+/** Binance 资金费率标准结算时间（每 8h，UTC）*/
+const FUNDING_INTERVAL_MS = 8 * 3600 * 1000;
+
+/** 找到 [lastFundingTs, currentTs] 区间内所有结算时间点 */
+function getFundingSettlements(lastTs: number, currentTs: number): number[] {
+  const result: number[] = [];
+  // 结算时间 = 当天 00:00 / 08:00 / 16:00 UTC
+  // 找到 lastTs 之后的第一个结算时间
+  const base = Math.ceil(lastTs / FUNDING_INTERVAL_MS) * FUNDING_INTERVAL_MS;
+  for (let t = base; t <= currentTs; t += FUNDING_INTERVAL_MS) {
+    result.push(t);
+  }
+  return result;
+}
+
+/** 查找给定时间最近的资金费率（按 ts 排序的记录数组） */
+function findFundingRate(
+  history: FundingRateRecord[],
+  settlementTs: number
+): number {
+  // 找到 <= settlementTs 的最近一条
+  let best: FundingRateRecord | undefined;
+  for (const r of history) {
+    if (r.ts <= settlementTs) best = r;
+    else break;
+  }
+  return best?.rate ?? 0;
+}
+
 export function runBacktest(
   klinesBySymbol: Record<string, Kline[]>,
   cfg: StrategyConfig,
   opts: BacktestOptions = {},
   trendKlinesBySymbol?: Record<string, Kline[]>
 ): BacktestResult {
-  const { initialUsdt = 1000, feeRate = 0.001, slippagePercent = 0.05 } = opts;
-  const resolvedOpts: Required<BacktestOptions> = {
-    initialUsdt,
-    feeRate,
-    slippagePercent,
-  };
+  const { initialUsdt = 1000, feeRate = 0.001, slippagePercent = 0.05,
+          avgFundingRatePer8h, fundingHistory } = opts;
+  const fundingEnabled = avgFundingRatePer8h !== undefined || fundingHistory !== undefined;
+  // ExecOpts：仅供交易函数使用（手续费 + 滑点）
+  const legacyOpts: ExecOpts = { feeRate, slippagePercent };
 
   const symbols = Object.keys(klinesBySymbol);
   if (symbols.length === 0) {
@@ -408,6 +459,7 @@ export function runBacktest(
     trades: [],
     equityCurve: [],
     dailyLoss: { date: todayStr(), loss: 0 },
+    fundingPaidBySymbol: {},
   };
 
   // 滑动窗口（每个 symbol 独立）
@@ -475,7 +527,46 @@ export function runBacktest(
     // 预热期内不操作
     if (Object.values(windows).every((w) => w.length < warmupBars)) continue;
 
-    // Step 2：检查已有持仓的止损/止盈（优先于新信号）
+    // Step 2a：资金费率结算（Futures 专用，每 8h）
+    if (fundingEnabled) {
+      for (const sym of symbols) {
+        const pos = account.positions[sym];
+        if (!pos) continue;
+
+        const lastTs = pos.lastFundingTs ?? pos.entryTime;
+        const settlements = getFundingSettlements(lastTs, time);
+
+        for (const settlementTs of settlements) {
+          const currentKline = klineIndex[sym]?.[time];
+          const positionValue = (pos.quantity) * (currentKline?.close ?? pos.entryPrice);
+
+          // 确定本次费率
+          let rate: number;
+          if (fundingHistory) {
+            const symHistory = fundingHistory[sym] ?? fundingHistory[sym.replace("USDT", "") + "USDT"];
+            rate = symHistory ? findFundingRate(symHistory, settlementTs) : (avgFundingRatePer8h ?? 0);
+          } else {
+            rate = avgFundingRatePer8h ?? 0;
+          }
+
+          // 资金费率计算（相对头寸名义价值）
+          // 多头：rate > 0 → 付资金费（利空）；rate < 0 → 收资金费（利多）
+          // 空头：rate > 0 → 收资金费（利多）；rate < 0 → 付资金费（利空）
+          const isShort = pos.side === "short";
+          const cashFlow = isShort
+            ? rate * positionValue           // 空头：正费率收钱，负费率付钱
+            : -(rate * positionValue);       // 多头：正费率付钱，负费率收钱
+
+          account.usdt += cashFlow;
+          const paid = -cashFlow; // 正=付出，负=收入
+          pos.totalFundingPaid = (pos.totalFundingPaid ?? 0) + paid;
+          account.fundingPaidBySymbol[sym] = (account.fundingPaidBySymbol[sym] ?? 0) + paid;
+          pos.lastFundingTs = settlementTs;
+        }
+      }
+    }
+
+    // Step 2b：检查已有持仓的止损/止盈（优先于新信号）
     for (const sym of symbols) {
       const pos = account.positions[sym];
       if (!pos) continue;
@@ -487,20 +578,20 @@ export function runBacktest(
       if (pos.side === "short") {
         // ── 空头出场（止损=涨破，止盈=跌破）──
         if (kline.high >= pos.stopLoss) {
-          doCoverShort(account, sym, pos.stopLoss, time, "stop_loss", resolvedOpts);
+          doCoverShort(account, sym, pos.stopLoss, time, "stop_loss", legacyOpts);
         } else if (kline.low <= pos.takeProfit) {
-          doCoverShort(account, sym, pos.takeProfit, time, "take_profit", resolvedOpts);
+          doCoverShort(account, sym, pos.takeProfit, time, "take_profit", legacyOpts);
         } else if (trailingTriggered && pos.trailingStop?.stopPrice) {
-          doCoverShort(account, sym, pos.trailingStop.stopPrice, time, "trailing_stop", resolvedOpts);
+          doCoverShort(account, sym, pos.trailingStop.stopPrice, time, "trailing_stop", legacyOpts);
         }
       } else {
         // ── 多头出场（止损=跌破，止盈=涨破）──
         if (kline.low <= pos.stopLoss) {
-          doSell(account, sym, pos.stopLoss, time, "stop_loss", resolvedOpts);
+          doSell(account, sym, pos.stopLoss, time, "stop_loss", legacyOpts);
         } else if (kline.high >= pos.takeProfit) {
-          doSell(account, sym, pos.takeProfit, time, "take_profit", resolvedOpts);
+          doSell(account, sym, pos.takeProfit, time, "take_profit", legacyOpts);
         } else if (trailingTriggered && pos.trailingStop?.stopPrice) {
-          doSell(account, sym, pos.trailingStop.stopPrice, time, "trailing_stop", resolvedOpts);
+          doSell(account, sym, pos.trailingStop.stopPrice, time, "trailing_stop", legacyOpts);
         }
       }
     }
@@ -531,18 +622,18 @@ export function runBacktest(
         // MTF 过滤：多头信号需高级别 MA 也是多头
         const trendBull = getTrendBull(sym, time);
         if (trendBull === false) continue;
-        doBuy(account, sym, kline.close, time, cfg, resolvedOpts);
+        doBuy(account, sym, kline.close, time, cfg, legacyOpts);
       } else if (signal.type === "sell") {
         // 平多（detectSignal 已确保只在持多时返回 sell）
-        doSell(account, sym, kline.close, time, "signal", resolvedOpts);
+        doSell(account, sym, kline.close, time, "signal", legacyOpts);
       } else if (signal.type === "short") {
         // MTF 过滤：空头信号需高级别 MA 也是空头（反向过滤）
         const trendBull = getTrendBull(sym, time);
         if (trendBull === true) continue; // 大趋势多头，不开空
-        doOpenShort(account, sym, kline.close, time, cfg, resolvedOpts);
+        doOpenShort(account, sym, kline.close, time, cfg, legacyOpts);
       } else if (signal.type === "cover") {
         // 平空（detectSignal 已确保只在持空时返回 cover）
-        doCoverShort(account, sym, kline.close, time, "signal", resolvedOpts);
+        doCoverShort(account, sym, kline.close, time, "signal", legacyOpts);
       }
     }
 
@@ -560,9 +651,9 @@ export function runBacktest(
     const lastKline = lastTime > 0 ? klineIndex[sym]?.[lastTime] : undefined;
     if (!lastKline || !pos) continue;
     if (pos.side === "short") {
-      doCoverShort(account, sym, lastKline.close, lastTime, "end_of_data", resolvedOpts);
+      doCoverShort(account, sym, lastKline.close, lastTime, "end_of_data", legacyOpts);
     } else {
-      doSell(account, sym, lastKline.close, lastTime, "end_of_data", resolvedOpts);
+      doSell(account, sym, lastKline.close, lastTime, "end_of_data", legacyOpts);
     }
   }
 
@@ -583,8 +674,12 @@ export function runBacktest(
       losses: symLosses.length,
       pnl: symTrades.reduce((s, t) => s + t.pnl, 0),
       winRate: symTrades.length > 0 ? symWins.length / symTrades.length : 0,
+      fundingPaid: account.fundingPaidBySymbol[sym] ?? 0,
     };
   }
+
+  // ── 统计总资金费率成本 ──
+  const totalFundingPaid = Object.values(perSymbol).reduce((s, v) => s + v.fundingPaid, 0);
 
   // ── 时间范围信息 ──
   const firstTime = allTimes[0] ?? 0;
@@ -596,6 +691,7 @@ export function runBacktest(
   return {
     metrics,
     trades: account.trades,
+    totalFundingPaid,
     perSymbol,
     config: {
       strategy: cfg.strategy.name,
@@ -605,6 +701,7 @@ export function runBacktest(
       endDate,
       days,
       initialUsdt,
+      fundingEnabled,
     },
   };
 }

@@ -420,22 +420,269 @@ export async function getOptionsData(currency: "BTC" | "ETH"): Promise<OptionsDa
   };
 }
 
+// ─── IV Skew & Term Structure ─────────────────────────
+
+export interface IvSkewPoint {
+  otmPct: number;     // OTM 程度（%），如 5 表示 5% OTM
+  putIv: number;      // 看跌期权 IV（%）
+  callIv: number;     // 看涨期权 IV（%）
+  skew: number;       // put - call（正=下行保护溢价）
+}
+
+export interface IvTermPoint {
+  expiry: string;        // 到期日字符串
+  daysToExpiry: number;  // 剩余天数
+  atmIv: number;         // ATM IV（%）
+}
+
+export interface IvSkewData {
+  currency: string;
+  underlyingPrice: number;
+  /**
+   * IV Smile（不同 OTM 程度的期权 IV 对比）
+   * 负 skew → 市场担忧下行；正 skew → 市场担忧上行
+   */
+  smile: IvSkewPoint[];         // 5%, 10%, 15% OTM 的 put vs call
+  skew25d: number | null;       // 最接近 25-delta 的 skew（近月）
+  atmIv: number;                // ATM IV 基准
+  /**
+   * Term Structure（不同到期日的 ATM IV）
+   * 正常形态：近月 IV > 远月 IV（Contango 结构）
+   * 反转：近月 IV < 远月 IV → 市场预期近期会有大事件
+   */
+  termStructure: IvTermPoint[];
+  termStructureSlope: "contango" | "backwardation" | "flat";
+  termStructureLabel: string;
+  /**
+   * 综合解读
+   */
+  skewLabel: "steep_put_skew" | "moderate_put_skew" | "flat" | "call_skew";
+  skewSummary: string;
+  fetchedAt: number;
+}
+
+/** 计算 IV Skew（put - call，按 OTM 档位） */
+function calcIvSmile(
+  options: DeribitOption[],
+  spot: number,
+  expiryFilter?: string
+): IvSkewPoint[] {
+  const filtered = expiryFilter
+    ? options.filter((o) => {
+        const p = parseOptionName(o.instrument_name);
+        return p?.expiry === expiryFilter;
+      })
+    : options;
+
+  const OTM_LEVELS = [5, 10, 15]; // OTM 百分比档位
+  const result: IvSkewPoint[] = [];
+
+  for (const otmPct of OTM_LEVELS) {
+    const putStrike = spot * (1 - otmPct / 100);
+    const callStrike = spot * (1 + otmPct / 100);
+    const tolerance = spot * 0.03; // ±3% 容差
+
+    // 找最接近目标行权价的 put/call
+    const putOpts = filtered.filter((o) => {
+      const p = parseOptionName(o.instrument_name);
+      return p && !p.isCall && Math.abs(p.strike - putStrike) < tolerance && o.mark_iv > 0;
+    });
+    const callOpts = filtered.filter((o) => {
+      const p = parseOptionName(o.instrument_name);
+      return p && p.isCall && Math.abs(p.strike - callStrike) < tolerance && o.mark_iv > 0;
+    });
+
+    if (putOpts.length === 0 || callOpts.length === 0) continue;
+
+    // 取 OI 加权 IV
+    const wAvgIv = (opts: DeribitOption[]) => {
+      const totalOI = opts.reduce((s, o) => s + o.open_interest, 0);
+      if (totalOI === 0) return opts.reduce((s, o) => s + o.mark_iv, 0) / opts.length;
+      return opts.reduce((s, o) => s + o.mark_iv * o.open_interest, 0) / totalOI;
+    };
+
+    const putIv = wAvgIv(putOpts);
+    const callIv = wAvgIv(callOpts);
+
+    result.push({ otmPct, putIv, callIv, skew: putIv - callIv });
+  }
+
+  return result;
+}
+
+/** 计算 Term Structure（不同到期日的 ATM IV） */
+function calcTermStructure(options: DeribitOption[], spot: number): IvTermPoint[] {
+  const now = Date.now();
+  const expiryMap = new Map<string, DeribitOption[]>();
+  for (const opt of options) {
+    const p = parseOptionName(opt.instrument_name);
+    if (!p || opt.mark_iv <= 0) continue;
+    if (!expiryMap.has(p.expiry)) expiryMap.set(p.expiry, []);
+    expiryMap.get(p.expiry)!.push(opt);
+  }
+
+  const points: IvTermPoint[] = [];
+  for (const [expiry, opts] of expiryMap) {
+    const expiryTs = parseExpiryDate(expiry);
+    if (expiryTs <= now) continue; // 已过期
+
+    const dte = Math.max(0, Math.round((expiryTs - now) / 86400000));
+    if (dte > 365) continue; // 跳过超过 1 年的
+
+    const atmIv = calcAtmIv(opts, spot);
+    if (atmIv <= 0) continue;
+
+    points.push({ expiry, daysToExpiry: dte, atmIv });
+  }
+
+  return points.sort((a, b) => a.daysToExpiry - b.daysToExpiry);
+}
+
+/**
+ * 获取完整 IV Skew 分析（Deribit 公开 API，无需认证）
+ */
+export async function getIvSkewData(currency: "BTC" | "ETH"): Promise<IvSkewData> {
+  const data = await fetchJson<DeribitResponse>(
+    `https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency=${currency}&kind=option`
+  );
+
+  const options = data.result.filter((o) => o.mark_iv > 0 && o.open_interest > 0);
+  if (options.length === 0) throw new Error(`No IV data for ${currency}`);
+
+  const spot = options[0]!.underlying_price;
+  const now = Date.now();
+
+  // 找最近到期日（用于 skew 计算）
+  const nearestExpiry = (() => {
+    const futureOpts = options
+      .map((o) => parseOptionName(o.instrument_name))
+      .filter((p): p is NonNullable<typeof p> => p !== null && parseExpiryDate(p.expiry) > now)
+      .sort((a, b) => parseExpiryDate(a.expiry) - parseExpiryDate(b.expiry));
+    return futureOpts[0]?.expiry;
+  })();
+
+  // ATM IV
+  const atmIv = nearestExpiry
+    ? calcAtmIv(options.filter((o) => parseOptionName(o.instrument_name)?.expiry === nearestExpiry), spot)
+    : calcAtmIv(options, spot);
+
+  // IV Smile（近月）
+  const smile = calcIvSmile(options, spot, nearestExpiry);
+
+  // 25-delta 近似：取 5% OTM 档的 skew（对 BTC/ETH 来说 ≈25d）
+  const skew25d = smile.find((p) => p.otmPct === 5)?.skew ?? null;
+
+  // Term Structure
+  const termStructure = calcTermStructure(options, spot);
+
+  // Term Structure 斜率
+  let termStructureSlope: IvSkewData["termStructureSlope"] = "flat";
+  let termStructureLabel: string;
+  if (termStructure.length >= 2) {
+    const near = termStructure[0]!.atmIv;
+    const far = termStructure[termStructure.length - 1]!.atmIv;
+    const diff = near - far;
+    if (diff > 5) {
+      termStructureSlope = "backwardation";
+      termStructureLabel = `📈 反转（近月 IV ${near.toFixed(0)}% > 远月 ${far.toFixed(0)}%），市场预期近期有重大事件`;
+    } else if (diff < -5) {
+      termStructureSlope = "contango";
+      termStructureLabel = `✅ 正常顺差（近月 IV ${near.toFixed(0)}% < 远月 ${far.toFixed(0)}%），市场平静`;
+    } else {
+      termStructureLabel = `➡️ 平坦结构（近月 ${near.toFixed(0)}% ≈ 远月 ${far.toFixed(0)}%）`;
+    }
+  } else {
+    termStructureLabel = "数据不足，无法判断";
+  }
+
+  // 综合 Skew 标签
+  const avgSmileSkew = smile.length > 0
+    ? smile.reduce((s, p) => s + p.skew, 0) / smile.length
+    : 0;
+
+  let skewLabel: IvSkewData["skewLabel"];
+  let skewSummary: string;
+
+  if (avgSmileSkew > 8) {
+    skewLabel = "steep_put_skew";
+    skewSummary = `看跌期权溢价显著（平均 skew +${avgSmileSkew.toFixed(1)}%），市场对下行极为警惕`;
+  } else if (avgSmileSkew > 3) {
+    skewLabel = "moderate_put_skew";
+    skewSummary = `正常看跌偏斜（skew +${avgSmileSkew.toFixed(1)}%），下行保护需求高于上行`;
+  } else if (avgSmileSkew < -3) {
+    skewLabel = "call_skew";
+    skewSummary = `看涨期权溢价（skew ${avgSmileSkew.toFixed(1)}%），市场在追涨，可能是上方轧空风险`;
+  } else {
+    skewLabel = "flat";
+    skewSummary = `期权定价较均衡（skew ${avgSmileSkew.toFixed(1)}%），无明显方向性偏斜`;
+  }
+
+  return {
+    currency,
+    underlyingPrice: spot,
+    smile,
+    skew25d,
+    atmIv,
+    termStructure,
+    termStructureSlope,
+    termStructureLabel,
+    skewLabel,
+    skewSummary,
+    fetchedAt: Date.now(),
+  };
+}
+
+/** 格式化 IV Skew 报告 */
+export function formatIvSkewReport(skew: IvSkewData): string {
+  const lines: string[] = [`📐 **${skew.currency} IV Skew 分析**\n`];
+
+  // Smile 表格
+  if (skew.smile.length > 0) {
+    lines.push("| OTM | Put IV | Call IV | Skew |");
+    lines.push("|-----|--------|---------|------|");
+    for (const p of skew.smile) {
+      const skewEmoji = p.skew > 5 ? "🔴" : p.skew > 2 ? "🟡" : p.skew < -2 ? "🟢" : "⚪";
+      lines.push(`| ${p.otmPct}% | ${p.putIv.toFixed(1)}% | ${p.callIv.toFixed(1)}% | ${skewEmoji} ${p.skew >= 0 ? "+" : ""}${p.skew.toFixed(1)}% |`);
+    }
+    lines.push("");
+  }
+
+  // 25-delta skew
+  if (skew.skew25d !== null) {
+    lines.push(`📍 25d Skew: ${skew.skew25d >= 0 ? "+" : ""}${skew.skew25d.toFixed(1)}%  (正=看空偏斜，负=看多偏斜)`);
+  }
+
+  // Term Structure
+  lines.push(`\n📅 **期限结构**: ${skew.termStructureLabel}`);
+  if (skew.termStructure.length > 0) {
+    const pts = skew.termStructure.slice(0, 5); // 最多显示 5 个
+    lines.push(pts.map((p) => `${p.expiry}(${p.daysToExpiry}d): ${p.atmIv.toFixed(0)}%`).join(" → "));
+  }
+
+  // 综合解读
+  lines.push(`\n💡 **综合**: ${skew.skewSummary}`);
+
+  return lines.join("\n");
+}
+
 // ─── 批量获取 ─────────────────────────────────────────
 
 export interface DerivativesSnapshot {
   symbol: string;
   basis: BasisData | null;
   longShort: LongShortData | null;
-  options: OptionsData | null;         // 仅 BTC 和 ETH 有期权
+  options: OptionsData | null;       // 仅 BTC 和 ETH 有期权
+  ivSkew?: IvSkewData | null;        // IV Skew 分析（可选，仅 BTC 和 ETH，需显式请求）
 }
 
-export async function getDerivativesSnapshot(symbol: string): Promise<DerivativesSnapshot> {
+export async function getDerivativesSnapshot(symbol: string, includeSkew = false): Promise<DerivativesSnapshot> {
   const currency = symbol.startsWith("BTC") ? "BTC" : symbol.startsWith("ETH") ? "ETH" : null;
 
-  const [basis, longShort, options] = await Promise.allSettled([
+  const [basis, longShort, options, ivSkew] = await Promise.allSettled([
     getBasis(symbol),
     getLongShortRatio(symbol),
     currency ? getOptionsData(currency) : Promise.reject(new Error("no options")),
+    (currency && includeSkew) ? getIvSkewData(currency) : Promise.reject(new Error("skew disabled")),
   ]);
 
   return {
@@ -443,6 +690,7 @@ export async function getDerivativesSnapshot(symbol: string): Promise<Derivative
     basis: basis.status === "fulfilled" ? basis.value : null,
     longShort: longShort.status === "fulfilled" ? longShort.value : null,
     options: options.status === "fulfilled" ? options.value : null,
+    ivSkew: ivSkew.status === "fulfilled" ? ivSkew.value : null,
   };
 }
 
@@ -473,6 +721,14 @@ export function formatDerivativesReport(snap: DerivativesSnapshot): string {
     lines.push(`${pcrEmoji} PCR: ${o.putCallRatio.toFixed(2)}  ${ivEmoji} ATM IV: ${o.atmIv.toFixed(1)}% (${o.ivPercentile}th 百分位)`);
     lines.push(`💥 Max Pain: $${o.maxPain.toLocaleString()} (${o.distanceToMaxPain >= 0 ? "+" : ""}${o.distanceToMaxPain.toFixed(1)}%)  到期: ${o.maxPainExpiry}`);
     lines.push(`→ ${o.summary}`);
+  }
+
+  if (snap.ivSkew) {
+    const sk = snap.ivSkew;
+    const smileStr = sk.smile.map((p) => `±${p.otmPct}%: ${p.skew >= 0 ? "+" : ""}${p.skew.toFixed(1)}`).join(" | ");
+    lines.push(`\n📐 **IV Skew** (put-call)  ${smileStr}`);
+    lines.push(`   25d Skew: ${sk.skew25d !== null ? `${sk.skew25d >= 0 ? "+" : ""}${sk.skew25d.toFixed(1)}%` : "N/A"}  | Term: ${sk.termStructureSlope}`);
+    lines.push(`   → ${sk.skewSummary}`);
   }
 
   return lines.join("\n");

@@ -18,7 +18,13 @@ import fs from "fs";
 // ─────────────────────────────────────────────────────
 
 export type OrderSide = "BUY" | "SELL";
-export type BinanceOrderType = "MARKET" | "LIMIT" | "STOP_LOSS_LIMIT" | "TAKE_PROFIT_LIMIT";
+export type BinanceOrderType =
+  | "MARKET"
+  | "LIMIT"
+  | "STOP_LOSS_LIMIT"       // Spot: 价格触发后挂限价单
+  | "TAKE_PROFIT_LIMIT"     // Spot: 止盈限价
+  | "STOP_MARKET"           // Futures: 价格触发后市价平仓（推荐）
+  | "TAKE_PROFIT_MARKET";   // Futures: 止盈市价
 export type OrderStatus =
   | "NEW"
   | "PARTIALLY_FILLED"
@@ -37,10 +43,12 @@ export interface OrderRequest {
   side: OrderSide;
   type: BinanceOrderType;
   quantity: number;
-  price?: number;          // LIMIT 单必须
-  stopPrice?: number;      // 止损触发价
-  timeInForce?: "GTC" | "IOC" | "FOK"; // LIMIT 单默认 GTC
+  price?: number;                        // LIMIT 单必须
+  stopPrice?: number;                    // 止损/止盈触发价
+  timeInForce?: "GTC" | "IOC" | "FOK";  // LIMIT 单默认 GTC
   newClientOrderId?: string;
+  reduceOnly?: boolean;                  // Futures 专用：只减仓（防止误开新仓）
+  workingType?: "MARK_PRICE" | "CONTRACT_PRICE"; // Futures：止损触发价类型
 }
 
 export interface OrderResponse {
@@ -302,16 +310,101 @@ export class BinanceClient {
       quantity: req.quantity.toFixed(8), // 精度控制由调用方处理
     };
 
-    if (req.type === "LIMIT") {
+    if (req.type === "LIMIT" || req.type === "STOP_LOSS_LIMIT" || req.type === "TAKE_PROFIT_LIMIT") {
       params["timeInForce"] = req.timeInForce ?? "GTC";
       if (req.price) params["price"] = req.price.toFixed(8);
     }
     if (req.stopPrice) params["stopPrice"] = req.stopPrice.toFixed(8);
     if (req.newClientOrderId) params["newClientOrderId"] = req.newClientOrderId;
+    if (req.reduceOnly) params["reduceOnly"] = "true";
+    if (req.workingType) params["workingType"] = req.workingType;
 
     const body = this.buildSignedQuery(params);
     const path = `${this.apiPrefix}/order`;
     return (await httpsRequest(this.hostname, "POST", path, this.signedHeaders(), body)) as OrderResponse;
+  }
+
+  /**
+   * 挂止损单（自动适配 Spot / Futures）
+   *
+   * Spot：STOP_LOSS_LIMIT（需要 price + stopPrice）
+   *   - 触发条件：价格穿越 stopPrice
+   *   - 挂单价格：limitPrice（通常比 stopPrice 低 0.2% 以保证成交）
+   *
+   * Futures：STOP_MARKET（只需 stopPrice）
+   *   - 触发后直接市价平仓，无需限价
+   *   - reduceOnly=true：只减仓，防止误开新仓
+   *
+   * @param symbol      交易对
+   * @param side        挂单方向（空头止损=BUY，多头止损=SELL）
+   * @param qty         数量
+   * @param stopPrice   触发价
+   * @param limitPrice  仅 Spot 需要（不传则使用 stopPrice * 0.998）
+   */
+  async placeStopLossOrder(
+    symbol: string,
+    side: OrderSide,
+    qty: number,
+    stopPrice: number,
+    limitPrice?: number
+  ): Promise<OrderResponse> {
+    if (this.market === "futures") {
+      return this.createOrder({
+        symbol,
+        side,
+        type: "STOP_MARKET",
+        quantity: qty,
+        stopPrice,
+        reduceOnly: true,
+        workingType: "MARK_PRICE", // 用标记价格触发，防止针刺误触发
+      });
+    } else {
+      // Spot：STOP_LOSS_LIMIT，限价 = stopPrice * 0.998（给 0.2% 滑点空间）
+      const limit = limitPrice ?? stopPrice * 0.998;
+      return this.createOrder({
+        symbol,
+        side,
+        type: "STOP_LOSS_LIMIT",
+        quantity: qty,
+        stopPrice,
+        price: limit,
+        timeInForce: "GTC",
+      });
+    }
+  }
+
+  /**
+   * 挂止盈单（自动适配 Spot / Futures）
+   */
+  async placeTakeProfitOrder(
+    symbol: string,
+    side: OrderSide,
+    qty: number,
+    takeProfitPrice: number,
+    limitPrice?: number
+  ): Promise<OrderResponse> {
+    if (this.market === "futures") {
+      return this.createOrder({
+        symbol,
+        side,
+        type: "TAKE_PROFIT_MARKET",
+        quantity: qty,
+        stopPrice: takeProfitPrice,
+        reduceOnly: true,
+        workingType: "MARK_PRICE",
+      });
+    } else {
+      const limit = limitPrice ?? takeProfitPrice * 0.999;
+      return this.createOrder({
+        symbol,
+        side,
+        type: "TAKE_PROFIT_LIMIT",
+        quantity: qty,
+        stopPrice: takeProfitPrice,
+        price: limit,
+        timeInForce: "GTC",
+      });
+    }
   }
 
   /** 取消挂单 */

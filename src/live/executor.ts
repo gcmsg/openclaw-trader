@@ -191,6 +191,27 @@ export class LiveExecutor {
     const stopLossPrice = avgPrice * (1 - this.cfg.risk.stop_loss_percent / 100);
     const takeProfitPrice = avgPrice * (1 + this.cfg.risk.take_profit_percent / 100);
 
+    // 🛡️ 在交易所挂止损单（限价或市价），防止极端行情漏停
+    let stopLossOrderId: number | undefined;
+    let takeProfitOrderId: number | undefined;
+    try {
+      const slOrder = await this.client.placeStopLossOrder(
+        signal.symbol, "SELL", execQty, stopLossPrice
+      );
+      stopLossOrderId = slOrder.orderId;
+    } catch (err) {
+      // 止损单失败不阻断主流程，但需记录（仍有本地轮询兜底）
+      console.warn(`[LiveExecutor] 止损单挂单失败 ${signal.symbol}:`, err instanceof Error ? err.message : err);
+    }
+    try {
+      const tpOrder = await this.client.placeTakeProfitOrder(
+        signal.symbol, "SELL", execQty, takeProfitPrice
+      );
+      takeProfitOrderId = tpOrder.orderId;
+    } catch (err) {
+      console.warn(`[LiveExecutor] 止盈单挂单失败 ${signal.symbol}:`, err instanceof Error ? err.message : err);
+    }
+
     account.usdt = realBalance - usdtToSpend;
     account.positions[signal.symbol] = {
       symbol: signal.symbol,
@@ -200,6 +221,8 @@ export class LiveExecutor {
       entryTime: order.transactTime,
       stopLoss: stopLossPrice,
       takeProfit: takeProfitPrice,
+      ...(stopLossOrderId !== undefined && { stopLossOrderId }),
+      ...(takeProfitOrderId !== undefined && { takeProfitOrderId }),
     };
 
     const trade = orderToPaperTrade(order, "buy", signal.reason.join(", "));
@@ -207,8 +230,9 @@ export class LiveExecutor {
     saveAccount(account, this.scenarioId);
 
     const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+    const slLabel = stopLossOrderId ? `止损单#${stopLossOrderId}` : "止损单(挂单失败，本地轮询兜底)";
     console.log(
-      `${label} 买入 ${signal.symbol}: 数量=${execQty.toFixed(6)}, 均价=$${avgPrice.toFixed(4)}, 手续费=$${totalFee.toFixed(4)}`
+      `${label} 买入 ${signal.symbol}: 数量=${execQty.toFixed(6)}, 均价=$${avgPrice.toFixed(4)}, 手续费=$${totalFee.toFixed(4)}, ${slLabel}`
     );
 
     return { trade, stopLossTriggered: false, stopLossTrade: null, account, orderId: order.orderId };
@@ -227,6 +251,14 @@ export class LiveExecutor {
 
     if (!position) {
       return { trade: null, skipped: `${symbol} 无持仓`, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+
+    // 🗑️ 先取消交易所上的止损/止盈挂单（避免重复卖出）
+    for (const orderId of [position.stopLossOrderId, position.takeProfitOrderId]) {
+      if (orderId !== undefined) {
+        try { await this.client.cancelOrder(symbol, orderId); }
+        catch { /* 可能已成交或不存在，忽略 */ }
+      }
     }
 
     // 🔥 执行真实卖出
@@ -345,6 +377,25 @@ export class LiveExecutor {
     const totalFee = order.fills?.reduce((s, f) => s + parseFloat(f.commission), 0) ?? 0;
     const actualMargin = marginToLock - totalFee;
 
+    const shortStopLoss = avgPrice * (1 + this.cfg.risk.stop_loss_percent / 100);
+    const shortTakeProfit = avgPrice * (1 - this.cfg.risk.take_profit_percent / 100);
+
+    // 🛡️ 挂止损单（Futures: 做空止损需 BUY 方向）
+    let shortSlOrderId: number | undefined;
+    let shortTpOrderId: number | undefined;
+    try {
+      const slOrder = await this.client.placeStopLossOrder(signal.symbol, "BUY", execQty, shortStopLoss);
+      shortSlOrderId = slOrder.orderId;
+    } catch (err) {
+      console.warn(`[LiveExecutor] 空头止损单挂单失败 ${signal.symbol}:`, err instanceof Error ? err.message : err);
+    }
+    try {
+      const tpOrder = await this.client.placeTakeProfitOrder(signal.symbol, "BUY", execQty, shortTakeProfit);
+      shortTpOrderId = tpOrder.orderId;
+    } catch (err) {
+      console.warn(`[LiveExecutor] 空头止盈单挂单失败 ${signal.symbol}:`, err instanceof Error ? err.message : err);
+    }
+
     account.usdt = realBalance - marginToLock;
     account.positions[signal.symbol] = {
       symbol: signal.symbol,
@@ -352,9 +403,11 @@ export class LiveExecutor {
       quantity: execQty,
       entryPrice: avgPrice,
       entryTime: order.transactTime,
-      stopLoss: avgPrice * (1 + this.cfg.risk.stop_loss_percent / 100),
-      takeProfit: avgPrice * (1 - this.cfg.risk.take_profit_percent / 100),
+      stopLoss: shortStopLoss,
+      takeProfit: shortTakeProfit,
       marginUsdt: actualMargin,
+      ...(shortSlOrderId !== undefined && { stopLossOrderId: shortSlOrderId }),
+      ...(shortTpOrderId !== undefined && { takeProfitOrderId: shortTpOrderId }),
     };
 
     const trade = orderToPaperTrade(order, "short", signal.reason.join(", "));
@@ -362,7 +415,8 @@ export class LiveExecutor {
     saveAccount(account, this.scenarioId);
 
     const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
-    console.log(`${label} 开空 ${signal.symbol}: 数量=${execQty.toFixed(6)}, 均价=$${avgPrice.toFixed(4)}, 手续费=$${totalFee.toFixed(4)}`);
+    const slLabel = shortSlOrderId ? `止损单#${shortSlOrderId}` : "止损单(挂单失败，本地轮询兜底)";
+    console.log(`${label} 开空 ${signal.symbol}: 数量=${execQty.toFixed(6)}, 均价=$${avgPrice.toFixed(4)}, 手续费=$${totalFee.toFixed(4)}, ${slLabel}`);
 
     return { trade, stopLossTriggered: false, stopLossTrade: null, account, orderId: order.orderId };
   }
@@ -376,6 +430,14 @@ export class LiveExecutor {
 
     if (position?.side !== "short") {
       return { trade: null, skipped: `${symbol} 无空头持仓`, stopLossTriggered: false, stopLossTrade: null, account };
+    }
+
+    // 🗑️ 先取消交易所上的止损/止盈挂单
+    for (const orderId of [position.stopLossOrderId, position.takeProfitOrderId]) {
+      if (orderId !== undefined) {
+        try { await this.client.cancelOrder(symbol, orderId); }
+        catch { /* 可能已成交，忽略 */ }
+      }
     }
 
     // 🔥 执行真实平空下单（Futures: BUY = 平空）
@@ -428,6 +490,55 @@ export class LiveExecutor {
       if (!currentPrice) continue;
 
       const isShort = pos.side === "short";
+
+      // ── 优先：查询交易所止损/止盈单状态 ──
+      // 如果挂单已经被填充，说明交易所已自动止损，只需同步本地账户
+      let exchangeTriggeredReason: ExitReason | null = null;
+      let exchangeTriggeredPrice = currentPrice;
+
+      for (const [orderId, reason] of [
+        [pos.stopLossOrderId, "stop_loss" as ExitReason],
+        [pos.takeProfitOrderId, "take_profit" as ExitReason],
+      ] as [number | undefined, ExitReason][]) {
+        if (orderId === undefined) continue;
+        try {
+          const orderStatus = await this.client.getOrder(symbol, orderId);
+          if (orderStatus.status === "FILLED") {
+            // 解析实际成交均价（修复 B5 bug）
+            const fills = orderStatus.fills;
+            if (fills && fills.length > 0) {
+              exchangeTriggeredPrice = fills.reduce((s, f) =>
+                s + parseFloat(f.price) * parseFloat(f.qty), 0
+              ) / parseFloat(orderStatus.executedQty);
+            } else if (parseFloat(orderStatus.price) > 0) {
+              exchangeTriggeredPrice = parseFloat(orderStatus.price);
+            }
+            exchangeTriggeredReason = reason;
+            break; // 只处理第一个已成交的单
+          }
+        } catch { /* 查询失败，回退到价格轮询 */ }
+      }
+
+      // ── 如果交易所已触发止损/止盈：同步本地账户 ──
+      if (exchangeTriggeredReason) {
+        const pnlPercent = isShort
+          ? ((pos.entryPrice - exchangeTriggeredPrice) / pos.entryPrice) * 100
+          : ((exchangeTriggeredPrice - pos.entryPrice) / pos.entryPrice) * 100;
+        const label = `[交易所自动] ${exchangeTriggeredReason === "stop_loss" ? "止损" : "止盈"} @ $${exchangeTriggeredPrice.toFixed(4)}`;
+        try {
+          const result = isShort
+            ? await this.handleCover(symbol, exchangeTriggeredPrice, label)
+            : await this.handleSell(symbol, exchangeTriggeredPrice, label);
+          if (result.trade) {
+            results.push({ symbol, trade: result.trade, reason: exchangeTriggeredReason, pnlPercent });
+          }
+        } catch (err) {
+          console.error(`[LiveExecutor] 交易所止损同步失败 ${symbol}:`, err);
+        }
+        continue; // 不需要再做价格检查
+      }
+
+      // ── 兜底：本地价格轮询（挂单失败时的保障）──
       const pnlPercent = isShort
         ? ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100
         : ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
@@ -440,10 +551,10 @@ export class LiveExecutor {
 
       if (hitStopLoss) {
         exitReason = "stop_loss";
-        exitLabel = `止损触发：亏损 ${Math.abs(pnlPercent).toFixed(2)}%（止损价 $${pos.stopLoss.toFixed(4)}）`;
+        exitLabel = `[本地轮询] 止损触发：亏损 ${Math.abs(pnlPercent).toFixed(2)}%（止损价 $${pos.stopLoss.toFixed(4)}）`;
       } else if (hitTakeProfit) {
         exitReason = "take_profit";
-        exitLabel = `止盈触发：盈利 ${pnlPercent.toFixed(2)}%（止盈价 $${pos.takeProfit.toFixed(4)}）`;
+        exitLabel = `[本地轮询] 止盈触发：盈利 ${pnlPercent.toFixed(2)}%（止盈价 $${pos.takeProfit.toFixed(4)}）`;
       }
 
       if (exitReason) {

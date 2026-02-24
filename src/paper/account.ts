@@ -41,6 +41,11 @@ export interface PaperPosition {
   }[];
   // ATR 入场时值（用于止损距离参考）
   entryAtr?: number;
+  // 信号历史数据库 ID（用于平仓时回写结果）
+  signalHistoryId?: string;
+  // 实盘止损/止盈挂单 ID（用于查询成交状态和取消冗余挂单）
+  stopLossOrderId?: number;
+  takeProfitOrderId?: number;
 }
 
 export interface PaperTrade {

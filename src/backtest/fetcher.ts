@@ -152,6 +152,72 @@ export async function fetchHistoricalKlines(
   return allKlines;
 }
 
+// ─────────────────────────────────────────────────────
+// 历史资金费率获取（Futures 回测专用）
+// ─────────────────────────────────────────────────────
+
+export interface FundingRateRecord {
+  ts: number;    // fundingTime（毫秒）
+  rate: number;  // 资金费率，如 -0.0001 表示 -0.01%
+}
+
+/**
+ * 获取 Binance Futures 历史资金费率
+ * 每 8 小时结算一次（00:00 / 08:00 / 16:00 UTC）
+ *
+ * @param symbol  交易对，如 "BTCUSDT"
+ * @param startMs 开始时间戳（毫秒）
+ * @param endMs   结束时间戳（毫秒）
+ */
+export async function fetchHistoricalFundingRates(
+  symbol: string,
+  startMs: number,
+  endMs: number
+): Promise<FundingRateRecord[]> {
+  const cacheFile = path.join(CACHE_DIR, `funding_${symbol}_${new Date(startMs).toISOString().slice(0, 10)}_${new Date(endMs).toISOString().slice(0, 10)}.json`);
+  const cached = (() => {
+    try { return JSON.parse(fs.readFileSync(cacheFile, "utf-8")) as FundingRateRecord[]; }
+    catch { return null; }
+  })();
+  if (cached) return cached;
+
+  interface BinanceFunding { symbol: string; fundingTime: number; fundingRate: string }
+  const all: FundingRateRecord[] = [];
+  let cursor = startMs;
+  const LIMIT = 1000;
+
+  while (cursor < endMs) {
+    const urlPath = `/fapi/v1/fundingRate?symbol=${symbol}&startTime=${cursor}&endTime=${endMs}&limit=${LIMIT}`;
+    let raw: BinanceFunding[];
+    try {
+      raw = (await (new Promise<unknown>((resolve, reject) => {
+        const req = https.get({ hostname: "fapi.binance.com", path: urlPath }, (res) => {
+          let data = "";
+          res.on("data", (c: string) => data += c);
+          res.on("end", () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e instanceof Error ? e : new Error(String(e))); } });
+        });
+        req.on("error", reject);
+        req.setTimeout(15000, () => req.destroy(new Error("timeout")));
+      }))) as BinanceFunding[];
+    } catch { break; }
+
+    if (!Array.isArray(raw) || raw.length === 0) break;
+    for (const r of raw) {
+      all.push({ ts: r.fundingTime, rate: parseFloat(r.fundingRate) });
+    }
+    cursor = raw[raw.length - 1]!.fundingTime + 1;
+    if (raw.length < LIMIT) break;
+    await sleep(REQUEST_DELAY_MS);
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (new Date(endMs).toISOString().slice(0, 10) < today) {
+    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+    fs.writeFileSync(cacheFile, JSON.stringify(all));
+  }
+  return all;
+}
+
 /**
  * 清理过期缓存（默认保留 30 天内的缓存文件）
  */
