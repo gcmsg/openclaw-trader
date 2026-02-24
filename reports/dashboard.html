@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>openclaw-trader — Paper Trading Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card: #1a1d27;
+      --border: #2a2d3e;
+      --text: #e0e0e0;
+      --muted: #8890a4;
+      --green: #22c55e;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --yellow: #eab308;
+      --accent: #6366f1;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; padding: 20px; }
+    h1 { font-size: 1.4rem; font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+    .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 20px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+    @media (max-width: 800px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+    .card-title { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .card-value { font-size: 1.6rem; font-weight: 700; }
+    .positive { color: var(--green); }
+    .negative { color: var(--red); }
+    .neutral { color: var(--text); }
+    .chart-row { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 20px; }
+    @media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
+    .chart-wrap { position: relative; height: 260px; }
+    canvas { max-height: 100%; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th { color: var(--muted); font-weight: 500; text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 0.78rem; text-transform: uppercase; }
+    td { padding: 7px 10px; border-bottom: 1px solid #1e2130; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #1e2130; }
+    .badge { display: inline-block; padding: 2px 7px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+    .badge-buy { background: rgba(34,197,94,0.15); color: var(--green); }
+    .badge-sell { background: rgba(239,68,68,0.15); color: var(--red); }
+    .badge-short { background: rgba(234,179,8,0.15); color: var(--yellow); }
+    .badge-cover { background: rgba(59,130,246,0.15); color: var(--blue); }
+    .scenario-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .tab { padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; border: 1px solid var(--border); background: var(--card); color: var(--muted); transition: all 0.15s; }
+    .tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .section-title { font-size: 0.95rem; font-weight: 600; margin-bottom: 10px; color: var(--text); display: flex; align-items: center; gap: 6px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+    .empty-msg { color: var(--muted); text-align: center; padding: 30px; font-size: 0.9rem; }
+    .footer { margin-top: 20px; text-align: center; color: var(--muted); font-size: 0.78rem; }
+  </style>
+</head>
+<body>
+  <h1>📈 openclaw-trader Dashboard</h1>
+  <p class="subtitle">Paper Trading — 2026/2/25 00:20:46 生成 | Mia 🤖</p>
+
+  <div class="scenario-tabs" id="tabs"></div>
+
+  <!-- KPI 卡片 -->
+  <div class="grid-4" id="kpi-cards"></div>
+
+  <!-- 图表区 -->
+  <div class="chart-row">
+    <div class="card">
+      <p class="section-title"><span class="dot"></span>权益曲线</p>
+      <div class="chart-wrap"><canvas id="equity-chart"></canvas></div>
+    </div>
+    <div class="card">
+      <p class="section-title"><span class="dot"></span>最大回撤</p>
+      <div class="chart-wrap"><canvas id="dd-chart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- 各币种统计 -->
+  <div class="card" style="margin-bottom:12px">
+    <p class="section-title"><span class="dot"></span>各币种统计</p>
+    <div id="symbol-stats-wrap"></div>
+  </div>
+
+  <!-- 最近交易 -->
+  <div class="card" style="margin-bottom:12px">
+    <p class="section-title"><span class="dot"></span>最近 50 笔交易</p>
+    <div id="trades-wrap" style="overflow-x:auto"></div>
+  </div>
+
+  <div class="footer">openclaw-trader • paper mode • 数据仅供参考 • 所有操作需主人授权</div>
+
+<script>
+const datasets = [{"scenarioId":"conservative-spot","generatedAt":"2026/2/25 00:20:46","initialUsdt":10000,"currentEquity":10000,"totalReturn":0,"totalPnl":0,"numTrades":0,"numWins":0,"winRate":0,"maxDrawdown":0,"equityCurve":[{"ts":1771864381798,"label":"2026/2/24","equity":10000,"drawdown":0}],"recentTrades":[],"symbolStats":[]},{"scenarioId":"conservative-futures-3x","generatedAt":"2026/2/25 00:20:46","initialUsdt":10000,"currentEquity":10000,"totalReturn":0,"totalPnl":0,"numTrades":0,"numWins":0,"winRate":0,"maxDrawdown":0,"equityCurve":[{"ts":1771864381792,"label":"2026/2/24","equity":10000,"drawdown":0}],"recentTrades":[],"symbolStats":[]},{"scenarioId":"aggressive-spot","generatedAt":"2026/2/25 00:20:46","initialUsdt":10000,"currentEquity":5861.81640625,"totalReturn":-41.3818359375,"totalPnl":0,"numTrades":0,"numWins":0,"winRate":0,"maxDrawdown":0.0413818359375,"equityCurve":[{"ts":1771864381640,"label":"2026/2/24","equity":10000,"drawdown":0},{"ts":1771876804525,"label":"2026/2/24","equity":9998.75,"drawdown":0.0125},{"ts":1771892402604,"label":"2026/2/24","equity":9997.65625,"drawdown":0.0234375},{"ts":1771892402763,"label":"2026/2/24","equity":9996.69921875,"drawdown":0.033007812500000004},{"ts":1771892702249,"label":"2026/2/24","equity":9995.86181640625,"drawdown":0.0413818359375}],"recentTrades":[{"id":"PMLZV5Z55","ts":"2026/2/24 08:25:02","symbol":"BTCUSDT","side":"buy","qty":0.012881364549757907,"price":64911.309435,"usdt":837.40234375,"pnl":null,"pnlPct":null},{"id":"PMLZUZK23","ts":"2026/2/24 08:20:02","symbol":"AVAXUSDT","side":"buy","qty":113.7045409586873,"price":8.404200000000001,"usdt":957.03125,"pnl":null,"pnlPct":null},{"id":"PMLZUZJXO","ts":"2026/2/24 08:20:02","symbol":"ETHUSDT","side":"buy","qty":0.5848904998759012,"price":1867.203135,"usdt":1093.75,"pnl":null,"pnlPct":null},{"id":"PMLZLP8DP","ts":"2026/2/24 04:00:04","symbol":"DOGEUSDT","side":"buy","qty":13435.662351915049,"price":0.092896425,"usdt":1250,"pnl":null,"pnlPct":null}],"symbolStats":[]},{"scenarioId":"aggressive-futures-3x","generatedAt":"2026/2/25 00:20:46","initialUsdt":10000,"currentEquity":7320.94140625,"totalReturn":-26.7905859375,"totalPnl":0,"numTrades":0,"numWins":0,"winRate":0,"maxDrawdown":0.01071623437499511,"equityCurve":[{"ts":1771864381645,"label":"2026/2/24","equity":10000,"drawdown":0},{"ts":1771876804477,"label":"2026/2/24","equity":9999.7,"drawdown":0.002999999999992724},{"ts":1771892402618,"label":"2026/2/24","equity":9999.4225,"drawdown":0.005774999999994179},{"ts":1771892402770,"label":"2026/2/24","equity":9999.165812500001,"drawdown":0.00834187499998734},{"ts":1771892702235,"label":"2026/2/24","equity":9998.9283765625,"drawdown":0.01071623437499511}],"recentTrades":[{"id":"PMLZV5Z4R","ts":"2026/2/24 08:25:02","symbol":"BTCUSDT","side":"buy","qty":0.009127265183833081,"price":64943.74887,"usdt":593.58984375,"pnl":null,"pnlPct":null},{"id":"PMLZUZK2A","ts":"2026/2/24 08:20:02","symbol":"AVAXUSDT","side":"buy","qty":76.2119242364778,"price":8.4084,"usdt":641.71875,"pnl":null,"pnlPct":null},{"id":"PMLZUZJY2","ts":"2026/2/24 08:20:02","symbol":"ETHUSDT","side":"buy","qty":0.37083951589891245,"price":1868.13627,"usdt":693.75,"pnl":null,"pnlPct":null},{"id":"PMLZLP8CD","ts":"2026/2/24 04:00:04","symbol":"DOGEUSDT","side":"buy","qty":8058.177686610643,"price":0.09294285000000001,"usdt":750,"pnl":null,"pnlPct":null}],"symbolStats":[]},{"scenarioId":"trend-spot","generatedAt":"2026/2/25 00:20:46","initialUsdt":10000,"currentEquity":10000,"totalReturn":0,"totalPnl":0,"numTrades":0,"numWins":0,"winRate":0,"maxDrawdown":0,"equityCurve":[{"ts":1771864381734,"label":"2026/2/24","equity":10000,"drawdown":0}],"recentTrades":[],"symbolStats":[]},{"scenarioId":"rsi-spot","generatedAt":"2026/2/25 00:20:46","initialUsdt":10000,"currentEquity":6857.4961,"totalReturn":-31.425038999999998,"totalPnl":0,"numTrades":0,"numWins":0,"winRate":0,"maxDrawdown":0.0314250390000052,"equityCurve":[{"ts":1771864381812,"label":"2026/2/24","equity":10000,"drawdown":0},{"ts":1771877462156,"label":"2026/2/24","equity":9999.1,"drawdown":0.008999999999996362},{"ts":1771887603987,"label":"2026/2/24","equity":9998.281,"drawdown":0.017189999999991414},{"ts":1771889882801,"label":"2026/2/24","equity":9997.53571,"drawdown":0.024642899999998916},{"ts":1771890242447,"label":"2026/2/24","equity":9996.8574961,"drawdown":0.0314250390000052}],"recentTrades":[{"id":"PMLZTP95B","ts":"2026/2/24 07:44:02","symbol":"ETHUSDT","side":"buy","qty":0.3655096878071101,"price":1852.7459099999999,"usdt":678.2139,"pnl":null,"pnlPct":null},{"id":"PMLZTHJN5","ts":"2026/2/24 07:38:02","symbol":"DOGEUSDT","side":"buy","qty":8010.771835407013,"price":0.092896425,"usdt":745.29,"pnl":null,"pnlPct":null},{"id":"PMLZS4PAR","ts":"2026/2/24 07:00:03","symbol":"SOLUSDT","side":"buy","qty":10.438861029255488,"price":78.33915,"usdt":819,"pnl":null,"pnlPct":null},{"id":"PMLZM3BT8","ts":"2026/2/24 04:11:02","symbol":"BTCUSDT","side":"buy","qty":0.014004242734822632,"price":64169.838885,"usdt":900,"pnl":null,"pnlPct":null}],"symbolStats":[]},{"scenarioId":"rsi-margin-2x","generatedAt":"2026/2/25 00:20:46","initialUsdt":10000,"currentEquity":7807.4896,"totalReturn":-21.925104,"totalPnl":0,"numTrades":0,"numWins":0,"winRate":0,"maxDrawdown":0.02192510400000174,"equityCurve":[{"ts":1771864381851,"label":"2026/2/24","equity":10000,"drawdown":0},{"ts":1771877462168,"label":"2026/2/24","equity":9999.4,"drawdown":0.006000000000003638},{"ts":1771887604027,"label":"2026/2/24","equity":9998.836,"drawdown":0.011640000000006694},{"ts":1771889882813,"label":"2026/2/24","equity":9998.305839999999,"drawdown":0.016941600000009202},{"ts":1771890242459,"label":"2026/2/24","equity":9997.8074896,"drawdown":0.02192510400000174}],"recentTrades":[{"id":"PMLZTP95N","ts":"2026/2/24 07:44:02","symbol":"ETHUSDT","side":"buy","qty":0.2685221493169267,"price":1852.931092,"usdt":498.3504,"pnl":null,"pnlPct":null},{"id":"PMLZTHJNH","ts":"2026/2/24 07:38:02","symbol":"DOGEUSDT","side":"buy","qty":5697.300456559667,"price":0.09290571,"usdt":530.16,"pnl":null,"pnlPct":null},{"id":"PMLZS4PBV","ts":"2026/2/24 07:00:04","symbol":"SOLUSDT","side":"buy","qty":7.187227893149169,"price":78.34698,"usdt":564,"pnl":null,"pnlPct":null},{"id":"PMLZM3BTK","ts":"2026/2/24 04:11:02","symbol":"BTCUSDT","side":"buy","qty":0.009334293841601992,"price":64176.252662,"usdt":600,"pnl":null,"pnlPct":null}],"symbolStats":[]},{"scenarioId":"testnet-default","generatedAt":"2026/2/25 00:20:46","initialUsdt":10000,"currentEquity":10000,"totalReturn":0,"totalPnl":0,"numTrades":0,"numWins":0,"winRate":0,"maxDrawdown":0,"equityCurve":[{"ts":1771905437438,"label":"2026/2/24","equity":10000,"drawdown":0}],"recentTrades":[],"symbolStats":[]},{"scenarioId":"futures-short-test","generatedAt":"2026/2/25 00:20:46","initialUsdt":5000,"currentEquity":4500,"totalReturn":-10,"totalPnl":0,"numTrades":0,"numWins":0,"winRate":0,"maxDrawdown":0.003999999999996362,"equityCurve":[{"ts":1771909142041,"label":"2026/2/24","equity":5000,"drawdown":0},{"ts":1771909142042,"label":"2026/2/24","equity":4999.8,"drawdown":0.003999999999996362}],"recentTrades":[{"id":"PMM04YC62","ts":"2026/2/24 12:59:02","symbol":"BNBUSDT","side":"short","qty":0.8442961833918748,"price":591.972355,"usdt":500,"pnl":null,"pnlPct":null}],"symbolStats":[]}];
+let currentIdx = 0;
+let equityChart = null;
+let ddChart = null;
+
+function fmt(n, d = 2) {
+  return typeof n === 'number' ? n.toFixed(d) : '-';
+}
+function fmtPct(n) {
+  if (n === null || n === undefined) return '-';
+  const cls = n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral';
+  return '<span class="' + cls + '">' + (n > 0 ? '+' : '') + fmt(n) + '%</span>';
+}
+function fmtPnl(n) {
+  if (n === null || n === undefined) return '-';
+  const cls = n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral';
+  return '<span class="' + cls + '">' + (n >= 0 ? '+' : '') + fmt(n) + '</span>';
+}
+
+// ── Tabs ────────────────────────────
+function buildTabs() {
+  const el = document.getElementById('tabs');
+  el.innerHTML = datasets.map((d, i) =>
+    '<div class="tab ' + (i === currentIdx ? 'active' : '') + '" onclick="switchTab(' + i + ')">' + d.scenarioId + '</div>'
+  ).join('');
+}
+
+function switchTab(i) {
+  currentIdx = i;
+  buildTabs();
+  render(datasets[i]);
+}
+
+// ── KPI Cards ────────────────────────
+function buildKpi(d) {
+  const el = document.getElementById('kpi-cards');
+  const rClass = d.totalReturn >= 0 ? 'positive' : 'negative';
+  const ddClass = d.maxDrawdown > 15 ? 'negative' : d.maxDrawdown > 5 ? 'neutral' : 'positive';
+  const wClass = d.winRate >= 0.5 ? 'positive' : 'negative';
+  el.innerHTML = [
+    { label: '当前净值', val: '$' + fmt(d.currentEquity), cls: 'neutral' },
+    { label: '总收益率', val: (d.totalReturn >= 0 ? '+' : '') + fmt(d.totalReturn) + '%', cls: rClass },
+    { label: '已实现盈亏', val: (d.totalPnl >= 0 ? '+$' : '-$') + fmt(Math.abs(d.totalPnl)), cls: rClass },
+    { label: '交易笔数', val: d.numTrades + ' 笔', cls: 'neutral' },
+    { label: '胜率', val: fmt(d.winRate * 100) + '%', cls: wClass },
+    { label: '盈利 / 亏损', val: d.numWins + ' / ' + (d.numTrades - d.numWins), cls: 'neutral' },
+    { label: '最大回撤', val: fmt(d.maxDrawdown) + '%', cls: ddClass },
+    { label: '初始资金', val: '$' + fmt(d.initialUsdt), cls: 'neutral' },
+  ].map(k => '<div class="card"><div class="card-title">' + k.label + '</div><div class="card-value ' + k.cls + '">' + k.val + '</div></div>').join('');
+}
+
+// ── Charts ────────────────────────────
+const CHART_OPTS = {
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: false,
+  plugins: { legend: { display: false }, tooltip: { callbacks: {} } },
+  scales: {
+    x: { ticks: { color: '#8890a4', maxTicksLimit: 6, font: { size: 11 } }, grid: { color: '#1e2130' } },
+    y: { ticks: { color: '#8890a4', font: { size: 11 } }, grid: { color: '#1e2130' } }
+  }
+};
+
+function buildCharts(d) {
+  const labels = d.equityCurve.map(p => p.label);
+  const equities = d.equityCurve.map(p => p.equity);
+  const drawdowns = d.equityCurve.map(p => -p.drawdown);
+
+  if (equityChart) equityChart.destroy();
+  if (ddChart) ddChart.destroy();
+
+  equityChart = new Chart(document.getElementById('equity-chart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data: equities,
+        borderColor: '#6366f1',
+        backgroundColor: 'rgba(99,102,241,0.08)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: equities.length > 100 ? 0 : 3,
+        borderWidth: 1.5
+      }]
+    },
+    options: { ...CHART_OPTS, plugins: { ...CHART_OPTS.plugins, tooltip: { callbacks: {
+      label: ctx => '$' + ctx.raw.toFixed(2)
+    }}}}
+  });
+
+  ddChart = new Chart(document.getElementById('dd-chart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data: drawdowns,
+        borderColor: '#ef4444',
+        backgroundColor: 'rgba(239,68,68,0.08)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: drawdowns.length > 100 ? 0 : 3,
+        borderWidth: 1.5
+      }]
+    },
+    options: { ...CHART_OPTS, plugins: { ...CHART_OPTS.plugins, tooltip: { callbacks: {
+      label: ctx => ctx.raw.toFixed(2) + '%'
+    }}}, scales: { ...CHART_OPTS.scales, y: { ...CHART_OPTS.scales.y, max: 0 }}}
+  });
+}
+
+// ── Symbol Stats ────────────────────
+function buildSymbolStats(d) {
+  const wrap = document.getElementById('symbol-stats-wrap');
+  if (!d.symbolStats.length) {
+    wrap.innerHTML = '<div class="empty-msg">暂无交易记录</div>';
+    return;
+  }
+  wrap.innerHTML = '<table><thead><tr>' +
+    '<th>币种</th><th>交易数</th><th>胜率</th><th>总盈亏</th><th>均值盈亏</th>' +
+    '</tr></thead><tbody>' +
+    d.symbolStats.map(s => '<tr>' +
+      '<td><strong>' + s.symbol.replace('USDT', '') + '</strong></td>' +
+      '<td>' + s.trades + '</td>' +
+      '<td>' + fmtPct(s.winRate * 100) + '</td>' +
+      '<td>' + fmtPnl(s.totalPnl) + '</td>' +
+      '<td>' + fmtPnl(s.avgPnl) + '</td>' +
+    '</tr>').join('') +
+    '</tbody></table>';
+}
+
+// ── Trades ────────────────────────────
+function buildTrades(d) {
+  const wrap = document.getElementById('trades-wrap');
+  if (!d.recentTrades.length) {
+    wrap.innerHTML = '<div class="empty-msg">暂无交易记录</div>';
+    return;
+  }
+  const sideBadge = s => '<span class="badge badge-' + s + '">' + s.toUpperCase() + '</span>';
+  wrap.innerHTML = '<table><thead><tr>' +
+    '<th>时间</th><th>币种</th><th>方向</th><th>数量</th><th>价格</th><th>金额(U)</th><th>盈亏</th><th>盈亏%</th>' +
+    '</tr></thead><tbody>' +
+    d.recentTrades.map(t => '<tr>' +
+      '<td style="white-space:nowrap">' + t.ts + '</td>' +
+      '<td><strong>' + t.symbol.replace('USDT', '') + '</strong></td>' +
+      '<td>' + sideBadge(t.side) + '</td>' +
+      '<td>' + fmt(t.qty, 4) + '</td>' +
+      '<td>' + fmt(t.price, 2) + '</td>' +
+      '<td>' + fmt(t.usdt, 2) + '</td>' +
+      '<td>' + fmtPnl(t.pnl) + '</td>' +
+      '<td>' + fmtPct(t.pnlPct) + '</td>' +
+    '</tr>').join('') +
+    '</tbody></table>';
+}
+
+// ── Main Render ──────────────────────
+function render(d) {
+  buildKpi(d);
+  buildCharts(d);
+  buildSymbolStats(d);
+  buildTrades(d);
+}
+
+buildTabs();
+render(datasets[currentIdx]);
+</script>
+</body>
+</html>

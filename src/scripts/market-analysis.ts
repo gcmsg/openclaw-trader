@@ -182,7 +182,7 @@ async function main() {
       const kwScore = scoreNewsTitles(newsReport.importantNews.map((n) => n.title));
       const fg = newsReport.fearGreed.value;
       // 综合评分：关键词 + FGI 调整
-      const fgAdjust = fg < 20 ? -2 : fg > 75 ? +2 : 0; // 极恐偏空，极贪偏多（反向修正）
+      const fgAdjust = fg < 20 ? -2 : fg > 75 ? 2 : 0; // 极恐偏空，极贪偏多（反向修正）
       const combined = kwScore - fgAdjust; // 极恐时关键词可能过度偏空
       writeKeywordSentimentCache(combined, newsReport.importantNews.length);
     }
