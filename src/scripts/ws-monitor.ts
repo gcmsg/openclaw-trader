@@ -26,6 +26,8 @@ import {
   formatSummaryMessage,
 } from "../paper/engine.js";
 import { loadNewsReport, evaluateSentimentGate } from "../news/sentiment-gate.js";
+import { checkCorrelation } from "../strategy/correlation.js";
+import { loadAccount } from "../paper/account.js";
 import { ping } from "../health/heartbeat.js";
 import { loadRuntimeConfigs } from "../config/loader.js";
 import type { RuntimeConfig, Signal, Indicators, Kline } from "../types.js";
@@ -132,7 +134,8 @@ async function runStrategy(
   klines: Kline[],
   cfg: RuntimeConfig,
   state: MonitorState,
-  currentPrices: Record<string, number>
+  currentPrices: Record<string, number>,
+  buffer: KlineBuffer
 ): Promise<void> {
   const indicators = calculateIndicators(
     klines,
@@ -186,6 +189,37 @@ async function runStrategy(
   );
 
   if (signal.type === "none") return;
+
+  // ── 相关性过滤（仅对买入信号）──────────────────────────
+  if (signal.type === "buy" && cfg.risk.correlation_filter?.enabled) {
+    const corrCfg = cfg.risk.correlation_filter;
+    const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+    const heldSymbols = Object.keys(account.positions);
+    if (heldSymbols.length > 0) {
+      const heldKlines = new Map<string, Kline[]>();
+      await Promise.all(
+        heldSymbols.map(async (sym) => {
+          try {
+            // 优先用已有缓冲区，避免额外 REST 请求
+            const cached = buffer.get(sym);
+            if (cached && cached.length >= corrCfg.lookback) {
+              heldKlines.set(sym, cached.slice(-corrCfg.lookback - 1));
+            } else {
+              const k = await getKlines(sym, cfg.timeframe, corrCfg.lookback + 1);
+              heldKlines.set(sym, k);
+            }
+          } catch {
+            // 获取失败不阻断买入
+          }
+        })
+      );
+      const corrResult = checkCorrelation(symbol, klines, heldKlines, corrCfg.threshold);
+      if (corrResult.correlated) {
+        log(`[${cfg.paper.scenarioId}] ${symbol}: 🔗 相关性过滤 → ${corrResult.reason}`);
+        return;
+      }
+    }
+  }
 
   // 情绪门控
   const newsReport = loadNewsReport();
@@ -357,7 +391,7 @@ async function main(): Promise<void> {
       const state = loadState(cfg.paper.scenarioId);
       if (state.paused) continue;
       try {
-        await runStrategy(symbol, klines, cfg, state, currentPrices);
+        await runStrategy(symbol, klines, cfg, state, currentPrices, buffer);
         saveState(cfg.paper.scenarioId, state);
       } catch (err: unknown) {
         const error = err instanceof Error ? err : new Error(String(err));

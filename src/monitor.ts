@@ -19,9 +19,11 @@ import {
   formatSummaryMessage,
 } from "./paper/engine.js";
 import { loadNewsReport, evaluateSentimentGate } from "./news/sentiment-gate.js";
+import { checkCorrelation } from "./strategy/correlation.js";
+import { loadAccount } from "./paper/account.js";
 import { ping } from "./health/heartbeat.js";
 import { loadRuntimeConfigs } from "./config/loader.js";
-import type { RuntimeConfig, Signal, Indicators } from "./types.js";
+import type { RuntimeConfig, Signal, Indicators, Kline } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_PATH = path.resolve(__dirname, "../logs/monitor.log");
@@ -145,6 +147,34 @@ async function scanSymbol(
     );
 
     if (signal.type === "none") return;
+
+    // ── 相关性过滤（仅对买入信号）──────────────────────────
+    if (signal.type === "buy" && cfg.risk.correlation_filter?.enabled) {
+      const corrCfg = cfg.risk.correlation_filter;
+      const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+      const heldSymbols = Object.keys(account.positions);
+      if (heldSymbols.length > 0) {
+        const heldKlines = new Map<string, Kline[]>();
+        await Promise.all(
+          heldSymbols.map(async (sym) => {
+            try {
+              const k = await getKlines(sym, cfg.timeframe, corrCfg.lookback + 1);
+              heldKlines.set(sym, k);
+            } catch {
+              // 获取失败跳过，不阻断买入
+            }
+          })
+        );
+        const corrResult = checkCorrelation(symbol, klines, heldKlines, corrCfg.threshold);
+        if (corrResult.correlated) {
+          log(`${scenarioPrefix}${symbol}: 🔗 相关性过滤 → ${corrResult.reason}`);
+          return;
+        }
+        if (corrResult.maxCorrelation > 0) {
+          log(`${scenarioPrefix}${symbol}: 相关性 ${corrResult.correlatedWith}=${corrResult.maxCorrelation.toFixed(3)}（低于阈值 ${corrCfg.threshold}，允许开仓）`);
+        }
+      }
+    }
 
     // 情绪门控
     const newsReport = loadNewsReport();

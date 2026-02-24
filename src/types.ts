@@ -92,6 +92,15 @@ export interface RiskConfig {
 
   // ── 时间止损（可选）──
   time_stop_hours?: number; // 持仓超过 N 小时后若无盈利则强制出场
+
+  // ── 相关性过滤（可选）──
+  correlation_filter?: {
+    enabled: boolean;
+    /** 皮尔逊相关系数阈值，超过此值跳过买入（默认 0.7） */
+    threshold: number;
+    /** 用于计算相关性的 K 线数量（默认 60） */
+    lookback: number;
+  };
 }
 
 export interface ExecutionConfig {

@@ -81,6 +81,14 @@ risk:
   max_total_loss_percent: 20
   daily_loss_limit_percent: 8
 
+  # 相关性过滤（可选）
+  # 开启后，新买入信号若与已持仓资产皮尔逊相关系数 > threshold，跳过买入
+  # BTC/ETH/BNB/SOL 相关性通常 0.8+，建议阈值 0.7
+  # correlation_filter:
+  #   enabled: true
+  #   threshold: 0.7
+  #   lookback: 60    # 用最近 60 根 K 线计算相关性
+
 # ───────────────────────────────────────
 # 订单执行（实盘生效，paper 中仅模拟）
 # ───────────────────────────────────────
