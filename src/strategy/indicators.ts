@@ -7,7 +7,7 @@ export function sma(values: number[], period: number): number {
   return slice.reduce((a, b) => a + b, 0) / period;
 }
 
-/** 指数移动平均线（EMA） */
+/** 指数移动平均线（EMA）— 返回最后一个值 */
 export function ema(values: number[], period: number): number {
   if (values.length < period) return NaN;
   const k = 2 / (period + 1);
@@ -15,6 +15,31 @@ export function ema(values: number[], period: number): number {
   for (let i = period; i < values.length; i++) {
     // 守卫：slice + length check 确保 i < values.length，非空断言安全
     result = values[i]! * k + result * (1 - k);
+  }
+  return result;
+}
+
+/**
+ * 全序列 EMA（O(n) 增量计算）
+ *
+ * 相比对每个切片单独调用 ema()（O(n²)），本函数只扫描一遍数组，
+ * 用 SMA 作种子后持续滚动更新，时间复杂度 O(n)。
+ *
+ * 返回长度 = values.length - period + 1
+ * （第一个元素对应 values[0..period-1] 的 EMA 种子）
+ */
+export function emaArray(values: number[], period: number): number[] {
+  if (values.length < period) return [];
+  const k = 2 / (period + 1);
+  // 以前 period 根的 SMA 作为初始 EMA
+  let seed = 0;
+  for (let i = 0; i < period; i++) seed += values[i]!;
+  seed /= period;
+
+  const result = new Array<number>(values.length - period + 1);
+  result[0] = seed;
+  for (let i = period; i < values.length; i++) {
+    result[i - period + 1] = values[i]! * k + result[i - period]! * (1 - k);
   }
   return result;
 }
@@ -58,8 +83,11 @@ export function rsi(closes: number[], period = 14): number {
 }
 
 /**
- * MACD（指数平滑异同移动平均线）
- * 返回当前和前一根 K 线的 MACD 值（用于判断交叉）
+ * MACD（指数平滑异同移动平均线）— O(n) 优化版本
+ *
+ * 原实现为 O(n²)：对每根 K 线都从头重新计算 EMA。
+ * 优化：先用 emaArray() 一次性算出完整快线/慢线序列（各 O(n)），
+ * 再对 MACD 序列做一次 emaArray() 得到信号线。总复杂度 O(n)。
  */
 export function macd(
   closes: number[],
@@ -71,26 +99,29 @@ export function macd(
   const minRequired = slowPeriod + signalPeriod + 1;
   if (closes.length < minRequired) return null;
 
-  // 计算所有 EMA 快线和慢线，得到 MACD 序列
-  const macdLine: number[] = [];
-  for (let i = slowPeriod - 1; i < closes.length; i++) {
-    const slice = closes.slice(0, i + 1);
-    const fast = ema(slice, fastPeriod);
-    const slow = ema(slice, slowPeriod);
-    if (!isNaN(fast) && !isNaN(slow)) {
-      macdLine.push(fast - slow);
-    }
-  }
+  // ── O(n)：全序列 EMA，一次扫描 ──────────────────────
+  const fastEmaArr = emaArray(closes, fastPeriod);
+  // fastEmaArr[i] 对应 closes[fastPeriod-1 + i]
+
+  const slowEmaArr = emaArray(closes, slowPeriod);
+  // slowEmaArr[i] 对应 closes[slowPeriod-1 + i]
+
+  // ── MACD 线 = fastEma - slowEma（对齐到 slowPeriod 起始点）──
+  // fastEmaArr 比 slowEmaArr 多 (slowPeriod - fastPeriod) 个元素（在前面）
+  const offset = slowPeriod - fastPeriod; // fastEmaArr 的偏移量
+  const macdLine = slowEmaArr.map((slowVal, i) => fastEmaArr[i + offset]! - slowVal);
 
   if (macdLine.length < signalPeriod + 1) return null;
 
-  // 信号线 = MACD 的 EMA
-  const signalLine = ema(macdLine, signalPeriod);
-  const prevSignalLine = ema(macdLine.slice(0, -1), signalPeriod);
+  // ── 信号线 = MACD 线的 EMA（同样 O(n)）─────────────────
+  const signalArr = emaArray(macdLine, signalPeriod);
+  // signalArr 末尾两个元素分别对应"当前"和"前一根"
+  if (signalArr.length < 2) return null;
 
-  if (isNaN(signalLine) || isNaN(prevSignalLine)) return null;
+  const signalLine = signalArr[signalArr.length - 1]!;
+  const prevSignalLine = signalArr[signalArr.length - 2]!;
 
-  // macdLine.length >= signalPeriod + 1 > 1，末尾两个元素必存在
+  // macdLine 末尾两个元素
   const currentMacd = macdLine[macdLine.length - 1]!;
   const prevMacd = macdLine[macdLine.length - 2]!;
   const histogram = currentMacd - signalLine;
