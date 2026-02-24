@@ -1,0 +1,46 @@
+# 默认策略：趋势跟随（MA + RSI + MACD 三重确认）
+# 适合：主流币、中等波动市场
+name: "默认策略"
+description: "EMA(20/60) + MACD 动能 + RSI 未超买，趋势跟随"
+
+timeframe: "1h"
+trend_timeframe: "4h"
+
+strategy:
+  ma:
+    short: 20
+    long: 60
+  rsi:
+    period: 14
+    oversold: 35
+    overbought: 65
+  macd:
+    enabled: true
+    fast: 12
+    slow: 26
+    signal: 9
+  volume:
+    surge_ratio: 1.5
+    low_ratio: 0.5
+
+# 趋势跟随：MA 多头 + MACD 动能向上 + RSI 未超买
+signals:
+  buy:
+    - ma_bullish           # EMA20 > EMA60（上升趋势）
+    - macd_bullish         # MACD > 信号线，柱状图为正（动能向上）
+    - rsi_not_overbought   # RSI < 65（未超买，避免追高）
+  sell:
+    - ma_bearish           # EMA20 < EMA60（趋势反转，离场）
+
+risk:
+  stop_loss_percent: 5
+  take_profit_percent: 15
+  trailing_stop:
+    enabled: true
+    activation_percent: 8
+    callback_percent: 2.5
+  position_ratio: 0.2
+  max_positions: 4
+  max_position_per_symbol: 0.3
+  max_total_loss_percent: 20
+  daily_loss_limit_percent: 8
