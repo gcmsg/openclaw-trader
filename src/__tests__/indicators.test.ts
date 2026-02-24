@@ -126,10 +126,7 @@ describe("calculateIndicators()", () => {
 
   it("上涨趋势中 maShort > maLong", () => {
     // 前60根平，后20根大幅拉高 → 短期均线高于长期
-    const closes = [
-      ...Array(60).fill(100),
-      ...Array(20).fill(200),
-    ];
+    const closes = [...Array(60).fill(100), ...Array(20).fill(200)];
     const klines = makeKlines(closes);
     const result = calculateIndicators(klines, 20, 60, 14);
     expect(result).not.toBeNull();
@@ -138,10 +135,7 @@ describe("calculateIndicators()", () => {
 
   it("下跌趋势中 maShort < maLong", () => {
     // 前60根平，后20根大幅下跌 → 短期均线低于长期
-    const closes = [
-      ...Array(60).fill(100),
-      ...Array(20).fill(10),
-    ];
+    const closes = [...Array(60).fill(100), ...Array(20).fill(10)];
     const klines = makeKlines(closes);
     const result = calculateIndicators(klines, 20, 60, 14);
     expect(result).not.toBeNull();

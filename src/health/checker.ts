@@ -9,15 +9,15 @@ import path from "path";
 import { parse } from "yaml";
 import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
-import { loadHeartbeats, getTaskHealth, type TaskStatus } from "./heartbeat.js";
+import { getTaskHealth, type TaskStatus } from "./heartbeat.js";
 import type { StrategyConfig } from "../types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.resolve(__dirname, "../../config/strategy.yaml");
 const LOG_PATH = path.resolve(__dirname, "../../logs/health.log");
 
-const OPENCLAW_BIN = process.env.OPENCLAW_BIN ?? "openclaw";
-const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
+const OPENCLAW_BIN = process.env["OPENCLAW_BIN"] ?? "openclaw";
+const GATEWAY_TOKEN = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
 
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -39,19 +39,19 @@ const STATUS_EMOJI: Record<TaskStatus, string> = {
   never: "🔘",
 };
 
-async function main(): Promise<void> {
+function main(): void {
   log("─── 健康检查开始 ───");
 
   const cfg = parse(fs.readFileSync(CONFIG_PATH, "utf-8")) as StrategyConfig;
   const schedule = cfg.schedule ?? {};
 
-  const results: Array<{
+  const results: {
     name: string;
     status: TaskStatus;
     minutesSince: number;
     message: string;
     enabled: boolean;
-  }> = [];
+  }[] = [];
 
   for (const [taskName, taskCfg] of Object.entries(schedule)) {
     if (!taskCfg.enabled) continue;
@@ -73,10 +73,7 @@ async function main(): Promise<void> {
 
   // 只有有问题时才发通知（正常时静默）
   if (hasIssues) {
-    const lines = [
-      `🩺 **[健康检查告警]** ${new Date().toLocaleString("zh-CN")}`,
-      ``,
-    ];
+    const lines = [`🩺 **[健康检查告警]** ${new Date().toLocaleString("zh-CN")}`, ``];
 
     for (const r of results) {
       if (r.status !== "ok") {
@@ -104,7 +101,9 @@ async function main(): Promise<void> {
   log("─── 健康检查完成 ───\n");
 }
 
-main().catch((err) => {
-  log(`Fatal: ${err}`);
+try {
+  main();
+} catch (err: unknown) {
+  log(`Fatal: ${String(err)}`);
   process.exit(1);
-});
+}

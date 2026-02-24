@@ -24,7 +24,8 @@ function makeConfig(buy: string[], sell: string[]): StrategyConfig {
     symbols: [],
     timeframe: "1h",
     strategy: {
-      name: "test", enabled: true,
+      name: "test",
+      enabled: true,
       ma: { short: 20, long: 60 },
       rsi: { period: 14, oversold: 35, overbought: 65 },
       macd: { enabled: true, fast: 12, slow: 26, signal: 9 },
@@ -32,13 +33,30 @@ function makeConfig(buy: string[], sell: string[]): StrategyConfig {
     },
     signals: { buy, sell },
     risk: {
-      stop_loss_percent: 5, take_profit_percent: 10,
+      stop_loss_percent: 5,
+      take_profit_percent: 10,
       trailing_stop: { enabled: false, activation_percent: 5, callback_percent: 2 },
-      max_total_loss_percent: 20, position_ratio: 0.2,
-      max_positions: 4, max_position_per_symbol: 0.3, daily_loss_limit_percent: 8,
+      max_total_loss_percent: 20,
+      position_ratio: 0.2,
+      max_positions: 4,
+      max_position_per_symbol: 0.3,
+      daily_loss_limit_percent: 8,
     },
-    execution: { order_type: "market", limit_order_offset_percent: 0.1, min_order_usdt: 10, limit_order_timeout_seconds: 300 },
-    notify: { on_signal: true, on_trade: true, on_stop_loss: true, on_take_profit: true, on_error: true, on_daily_summary: true, min_interval_minutes: 30 },
+    execution: {
+      order_type: "market",
+      limit_order_offset_percent: 0.1,
+      min_order_usdt: 10,
+      limit_order_timeout_seconds: 300,
+    },
+    notify: {
+      on_signal: true,
+      on_trade: true,
+      on_stop_loss: true,
+      on_take_profit: true,
+      on_error: true,
+      on_daily_summary: true,
+      min_interval_minutes: 30,
+    },
     news: { enabled: true, interval_hours: 4, price_alert_threshold: 5, fear_greed_alert: 15 },
     schedule: {},
     mode: "paper",
@@ -47,8 +65,12 @@ function makeConfig(buy: string[], sell: string[]): StrategyConfig {
 
 function makeIndicators(overrides: Partial<Indicators> = {}): Indicators {
   return {
-    maShort: 100, maLong: 100, rsi: 50,
-    price: 100, volume: 1000, avgVolume: 1000,
+    maShort: 100,
+    maLong: 100,
+    rsi: 50,
+    price: 100,
+    volume: 1000,
+    avgVolume: 1000,
     ...overrides,
   };
 }
@@ -125,7 +147,10 @@ describe("calculateIndicators() with MACD", () => {
     const closes = Array.from({ length: 80 }, (_, i) => 100 + i);
     const klines = makeKlines(closes);
     const result = calculateIndicators(klines, 20, 60, 14, {
-      enabled: true, fast: 12, slow: 26, signal: 9,
+      enabled: true,
+      fast: 12,
+      slow: 26,
+      signal: 9,
     });
     expect(result?.macd).toBeDefined();
   });
@@ -134,7 +159,10 @@ describe("calculateIndicators() with MACD", () => {
     const closes = Array.from({ length: 80 }, (_, i) => 100 + i);
     const klines = makeKlines(closes);
     const result = calculateIndicators(klines, 20, 60, 14, {
-      enabled: false, fast: 12, slow: 26, signal: 9,
+      enabled: false,
+      fast: 12,
+      slow: 26,
+      signal: 9,
     });
     expect(result?.macd).toBeUndefined();
   });
@@ -162,14 +190,28 @@ describe("detectSignal() - MACD 信号", () => {
 
   it("macd_bearish: MACD < Signal 且柱状图 < 0 时触发卖出", () => {
     const ind = makeIndicators({
-      macd: { macd: -10, signal: -5, histogram: -5, prevMacd: -8, prevSignal: -6, prevHistogram: -2 },
+      macd: {
+        macd: -10,
+        signal: -5,
+        histogram: -5,
+        prevMacd: -8,
+        prevSignal: -6,
+        prevHistogram: -2,
+      },
     });
     expect(detectSignal("X", ind, makeConfig([], ["macd_bearish"])).type).toBe("sell");
   });
 
   it("macd_golden_cross: MACD 上穿信号线时触发", () => {
     const ind = makeIndicators({
-      macd: { macd: 2, signal: 1, histogram: 1, prevMacd: -1, prevSignal: 0.5, prevHistogram: -1.5 },
+      macd: {
+        macd: 2,
+        signal: 1,
+        histogram: 1,
+        prevMacd: -1,
+        prevSignal: 0.5,
+        prevHistogram: -1.5,
+      },
     });
     expect(detectSignal("X", ind, makeConfig(["macd_golden_cross"], [])).type).toBe("buy");
   });
@@ -182,7 +224,7 @@ describe("detectSignal() - MACD 信号", () => {
   });
 
   it("macd 字段为空时不触发 MACD 信号", () => {
-    const ind = makeIndicators({ macd: undefined });
+    const ind = makeIndicators({}); // macd 不设置 = 无 MACD 数据;
     expect(detectSignal("X", ind, makeConfig(["macd_bullish"], [])).type).toBe("none");
   });
 });

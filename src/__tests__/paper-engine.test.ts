@@ -20,7 +20,12 @@ function makeAccount(positions: Record<string, PaperPosition> = {}): PaperAccoun
   };
 }
 
-function makePosition(symbol: string, entryPrice: number, quantity = 0.1, stopLossPercent = 5): PaperPosition {
+function makePosition(
+  symbol: string,
+  entryPrice: number,
+  quantity = 0.1,
+  stopLossPercent = 5
+): PaperPosition {
   return {
     symbol,
     quantity,
@@ -37,7 +42,8 @@ function makeConfig(stopLoss = 5, maxLoss = 20): RuntimeConfig {
     symbols: ["BTCUSDT"],
     timeframe: "1h",
     strategy: {
-      name: "test", enabled: true,
+      name: "test",
+      enabled: true,
       ma: { short: 20, long: 60 },
       rsi: { period: 14, oversold: 35, overbought: 65 },
       macd: { enabled: false, fast: 12, slow: 26, signal: 9 },
@@ -53,9 +59,28 @@ function makeConfig(stopLoss = 5, maxLoss = 20): RuntimeConfig {
       max_total_loss_percent: maxLoss,
       daily_loss_limit_percent: 8,
     },
-    execution: { order_type: "market", limit_order_offset_percent: 0.1, min_order_usdt: 10, limit_order_timeout_seconds: 300 },
-    notify: { on_signal: true, on_trade: true, on_stop_loss: true, on_take_profit: true, on_error: true, on_daily_summary: true, min_interval_minutes: 30 },
-    paper: { scenarioId: "test", initial_usdt: 1000, fee_rate: 0.001, slippage_percent: 0, report_interval_hours: 24 },
+    execution: {
+      order_type: "market",
+      limit_order_offset_percent: 0.1,
+      min_order_usdt: 10,
+      limit_order_timeout_seconds: 300,
+    },
+    notify: {
+      on_signal: true,
+      on_trade: true,
+      on_stop_loss: true,
+      on_take_profit: true,
+      on_error: true,
+      on_daily_summary: true,
+      min_interval_minutes: 30,
+    },
+    paper: {
+      scenarioId: "test",
+      initial_usdt: 1000,
+      fee_rate: 0.001,
+      slippage_percent: 0,
+      report_interval_hours: 24,
+    },
     news: { enabled: true, interval_hours: 4, price_alert_threshold: 5, fear_greed_alert: 15 },
     schedule: {},
     mode: "paper",
@@ -77,13 +102,15 @@ describe("checkStopLoss()", () => {
     vi.spyOn(accountModule, "saveAccount").mockImplementation(() => {});
   });
 
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it("价格跌破止损价时触发止损", () => {
     const prices = { BTCUSDT: 47000 }; // < 47500
     const triggered = checkStopLoss(prices, makeConfig(5));
     expect(triggered).toHaveLength(1);
-    expect(triggered[0].symbol).toBe("BTCUSDT");
+    expect(triggered[0]!.symbol).toBe("BTCUSDT");
   });
 
   it("价格在止损价上方时不触发", () => {
@@ -107,7 +134,7 @@ describe("checkStopLoss()", () => {
     checkStopLoss({ BTCUSDT: 45000 }, makeConfig(5));
     const sells = account.trades.filter((t) => t.side === "sell");
     expect(sells).toHaveLength(1);
-    expect(sells[0].reason).toContain("止损触发");
+    expect(sells[0]!.reason).toContain("止损触发");
   });
 
   it("使用 10% 止损，价格仅跌 5% 不触发", () => {
@@ -129,7 +156,9 @@ describe("checkStopLoss()", () => {
 // ─────────────────────────────────────────────────────
 
 describe("checkMaxDrawdown()", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it("总亏损超过上限时返回 true", () => {
     const account = makeAccount();
@@ -168,7 +197,9 @@ describe("checkMaxDrawdown()", () => {
 // ─────────────────────────────────────────────────────
 
 describe("checkDailyLossLimit()", () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it("今日亏损超过限制时返回 true", () => {
     const account = makeAccount();

@@ -8,14 +8,16 @@
 
 ### Features
 
-- 📊 **Technical Analysis** — MA (20/60) + RSI (14) indicator engine
+- 📊 **Technical Analysis** — MA (20/60) + RSI (14) + MACD (12/26/9) indicator engine
 - ⚙️ **Config-driven Strategy** — Edit `config/strategy.yaml`, no code changes needed
-- 🗞️ **News & Sentiment** — Fear & Greed Index, CryptoPanic headlines, CoinGecko market data (every 4h)
+- 🗞️ **News & Sentiment** — Fear & Greed Index + CryptoCompare headlines with sentiment gate
 - 🎭 **Paper Trading Mode** — Simulates trades using real market prices; tracks P&L, win rate, positions
+- 🔬 **Backtesting Engine** — Test any strategy against months of historical data; Sharpe ratio, max drawdown, profit factor
 - 🔔 **AI-triggered Signals** — Zero token cost when idle; only wakes the AI agent on signal detection
-- 🛡️ **Risk Management** — Per-trade stop-loss (5%), total drawdown limit (20%), auto-pause
+- 🛡️ **Risk Management** — Stop-loss, take-profit, trailing stop, daily loss limit, total drawdown auto-pause
 - 🪙 **Multi-symbol** — BTC, ETH, BNB, SOL, XRP, ADA, DOGE, AVAX
-- ✅ **Tested** — 70 unit tests across indicators, signals, paper trading engine
+- 🧪 **Multi-strategy Scenarios** — Run aggressive/conservative/rsi-pure strategies in parallel with isolated accounts
+- ✅ **Tested** — 171 unit tests across indicators, signals, paper trading, backtest metrics
 
 ### Architecture
 
@@ -79,6 +81,35 @@ npm test
 0 */4 * * *  cd /path/to/openclaw-trader && source .env && npx tsx src/news/monitor.ts >> logs/news-monitor.log 2>&1
 ```
 
+### Backtesting
+
+Test any strategy against historical data before running it live:
+
+```bash
+# Backtest default strategy (90 days)
+npm run backtest
+
+# Backtest a specific strategy
+npm run backtest -- --strategy conservative --days 90
+npm run backtest -- --strategy aggressive --days 60
+
+# Custom symbols and timeframe
+npm run backtest -- --strategy trend --symbols BTCUSDT,ETHUSDT,SOLUSDT --timeframe 4h --days 180
+
+# Compare all strategies side-by-side
+npm run backtest:compare -- --days 90
+```
+
+**Backtest output includes:**
+- Total return % and USDT
+- Max drawdown, Sharpe ratio, Sortino ratio
+- Win rate, profit factor, average win/loss ratio
+- Exit reason breakdown (signal / stop-loss / take-profit / trailing stop)
+- Per-symbol performance table
+- JSON report saved to `logs/backtest/`
+
+> ⚠️ Past performance does not guarantee future results. Always validate in paper mode before going live.
+
 ### Strategy Configuration
 
 Edit `config/strategy.yaml`:
@@ -120,30 +151,44 @@ src/
 ├── exchange/
 │   └── binance.ts          Binance REST API wrapper
 ├── strategy/
-│   ├── indicators.ts       SMA / EMA / RSI calculation
+│   ├── indicators.ts       SMA / EMA / RSI / MACD calculation
 │   └── signals.ts          Signal detection engine
 ├── paper/
 │   ├── account.ts          Virtual account (buy/sell/P&L)
 │   ├── engine.ts           Stop-loss & drawdown checks
 │   └── status.ts           CLI account status viewer
+├── backtest/
+│   ├── fetcher.ts          Historical K-line fetcher (paginated + cached)
+│   ├── metrics.ts          Performance metrics (Sharpe, drawdown, profit factor…)
+│   ├── runner.ts           Multi-symbol backtest simulation engine
+│   └── report.ts           Console output + JSON report saver
 ├── news/
-│   ├── fetcher.ts          Fear & Greed, CryptoPanic, CoinGecko
+│   ├── fetcher.ts          Fear & Greed + CryptoCompare headlines
 │   └── monitor.ts          News scan entry point
 ├── notify/
 │   └── openclaw.ts         OpenClaw agent notifications
+├── scripts/
+│   ├── backtest.ts         Backtest CLI (npm run backtest)
+│   └── sync-cron.ts        Cron sync utility
 └── __tests__/
     ├── indicators.test.ts
     ├── signals.test.ts
     ├── paper-account.test.ts
-    └── paper-engine.test.ts
+    ├── paper-engine.test.ts
+    └── backtest-metrics.test.ts
 config/
-└── strategy.yaml           Strategy & risk configuration
+├── strategy.yaml           Strategy & risk configuration
+└── strategies/             Named strategy profiles
+    ├── aggressive.yaml
+    ├── conservative.yaml
+    ├── rsi-pure.yaml
+    └── trend.yaml
 logs/
 ├── monitor.log
-├── news-monitor.log
 ├── news-report.json        Latest market sentiment report
-├── paper-account.json      Paper trading account state
-└── state.json              Monitor run state
+├── paper-{scenario}.json   Per-scenario paper trading accounts
+├── backtest/               Backtest JSON reports
+└── kline-cache/            Cached historical K-line data
 ```
 
 ### Schedule Configuration
@@ -202,8 +247,8 @@ Alerts are sent to Telegram only when issues are detected (silent when healthy).
 - [x] Weekly review report (AI-powered, every Sunday 22:00)
 - [x] Health monitoring & heartbeat system
 - [x] Config-driven schedule management (`cron:sync`)
-- [x] 104 unit tests
-- [ ] Backtesting module
+- [x] 171 unit tests
+- [x] Backtesting engine (Sharpe / max drawdown / profit factor / multi-strategy compare)
 - [ ] Live trading mode (`mode: auto`)
 - [ ] Web dashboard
 
@@ -217,14 +262,16 @@ MIT
 
 ### 功能特性
 
-- 📊 **技术分析** — MA（20/60）+ RSI（14）指标引擎
+- 📊 **技术分析** — MA（20/60）+ RSI（14）+ MACD（12/26/9）指标引擎
 - ⚙️ **配置驱动策略** — 编辑 `config/strategy.yaml` 即可调整，无需改代码
-- 🗞️ **新闻情绪分析** — 恐惧贪婪指数、CryptoPanic 新闻、CoinGecko 市场数据（每 4 小时）
+- 🗞️ **新闻情绪分析** — 恐惧贪婪指数 + CryptoCompare 新闻 + 情绪门控仓位调整
 - 🎭 **模拟盘模式** — 使用真实价格模拟交易，完整记录盈亏、胜率、持仓
+- 🔬 **回测引擎** — 用历史 K 线验证任意策略；输出夏普比率、最大回撤、利润因子等专业指标
 - 🔔 **AI 信号触发** — 无信号时零 token 消耗，仅在发现信号时唤醒 AI Agent
-- 🛡️ **风险管理** — 单笔止损（5%）、总亏损上限（20%）自动暂停
+- 🛡️ **风险管理** — 止损/止盈/追踪止损/日亏限额/总亏上限 五重保障
+- 🧪 **多策略并行** — 激进/保守/RSI 等多套策略独立账户同时跑
 - 🪙 **多币种监控** — BTC、ETH、BNB、SOL、XRP、ADA、DOGE、AVAX
-- ✅ **完整测试** — 70 条单元测试，覆盖指标、信号、模拟交易引擎
+- ✅ **完整测试** — 171 条单元测试，覆盖指标、信号、模拟盘、回测指标
 
 ### 运行架构
 
@@ -297,7 +344,26 @@ npm test
 - [x] 周报复盘功能（AI 深度分析，每周日 22:00）
 - [x] 健康监控 + 心跳系统（每 30 分钟检查，异常告警）
 - [x] 配置驱动的定时任务管理（`cron:sync` 一键同步）
-- [x] 104 条单元测试
-- [ ] 回测模块
+- [x] 171 条单元测试
+- [x] 回测引擎（夏普/最大回撤/利润因子/多策略对比）
 - [ ] 实盘自动交易（`mode: auto`）
 - [ ] Web 可视化面板
+
+### 回测使用
+
+```bash
+# 默认策略回测（90 天）
+npm run backtest
+
+# 指定策略和天数
+npm run backtest -- --strategy conservative --days 90
+npm run backtest -- --strategy aggressive --days 60
+
+# 自定义币种和时间框架
+npm run backtest -- --strategy trend --symbols BTCUSDT,ETHUSDT --timeframe 4h --days 180
+
+# 所有策略对比
+npm run backtest:compare -- --days 90
+```
+
+回测结果包括：总收益、最大回撤、夏普比率、胜率、利润因子、出场原因分布、各币种表现，JSON 报告保存在 `logs/backtest/`。

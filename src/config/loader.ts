@@ -22,6 +22,7 @@ import type {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_DIR = path.resolve(__dirname, "../../config");
 
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
 function readYaml<T>(filePath: string): T {
   return parse(fs.readFileSync(filePath, "utf-8")) as T;
 }
@@ -50,16 +51,20 @@ export function loadStrategyProfile(strategyId: string): StrategyProfile {
 export function listStrategyProfiles(): string[] {
   const dir = path.join(CONFIG_DIR, "strategies");
   if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir)
+  return fs
+    .readdirSync(dir)
     .filter((f) => f.endsWith(".yaml"))
     .map((f) => f.replace(".yaml", ""));
 }
 
 // ─────────────────────────────────────────────────────
-// 合并工具
+// 合并工具（导出供测试使用）
 // ─────────────────────────────────────────────────────
 
-function mergeRisk(base: RiskConfig, ...overrides: Array<Partial<RiskConfig> | undefined>): RiskConfig {
+export function mergeRisk(
+  base: RiskConfig,
+  ...overrides: (Partial<RiskConfig> | undefined)[]
+): RiskConfig {
   let result = { ...base };
   for (const override of overrides) {
     if (!override) continue;
@@ -75,19 +80,22 @@ function mergeRisk(base: RiskConfig, ...overrides: Array<Partial<RiskConfig> | u
   return result;
 }
 
-function mergeStrategySection(
+export function mergeStrategySection(
   base: StrategyConfig["strategy"],
   override?: StrategyProfile["strategy"]
 ): StrategyConfig["strategy"] {
   if (!override) return base;
+  const mergedVolume = override.volume
+    ? { ...(base.volume ?? { surge_ratio: 1.5, low_ratio: 0.5 }), ...override.volume }
+    : base.volume;
+
   return {
     ...base,
     ma: { ...base.ma, ...(override.ma ?? {}) },
     rsi: { ...base.rsi, ...(override.rsi ?? {}) },
     macd: { ...base.macd, ...(override.macd ?? {}) },
-    volume: override.volume
-      ? { ...(base.volume ?? { surge_ratio: 1.5, low_ratio: 0.5 }), ...override.volume }
-      : base.volume,
+    // exactOptionalPropertyTypes: 只在有值时才设置 volume
+    ...(mergedVolume !== undefined ? { volume: mergedVolume } : {}),
   };
 }
 
@@ -157,8 +165,8 @@ export function buildLiveRuntime(base: StrategyConfig, live: LiveConfig): Runtim
   return {
     ...base,
     exchange: {
-      name: name ?? "binance",
-      credentials_path: credentials_path ?? ".secrets/binance.json",
+      name,
+      credentials_path,
       ...restExchange,
     },
     symbols: live.symbols ?? base.symbols,
@@ -202,9 +210,17 @@ export function loadRuntimeConfigs(): RuntimeConfig[] {
     return [buildLiveRuntime(base, loadLiveConfig())];
   }
 
-  return [{
-    ...base,
-    exchange: { market: "spot" },
-    paper: { scenarioId: "notify", initial_usdt: 0, fee_rate: 0, slippage_percent: 0, report_interval_hours: 0 },
-  }];
+  return [
+    {
+      ...base,
+      exchange: { market: "spot" },
+      paper: {
+        scenarioId: "notify",
+        initial_usdt: 0,
+        fee_rate: 0,
+        slippage_percent: 0,
+        report_interval_hours: 0,
+      },
+    },
+  ];
 }

@@ -16,18 +16,18 @@ const REPORT_PATH = path.resolve(__dirname, "../../logs/news-report.json");
 const REPORT_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 
 export type GateDecision =
-  | { action: "execute"; positionRatio: number; reason: string }   // 正常执行
-  | { action: "reduce"; positionRatio: number; reason: string }    // 减半仓执行
-  | { action: "skip"; reason: string }                             // 跳过
-  | { action: "warn"; positionRatio: number; reason: string };     // 执行但发出警告
+  | { action: "execute"; positionRatio: number; reason: string } // 正常执行
+  | { action: "reduce"; positionRatio: number; reason: string } // 减半仓执行
+  | { action: "skip"; reason: string } // 跳过
+  | { action: "warn"; positionRatio: number; reason: string }; // 执行但发出警告
 
 export interface NewsReport {
   generatedAt: string;
   fearGreed: { value: number; label: string };
   globalMarket: { marketCapChangePercent24h: number };
   sentiment: "bullish" | "bearish" | "neutral";
-  importantNews: Array<{ title: string }>;
-  bigMovers: Array<{ symbol: string; priceChangePercent: number }>;
+  importantNews: { title: string }[];
+  bigMovers: { symbol: string; priceChangePercent: number }[];
   fgAlert: boolean;
   fgDelta: number;
 }
@@ -40,7 +40,7 @@ export function loadNewsReport(): NewsReport | null {
     const age = Date.now() - new Date(report.generatedAt).getTime();
     if (age > REPORT_MAX_AGE_MS) return null; // 数据过旧
     return report;
-  } catch {
+  } catch (_e: unknown) {
     return null; // 文件不存在或解析失败
   }
 }

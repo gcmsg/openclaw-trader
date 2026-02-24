@@ -1,11 +1,12 @@
 import { spawnSync } from "child_process";
 import type { Signal, TradeResult } from "../types.js";
+import type { PaperTrade, PaperAccount } from "../paper/account.js";
 
-const OPENCLAW_BIN = process.env.OPENCLAW_BIN ?? "openclaw";
-const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
+const OPENCLAW_BIN = process.env["OPENCLAW_BIN"] ?? "openclaw";
+const GATEWAY_TOKEN = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
 
 /** 向 OpenClaw 主会话注入系统事件，触发 Mia 决策 */
-async function sendToAgent(message: string): Promise<void> {
+function sendToAgent(message: string): void {
   try {
     // 用参数数组避免 shell 解析 $ 符号
     const args = ["system", "event", "--mode", "now"];
@@ -15,8 +16,9 @@ async function sendToAgent(message: string): Promise<void> {
     if (result.status !== 0 && result.stderr) {
       console.error("sendToAgent failed:", result.stderr.slice(0, 200));
     }
-  } catch (err) {
-    console.error("sendToAgent failed:", (err as Error).message);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("sendToAgent failed:", msg);
   }
 }
 
@@ -31,7 +33,7 @@ function formatPercent(value: number): string {
 }
 
 /** 信号通知 */
-export async function notifySignal(signal: Signal): Promise<void> {
+export function notifySignal(signal: Signal): void {
   const emoji = signal.type === "buy" ? "🟢" : "🔴";
   const action = signal.type === "buy" ? "买入信号" : "卖出信号";
   const { maShort, maLong, rsi } = signal.indicators;
@@ -50,11 +52,11 @@ export async function notifySignal(signal: Signal): Promise<void> {
     `是否执行此交易？请回复 **是** 或 **否**。`,
   ].join("\n");
 
-  await sendToAgent(msg);
+  sendToAgent(msg);
 }
 
 /** 交易执行通知 */
-export async function notifyTrade(trade: TradeResult): Promise<void> {
+export function notifyTrade(trade: TradeResult): void {
   const emoji = trade.status === "filled" ? "✅" : "❌";
   const side = trade.side === "buy" ? "买入" : "卖出";
 
@@ -71,16 +73,16 @@ export async function notifyTrade(trade: TradeResult): Promise<void> {
     .filter(Boolean)
     .join("\n");
 
-  await sendToAgent(msg);
+  sendToAgent(msg);
 }
 
 /** 止损触发通知 */
-export async function notifyStopLoss(
+export function notifyStopLoss(
   symbol: string,
   entryPrice: number,
   currentPrice: number,
   loss: number
-): Promise<void> {
+): void {
   const msg = [
     `🚨 **[止损触发] ${symbol}**`,
     ``,
@@ -92,11 +94,11 @@ export async function notifyStopLoss(
     `已自动执行止损卖出。`,
   ].join("\n");
 
-  await sendToAgent(msg);
+  sendToAgent(msg);
 }
 
 /** 错误通知 */
-export async function notifyError(context: string, error: Error): Promise<void> {
+export function notifyError(context: string, error: Error): void {
   const msg = [
     `⚠️ **[监控脚本错误]**`,
     ``,
@@ -105,14 +107,11 @@ export async function notifyError(context: string, error: Error): Promise<void> 
     `🕐 时间: ${new Date().toLocaleString("zh-CN")}`,
   ].join("\n");
 
-  await sendToAgent(msg);
+  sendToAgent(msg);
 }
 
 /** 模拟盘交易通知 */
-export async function notifyPaperTrade(
-  trade: import("../paper/account.js").PaperTrade,
-  account: import("../paper/account.js").PaperAccount
-): Promise<void> {
+export function notifyPaperTrade(trade: PaperTrade, account: PaperAccount): void {
   const side = trade.side === "buy" ? "买入" : "卖出";
   const emoji = trade.side === "buy" ? "🟢" : "🔴";
   const pnlLine =
@@ -131,31 +130,41 @@ export async function notifyPaperTrade(
     ``,
     `💼 当前余额: $${account.usdt.toFixed(2)} USDT`,
     `🔖 订单号: ${trade.id}`,
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
-  await sendToAgent(msg);
+  sendToAgent(msg);
 }
 
 /** 新闻情绪分析报告 */
-export async function sendNewsReport(data: {
+export function sendNewsReport(data: {
   fearGreed: { value: number; label: string };
   fearGreedInterpret: string;
-  globalMarket: { totalMarketCapUsd: number; marketCapChangePercent24h: number; btcDominance: number };
+  globalMarket: {
+    totalMarketCapUsd: number;
+    marketCapChangePercent24h: number;
+    btcDominance: number;
+  };
   sentiment: "bullish" | "bearish" | "neutral";
-  importantNews: Array<{ title: string; source: string; publishedAt: string }>;
-  bigMovers: Array<{ symbol: string; priceChangePercent: number; price: number }>;
+  importantNews: { title: string; source: string; publishedAt: string }[];
+  bigMovers: { symbol: string; priceChangePercent: number; price: number }[];
   fgAlert: boolean;
   fgDelta: number;
-}): Promise<void> {
+}): void {
   const sentimentEmoji =
-    data.sentiment === "bullish" ? "🟢 偏多" :
-    data.sentiment === "bearish" ? "🔴 偏空" : "⚪ 中性";
+    data.sentiment === "bullish" ? "🟢 偏多" : data.sentiment === "bearish" ? "🔴 偏空" : "⚪ 中性";
 
   const fgEmoji =
-    data.fearGreed.value <= 25 ? "😱" :
-    data.fearGreed.value <= 45 ? "😰" :
-    data.fearGreed.value <= 55 ? "😐" :
-    data.fearGreed.value <= 75 ? "😏" : "🤑";
+    data.fearGreed.value <= 25
+      ? "😱"
+      : data.fearGreed.value <= 45
+        ? "😰"
+        : data.fearGreed.value <= 55
+          ? "😐"
+          : data.fearGreed.value <= 75
+            ? "😏"
+            : "🤑";
 
   const totalMcap = (data.globalMarket.totalMarketCapUsd / 1e12).toFixed(2);
   const mcapChange = data.globalMarket.marketCapChangePercent24h.toFixed(2);
@@ -166,7 +175,9 @@ export async function sendNewsReport(data: {
     ``,
     `${fgEmoji} **恐惧贪婪指数**: ${data.fearGreed.value}/100 (${data.fearGreed.label})`,
     `   ${data.fearGreedInterpret}`,
-    data.fgAlert ? `   ⚠️ 指数变化: ${data.fgDelta > 0 ? "+" : ""}${data.fgDelta} 点（显著变化）` : "",
+    data.fgAlert
+      ? `   ⚠️ 指数变化: ${data.fgDelta > 0 ? "+" : ""}${data.fgDelta} 点（显著变化）`
+      : "",
     ``,
     `${mcapEmoji} **全球总市值**: $${totalMcap}T (24h: ${mcapChange}%)`,
     `🔶 **BTC 占比**: ${data.globalMarket.btcDominance.toFixed(1)}%`,
@@ -178,7 +189,9 @@ export async function sendNewsReport(data: {
     lines.push(``, `🚀 **价格异动（24h ±5%）**:`);
     for (const m of data.bigMovers) {
       const arrow = m.priceChangePercent >= 0 ? "🟢" : "🔴";
-      lines.push(`  ${arrow} ${m.symbol}: ${m.priceChangePercent > 0 ? "+" : ""}${m.priceChangePercent.toFixed(2)}%`);
+      lines.push(
+        `  ${arrow} ${m.symbol}: ${m.priceChangePercent > 0 ? "+" : ""}${m.priceChangePercent.toFixed(2)}%`
+      );
     }
   }
 
@@ -191,13 +204,13 @@ export async function sendNewsReport(data: {
   }
 
   const msg = lines.filter((l) => l !== "").join("\n");
-  await sendToAgent(msg);
+  sendToAgent(msg);
 }
 
 /** 定期状态汇报 */
-export async function notifyStatus(
-  summary: Array<{ symbol: string; price: number; rsi: number; trend: string }>
-): Promise<void> {
+export function notifyStatus(
+  summary: { symbol: string; price: number; rsi: number; trend: string }[]
+): void {
   const rows = summary
     .map(
       (s) =>
@@ -205,11 +218,7 @@ export async function notifyStatus(
     )
     .join("\n");
 
-  const msg = [
-    `📊 **[市场状态汇报]** ${new Date().toLocaleString("zh-CN")}`,
-    ``,
-    rows,
-  ].join("\n");
+  const msg = [`📊 **[市场状态汇报]** ${new Date().toLocaleString("zh-CN")}`, ``, rows].join("\n");
 
-  await sendToAgent(msg);
+  sendToAgent(msg);
 }

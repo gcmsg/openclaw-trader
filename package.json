@@ -12,21 +12,32 @@
     "report:weekly": "tsx src/report/weekly.ts",
     "health:check": "tsx src/health/checker.ts",
     "strategies:list": "tsx src/config/list-strategies.ts",
+    "backtest": "tsx src/scripts/backtest.ts",
+    "backtest:compare": "tsx src/scripts/backtest.ts -- --compare",
     "cron:sync": "tsx src/scripts/sync-cron.ts",
     "cron:list": "crontab -l | grep -A1 'openclaw-trader'",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/**/*.ts"
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check src/",
+    "check": "npm run typecheck && npm run lint && npm run format:check"
   },
   "dependencies": {
     "axios": "^1.7.0",
-    "yaml": "^2.4.0",
-    "technicalindicators": "^3.1.0"
+    "technicalindicators": "^3.1.0",
+    "yaml": "^2.4.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
+    "eslint": "^9.39.3",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.1",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",
+    "typescript-eslint": "^8.56.1",
     "vitest": "^2.0.0"
   }
 }

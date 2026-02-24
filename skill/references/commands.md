@@ -15,6 +15,18 @@ cd /path/to/openclaw-trader && source .env
 | `npm run report:weekly` | Generate + send weekly review report |
 | `npm run health:check` | Run health check (prints status, alerts if issues) |
 
+## Backtesting
+
+| Command | Description |
+|---|---|
+| `npm run backtest` | Backtest default strategy (90 days) |
+| `npm run backtest -- --strategy conservative --days 90` | Backtest named strategy |
+| `npm run backtest -- --symbols BTCUSDT,ETHUSDT --days 60` | Custom symbols |
+| `npm run backtest -- --timeframe 4h --days 180` | Different timeframe |
+| `npm run backtest -- --initial-usdt 5000` | Custom starting capital |
+| `npm run backtest -- --no-save` | Print report only (no JSON file) |
+| `npm run backtest:compare -- --days 90` | Compare all strategies side-by-side |
+
 ## Configuration & Cron
 
 | Command | Description |
@@ -26,7 +38,7 @@ cd /path/to/openclaw-trader && source .env
 
 | Command | Description |
 |---|---|
-| `npm test` | Run all 104 unit tests |
+| `npm test` | Run all 171 unit tests |
 | `npm run typecheck` | TypeScript type check (no emit) |
 
 ## Useful Log Commands

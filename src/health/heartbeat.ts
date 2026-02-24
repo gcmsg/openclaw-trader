@@ -14,12 +14,12 @@ const HEARTBEAT_PATH = path.resolve(__dirname, "../../logs/heartbeat.json");
 export type TaskStatus = "ok" | "warn" | "error" | "never";
 
 export interface TaskHeartbeat {
-  lastRunAt: number;        // 最后执行时间戳
-  lastDurationMs: number;   // 最后一次执行耗时
+  lastRunAt: number; // 最后执行时间戳
+  lastDurationMs: number; // 最后一次执行耗时
   lastStatus: "ok" | "error";
   lastError?: string;
-  runCount: number;         // 累计执行次数
-  errorCount: number;       // 累计失败次数
+  runCount: number; // 累计执行次数
+  errorCount: number; // 累计失败次数
 }
 
 export type HeartbeatStore = Record<string, TaskHeartbeat>;
@@ -27,7 +27,7 @@ export type HeartbeatStore = Record<string, TaskHeartbeat>;
 export function loadHeartbeats(): HeartbeatStore {
   try {
     return JSON.parse(fs.readFileSync(HEARTBEAT_PATH, "utf-8")) as HeartbeatStore;
-  } catch {
+  } catch (_e: unknown) {
     return {};
   }
 }
@@ -40,25 +40,28 @@ function saveHeartbeats(store: HeartbeatStore): void {
 /** 任务开始时调用，返回结束时需要调用的 done 函数 */
 export function ping(taskName: string): (error?: string) => void {
   const startMs = Date.now();
-  const store = loadHeartbeats();
-
-  const prev = store[taskName] ?? {
-    lastRunAt: 0, lastDurationMs: 0,
-    lastStatus: "ok" as const, runCount: 0, errorCount: 0,
-  };
 
   return (error?: string) => {
     const durationMs = Date.now() - startMs;
-    const updatedStore = loadHeartbeats(); // 重新读取，避免并发覆盖
-    updatedStore[taskName] = {
+    // 重新读取最新状态，避免并发写入时用到过期计数
+    const store = loadHeartbeats();
+    const prev = store[taskName] ?? {
+      lastRunAt: 0,
+      lastDurationMs: 0,
+      lastStatus: "ok" as const,
+      runCount: 0,
+      errorCount: 0,
+    };
+    store[taskName] = {
       lastRunAt: startMs,
       lastDurationMs: durationMs,
       lastStatus: error ? "error" : "ok",
-      lastError: error,
-      runCount: (prev.runCount ?? 0) + 1,
-      errorCount: (prev.errorCount ?? 0) + (error ? 1 : 0),
+      // exactOptionalPropertyTypes: 只在有值时才设置 lastError
+      ...(error !== undefined ? { lastError: error } : {}),
+      runCount: prev.runCount + 1,
+      errorCount: prev.errorCount + (error ? 1 : 0),
     };
-    saveHeartbeats(updatedStore);
+    saveHeartbeats(store);
   };
 }
 

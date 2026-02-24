@@ -50,16 +50,10 @@ const SIGNAL_CHECKERS: Record<string, SignalChecker> = {
     ind.macd.macd < ind.macd.signal,
 
   /** MACD 多头：MACD 线 > 信号线，且柱状图为正 */
-  macd_bullish: (ind) =>
-    !!ind.macd &&
-    ind.macd.macd > ind.macd.signal &&
-    ind.macd.histogram > 0,
+  macd_bullish: (ind) => !!ind.macd && ind.macd.macd > ind.macd.signal && ind.macd.histogram > 0,
 
   /** MACD 空头：MACD 线 < 信号线，且柱状图为负 */
-  macd_bearish: (ind) =>
-    !!ind.macd &&
-    ind.macd.macd < ind.macd.signal &&
-    ind.macd.histogram < 0,
+  macd_bearish: (ind) => !!ind.macd && ind.macd.macd < ind.macd.signal && ind.macd.histogram < 0,
 
   /** MACD 柱状图扩张（趋势加速） */
   macd_histogram_expanding: (ind) =>
@@ -82,11 +76,7 @@ const SIGNAL_CHECKERS: Record<string, SignalChecker> = {
 };
 
 /** 检测信号 */
-export function detectSignal(
-  symbol: string,
-  indicators: Indicators,
-  cfg: StrategyConfig
-): Signal {
+export function detectSignal(symbol: string, indicators: Indicators, cfg: StrategyConfig): Signal {
   const buyConditions = cfg.signals.buy;
   const sellConditions = cfg.signals.sell;
 
@@ -94,7 +84,10 @@ export function detectSignal(
   const buyReasons: string[] = [];
   const buyMet = buyConditions.every((name) => {
     const checker = SIGNAL_CHECKERS[name];
-    if (!checker) return false;
+    if (!checker) {
+      console.warn(`[signals] 未知买入条件: "${name}"，请检查策略配置`);
+      return false;
+    }
     const met = checker(indicators, cfg);
     if (met) buyReasons.push(name);
     return met;
@@ -115,7 +108,10 @@ export function detectSignal(
   const sellReasons: string[] = [];
   const sellMet = sellConditions.every((name) => {
     const checker = SIGNAL_CHECKERS[name];
-    if (!checker) return false;
+    if (!checker) {
+      console.warn(`[signals] 未知卖出条件: "${name}"，请检查策略配置`);
+      return false;
+    }
     const met = checker(indicators, cfg);
     if (met) sellReasons.push(name);
     return met;

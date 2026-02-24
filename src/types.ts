@@ -115,13 +115,14 @@ export interface StrategyConfig {
     price_alert_threshold: number;
     fear_greed_alert: number;
   };
-  schedule: {
-    [taskName: string]: {
+  schedule?: Record<
+    string,
+    {
       enabled: boolean;
       cron: string;
       timeout_minutes: number;
-    };
-  };
+    }
+  >;
   mode: TradeMode;
 }
 
@@ -130,7 +131,7 @@ export interface StrategyConfig {
 // ─────────────────────────────────────────────────────
 
 export interface ExchangeConfig {
-  name?: string;                // 默认 "binance"
+  name?: string; // 默认 "binance"
   credentials_path?: string;
   market: MarketType;
   futures?: {
@@ -174,13 +175,13 @@ export interface PaperScenario {
   id: string;
   name: string;
   enabled: boolean;
-  strategy_id: string;          // 引用 config/strategies/{id}.yaml
+  strategy_id: string; // 引用 config/strategies/{id}.yaml
   initial_usdt: number;
   fee_rate: number;
   slippage_percent: number;
   exchange: ExchangeConfig;
-  symbols?: string[];           // 覆盖策略/全局 symbols
-  risk?: Partial<RiskConfig>;   // 覆盖策略 risk
+  symbols?: string[]; // 覆盖策略/全局 symbols
+  risk?: Partial<RiskConfig>; // 覆盖策略 risk
 }
 
 export interface PaperFileConfig {
@@ -246,5 +247,5 @@ export interface TradeResult {
   status: "filled" | "failed";
   fee?: number;
   slippage?: number;
-  error?: string;
+  error?: string | undefined;
 }

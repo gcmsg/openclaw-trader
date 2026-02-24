@@ -20,12 +20,12 @@ export interface PaperPosition {
   quantity: number;
   entryPrice: number;
   entryTime: number;
-  stopLoss: number;          // 止损价格
-  takeProfit: number;        // 止盈价格
+  stopLoss: number; // 止损价格
+  takeProfit: number; // 止盈价格
   trailingStop?: {
     active: boolean;
-    highestPrice: number;    // 持仓期间最高价
-    stopPrice: number;       // 当前追踪止损价
+    highestPrice: number; // 持仓期间最高价
+    stopPrice: number; // 当前追踪止损价
   };
 }
 
@@ -34,10 +34,10 @@ export interface PaperTrade {
   symbol: string;
   side: "buy" | "sell";
   quantity: number;
-  price: number;             // 成交价（含滑点）
+  price: number; // 成交价（含滑点）
   usdtAmount: number;
   fee: number;
-  slippage: number;          // 滑点金额（USDT）
+  slippage: number; // 滑点金额（USDT）
   timestamp: number;
   reason: string;
   pnl?: number;
@@ -53,8 +53,8 @@ export interface PaperAccount {
   updatedAt: number;
   // 每日亏损追踪
   dailyLoss: {
-    date: string;            // YYYY-MM-DD
-    loss: number;            // 当日亏损 USDT（累计）
+    date: string; // YYYY-MM-DD
+    loss: number; // 当日亏损 USDT（累计）
   };
 }
 
@@ -70,11 +70,13 @@ export function loadAccount(initialUsdt = 1000, scenarioId = "default"): PaperAc
   const statePath = getAccountPath(scenarioId);
   try {
     const account = JSON.parse(fs.readFileSync(statePath, "utf-8")) as PaperAccount;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (!account.dailyLoss) {
+      // 兼容旧版账户文件（缺少 dailyLoss 字段）
       account.dailyLoss = { date: todayStr(), loss: 0 };
     }
     return account;
-  } catch {
+  } catch (_e: unknown) {
     const account: PaperAccount = {
       initialUsdt,
       usdt: initialUsdt,
@@ -246,13 +248,11 @@ export function updateTrailingStop(
 ): boolean {
   const { activationPercent, callbackPercent } = opts;
 
-  if (!position.trailingStop) {
-    position.trailingStop = {
-      active: false,
-      highestPrice: position.entryPrice,
-      stopPrice: 0,
-    };
-  }
+  position.trailingStop ??= {
+    active: false,
+    highestPrice: position.entryPrice,
+    stopPrice: 0,
+  };
 
   const ts = position.trailingStop;
 
@@ -282,10 +282,7 @@ export function updateTrailingStop(
 /**
  * 计算总资产（USDT + 持仓市值）
  */
-export function calcTotalEquity(
-  account: PaperAccount,
-  prices: Record<string, number>
-): number {
+export function calcTotalEquity(account: PaperAccount, prices: Record<string, number>): number {
   let equity = account.usdt;
   for (const [symbol, pos] of Object.entries(account.positions)) {
     const price = prices[symbol];
@@ -305,7 +302,7 @@ export function getAccountSummary(
   totalEquity: number;
   totalPnl: number;
   totalPnlPercent: number;
-  positions: Array<{
+  positions: {
     symbol: string;
     quantity: number;
     entryPrice: number;
@@ -314,7 +311,7 @@ export function getAccountSummary(
     unrealizedPnlPercent: number;
     stopLoss: number;
     takeProfit: number;
-  }>;
+  }[];
   tradeCount: number;
   winRate: number;
   dailyLoss: number;

@@ -1,0 +1,429 @@
+/**
+ * 回测引擎主循环
+ *
+ * 设计原则：
+ * 1. 多币种共享账户（与实盘/paper 行为一致）
+ * 2. 滑动窗口指标计算（与实时 monitor 一致）
+ * 3. K 线内高低价止损/止盈（比只用收盘价更真实）
+ * 4. 止损优先于止盈（悲观模型，防止过度乐观估计）
+ */
+
+import { calculateIndicators } from "../strategy/indicators.js";
+import { detectSignal } from "../strategy/signals.js";
+import type { Kline, StrategyConfig } from "../types.js";
+import {
+  calculateMetrics,
+  type BacktestTrade,
+  type BacktestMetrics,
+  type EquityPoint,
+} from "./metrics.js";
+
+// ─────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────
+
+interface BacktestPosition {
+  symbol: string;
+  entryTime: number;
+  entryPrice: number; // 含滑点
+  quantity: number;
+  cost: number; // 买入时花费的 USDT（含手续费+滑点）
+  stopLoss: number;
+  takeProfit: number;
+  trailingStop?: {
+    active: boolean;
+    highestPrice: number;
+    stopPrice: number;
+  };
+}
+
+interface BacktestAccount {
+  usdt: number;
+  positions: Record<string, BacktestPosition>;
+  trades: BacktestTrade[];
+  equityCurve: EquityPoint[];
+  // 每日亏损追踪
+  dailyLoss: { date: string; loss: number };
+}
+
+export interface BacktestOptions {
+  initialUsdt?: number; // 默认 1000
+  feeRate?: number; // 默认 0.001 (0.1%)
+  slippagePercent?: number; // 默认 0.05%
+}
+
+export interface BacktestResult {
+  metrics: BacktestMetrics;
+  trades: BacktestTrade[];
+  perSymbol: Record<
+    string,
+    {
+      trades: number;
+      wins: number;
+      losses: number;
+      pnl: number;
+      winRate: number;
+    }
+  >;
+  config: {
+    strategy: string;
+    symbols: string[];
+    timeframe: string;
+    startDate: string;
+    endDate: string;
+    days: number;
+    initialUsdt: number;
+  };
+}
+
+// ─────────────────────────────────────────────────────
+// 辅助函数
+// ─────────────────────────────────────────────────────
+
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function calcEquity(account: BacktestAccount, prices: Record<string, number>): number {
+  let equity = account.usdt;
+  for (const [sym, pos] of Object.entries(account.positions)) {
+    const price = prices[sym] ?? pos.entryPrice;
+    equity += pos.quantity * price;
+  }
+  return equity;
+}
+
+function doBuy(
+  account: BacktestAccount,
+  symbol: string,
+  price: number,
+  time: number,
+  cfg: StrategyConfig,
+  opts: Required<BacktestOptions>
+): void {
+  // 已持仓则跳过
+  if (account.positions[symbol]) return;
+
+  // 最大持仓数检查
+  if (Object.keys(account.positions).length >= cfg.risk.max_positions) return;
+
+  // 每日亏损限额
+  const today = new Date(time).toISOString().slice(0, 10);
+  if (account.dailyLoss.date !== today) {
+    account.dailyLoss = { date: today, loss: 0 };
+  }
+
+  const equity = calcEquity(account, { [symbol]: price });
+  const symbolValue = 0; // 没有持仓
+  if (symbolValue / equity >= cfg.risk.max_position_per_symbol) return;
+  if ((account.dailyLoss.loss / equity) * 100 >= cfg.risk.daily_loss_limit_percent) return;
+
+  const usdtToSpend = equity * cfg.risk.position_ratio;
+  if (usdtToSpend < cfg.execution.min_order_usdt) return;
+  if (usdtToSpend > account.usdt) return;
+
+  // 买入时价格上滑（略高于报价）
+  const execPrice = price * (1 + opts.slippagePercent / 100);
+  const fee = usdtToSpend * opts.feeRate;
+  const slippageUsdt = usdtToSpend * (opts.slippagePercent / 100);
+  const netUsdt = usdtToSpend - fee - slippageUsdt;
+  const quantity = netUsdt / execPrice;
+
+  account.usdt -= usdtToSpend;
+
+  const pos: BacktestPosition = {
+    symbol,
+    entryTime: time,
+    entryPrice: execPrice,
+    quantity,
+    cost: usdtToSpend,
+    stopLoss: execPrice * (1 - cfg.risk.stop_loss_percent / 100),
+    takeProfit: execPrice * (1 + cfg.risk.take_profit_percent / 100),
+  };
+
+  if (cfg.risk.trailing_stop.enabled) {
+    pos.trailingStop = {
+      active: false,
+      highestPrice: execPrice,
+      stopPrice: 0,
+    };
+  }
+
+  account.positions[symbol] = pos;
+
+  // 只记录买入事件（用于调试），交易 PnL 在卖出时计算
+  account.trades.push({
+    symbol,
+    side: "buy",
+    entryTime: time,
+    exitTime: time,
+    entryPrice: execPrice,
+    exitPrice: execPrice,
+    quantity,
+    cost: usdtToSpend,
+    proceeds: 0,
+    pnl: 0,
+    pnlPercent: 0,
+    exitReason: "signal",
+  });
+}
+
+function doSell(
+  account: BacktestAccount,
+  symbol: string,
+  exitPrice: number,
+  exitTime: number,
+  exitReason: BacktestTrade["exitReason"],
+  opts: Required<BacktestOptions>
+): void {
+  const pos = account.positions[symbol];
+  if (!pos) return;
+
+  // 卖出时价格下滑（略低于报价）
+  const execPrice = exitPrice * (1 - opts.slippagePercent / 100);
+  const grossUsdt = pos.quantity * execPrice;
+  const fee = grossUsdt * opts.feeRate;
+  const proceeds = grossUsdt - fee;
+  const pnl = proceeds - pos.cost;
+  const pnlPercent = pnl / pos.cost;
+
+  // 更新每日亏损
+  const today = new Date(exitTime).toISOString().slice(0, 10);
+  if (account.dailyLoss.date !== today) {
+    account.dailyLoss = { date: today, loss: 0 };
+  }
+  if (pnl < 0) account.dailyLoss.loss += Math.abs(pnl);
+
+  account.usdt += proceeds;
+  delete account.positions[symbol];
+
+  account.trades.push({
+    symbol,
+    side: "sell",
+    entryTime: pos.entryTime,
+    exitTime,
+    entryPrice: pos.entryPrice,
+    exitPrice: execPrice,
+    quantity: pos.quantity,
+    cost: pos.cost,
+    proceeds,
+    pnl,
+    pnlPercent,
+    exitReason,
+  });
+}
+
+function updateTrailingStop(
+  pos: BacktestPosition,
+  high: number,
+  low: number,
+  cfg: StrategyConfig
+): boolean {
+  if (!pos.trailingStop || !cfg.risk.trailing_stop.enabled) return false;
+  const ts = pos.trailingStop;
+
+  if (high > ts.highestPrice) ts.highestPrice = high;
+
+  const gainPct = ((ts.highestPrice - pos.entryPrice) / pos.entryPrice) * 100;
+  if (!ts.active && gainPct >= cfg.risk.trailing_stop.activation_percent) {
+    ts.active = true;
+  }
+
+  if (ts.active) {
+    ts.stopPrice = ts.highestPrice * (1 - cfg.risk.trailing_stop.callback_percent / 100);
+    return low <= ts.stopPrice;
+  }
+
+  return false;
+}
+
+// ─────────────────────────────────────────────────────
+// 主回测函数
+// ─────────────────────────────────────────────────────
+
+/**
+ * 多币种共享账户回测
+ *
+ * @param klinesBySymbol  每个 symbol 的完整历史 K 线（已按时间排序）
+ * @param cfg             策略配置（strategy.yaml + 策略文件合并后）
+ * @param opts            回测选项（初始资金、手续费、滑点）
+ */
+export function runBacktest(
+  klinesBySymbol: Record<string, Kline[]>,
+  cfg: StrategyConfig,
+  opts: BacktestOptions = {}
+): BacktestResult {
+  const { initialUsdt = 1000, feeRate = 0.001, slippagePercent = 0.05 } = opts;
+  const resolvedOpts: Required<BacktestOptions> = {
+    initialUsdt,
+    feeRate,
+    slippagePercent,
+  };
+
+  const symbols = Object.keys(klinesBySymbol);
+  if (symbols.length === 0) {
+    throw new Error("klinesBySymbol 不能为空");
+  }
+
+  // ── 合并所有 K 线时间戳（取交集，确保所有 symbol 都有数据）──
+  const timeSets = symbols.map(
+    // Object.keys 返回的 key 一定在 map 中，! 断言安全
+    (s) => new Set(klinesBySymbol[s]!.map((k) => k.openTime))
+  );
+  // timeSets[0] 一定存在（symbols 非空已检查）
+  const allTimes = Array.from(timeSets[0]!)
+    .filter((t) => timeSets.every((set) => set.has(t)))
+    .sort((a, b) => a - b);
+
+  // ── 构建时间→K线索引 ──
+  const klineIndex: Record<string, Record<number, Kline>> = {};
+  for (const sym of symbols) {
+    klineIndex[sym] = {};
+    for (const k of klinesBySymbol[sym]!) {
+      klineIndex[sym][k.openTime] = k;
+    }
+  }
+
+  // ── 计算预热期长度 ──
+  const macdCfg = cfg.strategy.macd;
+  const macdMinBars = macdCfg.enabled ? macdCfg.slow + macdCfg.signal + 1 : 0;
+  const warmupBars = Math.max(cfg.strategy.ma.long, cfg.strategy.rsi.period, macdMinBars) + 10;
+
+  // ── 初始化账户 ──
+  const account: BacktestAccount = {
+    usdt: initialUsdt,
+    positions: {},
+    trades: [],
+    equityCurve: [],
+    dailyLoss: { date: todayStr(), loss: 0 },
+  };
+
+  // 滑动窗口（每个 symbol 独立）
+  const windows: Record<string, Kline[]> = {};
+  for (const sym of symbols) windows[sym] = [];
+
+  // ── 主循环：逐根 K 线前进 ──
+  for (const time of allTimes) {
+    const currentPrices: Record<string, number> = {};
+
+    // Step 1：推进滑动窗口
+    for (const sym of symbols) {
+      // sym 由 symbols = Object.keys(klinesBySymbol) 产生，klineIndex[sym] 一定存在
+      const kline = klineIndex[sym]![time];
+      if (!kline) continue;
+      windows[sym]!.push(kline);
+      // 只保留足够指标计算的历史（窗口不超过 warmupBars * 2）
+      if (windows[sym]!.length > warmupBars * 2) {
+        windows[sym]!.shift();
+      }
+      currentPrices[sym] = kline.close;
+    }
+
+    // 预热期内不操作
+    if (Object.values(windows).every((w) => w.length < warmupBars)) continue;
+
+    // Step 2：检查已有持仓的止损/止盈（优先于新信号）
+    for (const sym of symbols) {
+      const pos = account.positions[sym];
+      if (!pos) continue;
+      const kline = klineIndex[sym]![time];
+      if (!kline) continue;
+
+      // 追踪止损更新
+      const trailingTriggered = updateTrailingStop(pos, kline.high, kline.low, cfg);
+
+      if (kline.low <= pos.stopLoss) {
+        // 止损（用止损价出场，比收盘价更真实）
+        doSell(account, sym, pos.stopLoss, time, "stop_loss", resolvedOpts);
+      } else if (kline.high >= pos.takeProfit) {
+        // 止盈
+        doSell(account, sym, pos.takeProfit, time, "take_profit", resolvedOpts);
+      } else if (trailingTriggered && pos.trailingStop?.stopPrice) {
+        // 追踪止损
+        doSell(account, sym, pos.trailingStop.stopPrice, time, "trailing_stop", resolvedOpts);
+      }
+    }
+
+    // Step 3：计算指标 & 信号
+    for (const sym of symbols) {
+      const window = windows[sym]!; // sym ∈ symbols，windows[sym] 必存在
+      if (window.length < warmupBars) continue;
+      const kline = klineIndex[sym]![time];
+      if (!kline) continue;
+
+      const indicators = calculateIndicators(
+        window,
+        cfg.strategy.ma.short,
+        cfg.strategy.ma.long,
+        cfg.strategy.rsi.period,
+        cfg.strategy.macd
+      );
+      if (!indicators) continue;
+
+      const signal = detectSignal(sym, indicators, cfg);
+
+      if (signal.type === "buy" && !account.positions[sym]) {
+        doBuy(account, sym, kline.close, time, cfg, resolvedOpts);
+      } else if (signal.type === "sell" && account.positions[sym]) {
+        doSell(account, sym, kline.close, time, "signal", resolvedOpts);
+      }
+    }
+
+    // Step 4：记录权益曲线
+    account.equityCurve.push({
+      time,
+      equity: calcEquity(account, currentPrices),
+    });
+  }
+
+  // ── 强制平仓（回测结束时，按最后收盘价）──
+  // allTimes 已过滤后可能为空（数据不足），需要守卫
+  const lastTime = allTimes[allTimes.length - 1] ?? 0;
+  for (const sym of Object.keys(account.positions)) {
+    const lastKline = lastTime > 0 ? klineIndex[sym]?.[lastTime] : undefined;
+    if (lastKline) {
+      doSell(account, sym, lastKline.close, lastTime, "end_of_data", resolvedOpts);
+    }
+  }
+
+  // ── 计算绩效指标 ──
+  const metrics = calculateMetrics(account.trades, initialUsdt, account.equityCurve);
+
+  // ── 各币种统计 ──
+  const sellTrades = account.trades.filter((t) => t.side === "sell");
+  const perSymbol: BacktestResult["perSymbol"] = {};
+  for (const sym of symbols) {
+    const symTrades = sellTrades.filter((t) => t.symbol === sym);
+    const symWins = symTrades.filter((t) => t.pnl > 0);
+    const symLosses = symTrades.filter((t) => t.pnl <= 0);
+    perSymbol[sym] = {
+      trades: symTrades.length,
+      wins: symWins.length,
+      losses: symLosses.length,
+      pnl: symTrades.reduce((s, t) => s + t.pnl, 0),
+      winRate: symTrades.length > 0 ? symWins.length / symTrades.length : 0,
+    };
+  }
+
+  // ── 时间范围信息 ──
+  const firstTime = allTimes[0] ?? 0;
+  const lastTimeMs = allTimes[allTimes.length - 1] ?? 0;
+  const startDate = new Date(firstTime).toISOString().slice(0, 10);
+  const endDate = new Date(lastTimeMs).toISOString().slice(0, 10);
+  const days = Math.round((lastTimeMs - firstTime) / 86_400_000);
+
+  return {
+    metrics,
+    trades: account.trades,
+    perSymbol,
+    config: {
+      strategy: cfg.strategy.name,
+      symbols,
+      timeframe: cfg.timeframe,
+      startDate,
+      endDate,
+      days,
+      initialUsdt,
+    },
+  };
+}

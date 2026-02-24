@@ -1,14 +1,29 @@
 {
   "compilerOptions": {
+    // ── 目标 ──────────────────────────────────────────
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "strict": true,
+    "resolveJsonModule": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": "src",
-    "resolveJsonModule": true
+
+    // ── 严格模式（完整套装）──────────────────────────
+    "strict": true,                          // 包含 strictNullChecks, strictFunctionTypes 等
+    "noUncheckedIndexedAccess": true,        // arr[0] 返回 T | undefined（防 OOB 访问）
+    "exactOptionalPropertyTypes": true,      // 区分 { a?: string } 和 { a: string | undefined }
+    "noPropertyAccessFromIndexSignature": true, // 强制用 obj["key"] 而非 obj.key（索引签名）
+    "noImplicitOverride": true,              // override 需要显式标注
+    "noFallthroughCasesInSwitch": true,      // switch 分支穿透报错
+
+    // ── 完整性检查 ────────────────────────────────────
+    "noUnusedLocals": true,                  // 禁止未使用的局部变量
+    "noUnusedParameters": true,              // 禁止未使用的参数（可用 _ 前缀豁免）
+    "noImplicitReturns": true,               // 所有代码路径必须有返回值
+    "forceConsistentCasingInFileNames": true // 文件名大小写一致性
+
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

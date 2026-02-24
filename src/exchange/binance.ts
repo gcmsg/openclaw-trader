@@ -13,6 +13,20 @@ function sign(query: string, secret: string): string {
   return crypto.createHmac("sha256", secret).update(query).digest("hex");
 }
 
+interface BinanceErrorBody {
+  code: number;
+  msg: string;
+}
+function isBinanceError(obj: unknown): obj is BinanceErrorBody {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    "code" in obj &&
+    typeof (obj as Record<string, unknown>)["code"] === "number" &&
+    ((obj as Record<string, unknown>)["code"] as number) < 0
+  );
+}
+
 function request(options: https.RequestOptions): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const req = https.get(options, (res) => {
@@ -20,13 +34,13 @@ function request(options: https.RequestOptions): Promise<unknown> {
       res.on("data", (chunk) => (data += chunk));
       res.on("end", () => {
         try {
-          const parsed = JSON.parse(data);
-          if (parsed.code && parsed.code < 0) {
+          const parsed: unknown = JSON.parse(data) as unknown;
+          if (isBinanceError(parsed)) {
             reject(new Error(`Binance API Error ${parsed.code}: ${parsed.msg}`));
           } else {
             resolve(parsed);
           }
-        } catch {
+        } catch (_e: unknown) {
           reject(new Error(`Failed to parse response: ${data}`));
         }
       });
@@ -52,15 +66,11 @@ export async function getPrice(symbol: string): Promise<number> {
 }
 
 /** 获取 K 线数据 */
-export async function getKlines(
-  symbol: string,
-  interval: string,
-  limit = 100
-): Promise<Kline[]> {
+export async function getKlines(symbol: string, interval: string, limit = 100): Promise<Kline[]> {
   const raw = (await request({
     hostname: BASE_URL,
     path: `/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
-  })) as Array<[number, string, string, string, string, string, number]>;
+  })) as [number, string, string, string, string, string, number][];
 
   return raw.map((k) => ({
     openTime: k[0],
@@ -78,10 +88,7 @@ export async function getKlines(
 // ─────────────────────────────────────────────────────
 
 /** 获取账户余额 */
-export async function getBalance(
-  cfg: BinanceConfig,
-  asset = "USDT"
-): Promise<number> {
+export async function getBalance(cfg: BinanceConfig, asset = "USDT"): Promise<number> {
   const ts = Date.now();
   const query = `timestamp=${ts}`;
   const sig = sign(query, cfg.secretKey);
@@ -89,7 +96,7 @@ export async function getBalance(
     hostname: BASE_URL,
     path: `/api/v3/account?${query}&signature=${sig}`,
     headers: { "X-MBX-APIKEY": cfg.apiKey },
-  })) as { balances: Array<{ asset: string; free: string }> };
+  })) as { balances: { asset: string; free: string }[] };
 
   const balance = data.balances.find((b) => b.asset === asset);
   return balance ? parseFloat(balance.free) : 0;
@@ -126,7 +133,7 @@ export async function marketBuy(
             code?: number;
             msg?: string;
             orderId: number;
-            fills?: Array<{ price: string }>;
+            fills?: { price: string }[];
             executedQty: string;
             status: string;
           };
@@ -142,9 +149,7 @@ export async function marketBuy(
               error: obj.msg,
             });
           } else {
-            const price = obj.fills?.[0]
-              ? parseFloat(obj.fills[0].price)
-              : 0;
+            const price = obj.fills?.[0] ? parseFloat(obj.fills[0].price) : 0;
             resolve({
               symbol,
               side: "buy",
@@ -195,7 +200,7 @@ export async function marketSell(
             code?: number;
             msg?: string;
             orderId: number;
-            fills?: Array<{ price: string }>;
+            fills?: { price: string }[];
             executedQty: string;
           };
           if (obj.code && obj.code < 0) {
@@ -210,9 +215,7 @@ export async function marketSell(
               error: obj.msg,
             });
           } else {
-            const price = obj.fills?.[0]
-              ? parseFloat(obj.fills[0].price)
-              : 0;
+            const price = obj.fills?.[0] ? parseFloat(obj.fills[0].price) : 0;
             resolve({
               symbol,
               side: "sell",

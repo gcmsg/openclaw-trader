@@ -16,7 +16,7 @@ import {
   type FearGreedData,
   type GlobalMarketData,
 } from "./fetcher.js";
-import { sendNewsReport } from "../notify/openclaw.js";
+// sendNewsReport 已移至 openclaw.ts，monitor 直接调用 notifyStatus
 import { ping } from "../health/heartbeat.js";
 import type { StrategyConfig } from "../types.js";
 
@@ -43,7 +43,7 @@ interface NewsState {
 function loadState(): NewsState {
   try {
     return JSON.parse(fs.readFileSync(STATE_PATH, "utf-8")) as NewsState;
-  } catch {
+  } catch (_e: unknown) {
     return { lastRunAt: 0, lastFearGreed: 50 };
   }
 }
@@ -65,9 +65,17 @@ function interpretFearGreed(value: number): string {
 /** 从新闻列表里过滤重要新闻（使用 fetcher 的 important 标记 + 本地关键词兜底） */
 function filterImportantNews(news: NewsItem[]): NewsItem[] {
   const EXTRA_KEYWORDS = [
-    "BlackRock", "MicroStrategy", "Tesla", "institutional",
-    "halving", "减半", "upgrade", "升级",
-    "bankrupt", "破产", "FTX",
+    "BlackRock",
+    "MicroStrategy",
+    "Tesla",
+    "institutional",
+    "halving",
+    "减半",
+    "upgrade",
+    "升级",
+    "bankrupt",
+    "破产",
+    "FTX",
   ];
 
   return news.filter((n) => {
@@ -81,7 +89,7 @@ function filterImportantNews(news: NewsItem[]): NewsItem[] {
 function assessMarketSentiment(
   fearGreed: FearGreedData,
   globalMarket: GlobalMarketData,
-  priceChanges: Array<{ symbol: string; priceChangePercent: number }>
+  priceChanges: { symbol: string; priceChangePercent: number }[]
 ): "bullish" | "bearish" | "neutral" {
   let score = 0;
 
@@ -95,8 +103,7 @@ function assessMarketSentiment(
 
   // 主流币价格变化
   const avgChange =
-    priceChanges.reduce((a, b) => a + b.priceChangePercent, 0) /
-    (priceChanges.length || 1);
+    priceChanges.reduce((a, b) => a + b.priceChangePercent, 0) / (priceChanges.length || 1);
   if (avgChange > 1) score += 1;
   else if (avgChange < -1) score -= 1;
 
@@ -128,9 +135,7 @@ async function main(): Promise<void> {
   log(`重要新闻: ${importantNews.length} 条`);
 
   // 检测价格异动（24h 涨跌超过 5%）
-  const bigMovers = priceChanges.filter(
-    (p) => Math.abs(p.priceChangePercent) >= 5
-  );
+  const bigMovers = priceChanges.filter((p) => Math.abs(p.priceChangePercent) >= 5);
 
   const sentiment = assessMarketSentiment(fearGreed, globalMarket, priceChanges);
   log(`市场情绪: ${sentiment}`);
@@ -168,7 +173,7 @@ async function main(): Promise<void> {
   log("─── 新闻情绪扫描完成 ───\n");
 }
 
-main().catch((err) => {
-  console.error("Fatal:", err);
+main().catch((err: unknown) => {
+  console.error("Fatal:", String(err));
   process.exit(1);
 });

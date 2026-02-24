@@ -1,10 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { evaluateSentimentGate, type NewsReport } from "../news/sentiment-gate.js";
+import {
+  evaluateSentimentGate,
+  type NewsReport,
+  type GateDecision,
+} from "../news/sentiment-gate.js";
 import type { Signal } from "../types.js";
+
+/** 类型安全地提取 positionRatio（skip 类型无此字段，直接报错） */
+function posRatio(result: GateDecision): number {
+  if ("positionRatio" in result) return result.positionRatio;
+  throw new Error(`GateDecision action='${result.action}' 无 positionRatio 字段`);
+}
 
 function makeSignal(type: "buy" | "sell"): Signal {
   return {
-    symbol: "BTCUSDT", type, price: 50000,
+    symbol: "BTCUSDT",
+    type,
+    price: 50000,
     indicators: { maShort: 100, maLong: 90, rsi: 40, price: 50000, volume: 1000, avgVolume: 1000 },
     reason: ["test"],
     timestamp: Date.now(),
@@ -34,9 +46,13 @@ describe("evaluateSentimentGate()", () => {
 
   // ── 买入信号 ─────────────────────────────────────────
   it("买入 + 情绪中性 → 正常执行", () => {
-    const result = evaluateSentimentGate(makeSignal("buy"), makeReport({ sentiment: "neutral" }), 0.2);
+    const result = evaluateSentimentGate(
+      makeSignal("buy"),
+      makeReport({ sentiment: "neutral" }),
+      0.2
+    );
     expect(result.action).toBe("execute");
-    expect((result as any).positionRatio).toBe(0.2);
+    expect(posRatio(result)).toBe(0.2);
   });
 
   it("买入 + 极度贪婪（FGI>80）→ 减仓", () => {
@@ -46,7 +62,7 @@ describe("evaluateSentimentGate()", () => {
       0.2
     );
     expect(result.action).toBe("reduce");
-    expect((result as any).positionRatio).toBe(0.1); // 减半
+    expect(posRatio(result)).toBe(0.1); // 减半
   });
 
   it("买入 + 新闻偏空 → 减仓", () => {
@@ -56,7 +72,7 @@ describe("evaluateSentimentGate()", () => {
       0.2
     );
     expect(result.action).toBe("reduce");
-    expect((result as any).positionRatio).toBe(0.1);
+    expect(posRatio(result)).toBe(0.1);
   });
 
   it("买入 + 极度恐惧（FGI<20）→ 正常执行（历史底部）", () => {
@@ -79,7 +95,11 @@ describe("evaluateSentimentGate()", () => {
 
   // ── 卖出信号 ─────────────────────────────────────────
   it("卖出 + 情绪中性 → 正常执行", () => {
-    const result = evaluateSentimentGate(makeSignal("sell"), makeReport({ sentiment: "neutral" }), 0.2);
+    const result = evaluateSentimentGate(
+      makeSignal("sell"),
+      makeReport({ sentiment: "neutral" }),
+      0.2
+    );
     expect(result.action).toBe("execute");
   });
 
@@ -90,7 +110,7 @@ describe("evaluateSentimentGate()", () => {
       0.2
     );
     expect(result.action).toBe("reduce");
-    expect((result as any).positionRatio).toBe(0.1);
+    expect(posRatio(result)).toBe(0.1);
   });
 
   it("卖出 + 极度恐惧 → 警告（可能在底部）", () => {
@@ -109,7 +129,7 @@ describe("evaluateSentimentGate()", () => {
       0.2
     );
     expect(result.action).toBe("warn");
-    expect((result as any).positionRatio).toBe(0.1);
+    expect(posRatio(result)).toBe(0.1);
   });
 
   // ── 重大新闻冲击 ─────────────────────────────────────
@@ -122,7 +142,7 @@ describe("evaluateSentimentGate()", () => {
       0.2
     );
     expect(result.action).toBe("reduce");
-    expect((result as any).positionRatio).toBe(0.1);
+    expect(posRatio(result)).toBe(0.1);
   });
 
   it("4 条重要新闻 → 不触发减仓（只有≥5条才触发）", () => {
@@ -141,7 +161,7 @@ describe("evaluateSentimentGate()", () => {
   // ── 基础仓位比例保持 ──────────────────────────────────
   it("正常执行时保持原始仓位比例", () => {
     const result = evaluateSentimentGate(makeSignal("buy"), makeReport(), 0.3);
-    expect((result as any).positionRatio).toBe(0.3);
+    expect(posRatio(result)).toBe(0.3);
   });
 
   it("减仓时仓位精确为原始的 50%", () => {
@@ -150,6 +170,6 @@ describe("evaluateSentimentGate()", () => {
       makeReport({ sentiment: "bearish" }),
       0.4
     );
-    expect((result as any).positionRatio).toBe(0.2);
+    expect(posRatio(result)).toBe(0.2);
   });
 });

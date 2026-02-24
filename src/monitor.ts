@@ -11,11 +11,17 @@ import { getKlines } from "./exchange/binance.js";
 import { calculateIndicators } from "./strategy/indicators.js";
 import { detectSignal } from "./strategy/signals.js";
 import { notifySignal, notifyError, notifyPaperTrade, notifyStopLoss } from "./notify/openclaw.js";
-import { handleSignal, checkExitConditions, checkMaxDrawdown, checkDailyLossLimit, formatSummaryMessage } from "./paper/engine.js";
+import {
+  handleSignal,
+  checkExitConditions,
+  checkMaxDrawdown,
+  checkDailyLossLimit,
+  formatSummaryMessage,
+} from "./paper/engine.js";
 import { loadNewsReport, evaluateSentimentGate } from "./news/sentiment-gate.js";
 import { ping } from "./health/heartbeat.js";
 import { loadRuntimeConfigs } from "./config/loader.js";
-import type { RuntimeConfig, Signal } from "./types.js";
+import type { RuntimeConfig, Signal, Indicators } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_PATH = path.resolve(__dirname, "../logs/monitor.log");
@@ -43,8 +49,9 @@ interface MonitorState {
 function loadState(scenarioId: string): MonitorState {
   try {
     return JSON.parse(fs.readFileSync(getStatePath(scenarioId), "utf-8")) as MonitorState;
-  } catch {
-    return { lastSignals: {}, lastReportAt: 0, paused: false };
+  } catch (_e: unknown) {
+    // 首次创建：lastReportAt 设为当前时间，避免首次运行立即触发空报告
+    return { lastSignals: {}, lastReportAt: Date.now(), paused: false };
   }
 }
 
@@ -55,7 +62,7 @@ function saveState(scenarioId: string, state: MonitorState): void {
 
 function shouldNotify(state: MonitorState, signal: Signal, minIntervalMinutes: number): boolean {
   const last = state.lastSignals[signal.symbol];
-  if (!last || last.type !== signal.type) return true;
+  if (last?.type !== signal.type) return true;
   return (Date.now() - last.timestamp) / 60000 >= minIntervalMinutes;
 }
 
@@ -71,7 +78,11 @@ async function scanSymbol(
   scenarioPrefix: string
 ): Promise<void> {
   try {
-    const limit = Math.max(cfg.strategy.ma.long, cfg.strategy.rsi.period) + 10;
+    // 计算所需 K 线数量：取 MA、RSI、MACD 三者的最大值，多留 10 根余量
+    const macdMinBars = cfg.strategy.macd.enabled
+      ? cfg.strategy.macd.slow + cfg.strategy.macd.signal + 1
+      : 0;
+    const limit = Math.max(cfg.strategy.ma.long, cfg.strategy.rsi.period, macdMinBars) + 10;
     const klines = await getKlines(symbol, cfg.timeframe, limit + 1);
     if (klines.length < limit) return;
 
@@ -90,12 +101,13 @@ async function scanSymbol(
     const macdInfo = indicators.macd
       ? ` MACD=${indicators.macd.macd.toFixed(2)}/${indicators.macd.signal.toFixed(2)}`
       : "";
-    const volRatio = indicators.avgVolume > 0 ? (indicators.volume / indicators.avgVolume).toFixed(2) : "?";
+    const volRatio =
+      indicators.avgVolume > 0 ? (indicators.volume / indicators.avgVolume).toFixed(2) : "?";
 
     log(
       `${scenarioPrefix}${symbol}: 价格=${indicators.price.toFixed(4)}, ` +
-      `MA短=${indicators.maShort.toFixed(4)}, MA长=${indicators.maLong.toFixed(4)}, ` +
-      `RSI=${indicators.rsi.toFixed(1)},${macdInfo} 成交量=${volRatio}x, ${trend}, 信号=${signal.type}`
+        `MA短=${indicators.maShort.toFixed(4)}, MA长=${indicators.maLong.toFixed(4)}, ` +
+        `RSI=${indicators.rsi.toFixed(1)},${macdInfo} 成交量=${volRatio}x, ${trend}, 信号=${signal.type}`
     );
 
     if (signal.type === "none") return;
@@ -118,23 +130,25 @@ async function scanSymbol(
       }
       if (result.trade) {
         const action = result.trade.side === "buy" ? "买入" : "卖出";
-        log(`${scenarioPrefix}${symbol}: 📝 模拟${action} @${result.trade.price.toFixed(4)}（仓位 ${(effectiveRatio * 100).toFixed(0)}%）`);
-        await notifyPaperTrade(result.trade, result.account);
+        log(
+          `${scenarioPrefix}${symbol}: 📝 模拟${action} @${result.trade.price.toFixed(4)}（仓位 ${(effectiveRatio * 100).toFixed(0)}%）`
+        );
+        notifyPaperTrade(result.trade, result.account);
       }
       if (gate.action === "warn") {
-        await notifyError(symbol, new Error(`⚠️ 情绪警告：${gate.reason}`)).catch(() => {});
+        notifyError(symbol, new Error(`⚠️ 情绪警告：${gate.reason}`));
       }
       state.lastSignals[signal.symbol] = { type: signal.type, timestamp: Date.now() };
     } else if (cfg.mode === "notify_only" && cfg.notify.on_signal) {
       if (shouldNotify(state, signal, cfg.notify.min_interval_minutes)) {
-        await notifySignal(signal);
+        notifySignal(signal);
         state.lastSignals[signal.symbol] = { type: signal.type, timestamp: Date.now() };
       }
     }
-  } catch (err) {
+  } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
     log(`${scenarioPrefix}${symbol}: 错误 - ${error.message}`);
-    if (cfg.notify.on_error) await notifyError(symbol, error).catch(() => {});
+    if (cfg.notify.on_error) notifyError(symbol, error);
   }
 }
 
@@ -167,17 +181,29 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
     const exits = checkExitConditions(currentPrices, cfg);
     for (const { symbol, trade, reason, pnlPercent } of exits) {
       const emoji = reason === "take_profit" ? "🎯" : "🚨";
-      const label = reason === "take_profit" ? "止盈" : reason === "trailing_stop" ? "追踪止损" : "止损";
+      const label =
+        reason === "take_profit" ? "止盈" : reason === "trailing_stop" ? "追踪止损" : "止损";
       log(`${prefix}${symbol}: ${emoji} ${label}触发（${pnlPercent.toFixed(2)}%）`);
       if (reason === "stop_loss" || reason === "trailing_stop") {
-        await notifyStopLoss(symbol, trade.price / (1 + pnlPercent / 100), trade.price, pnlPercent / 100);
+        notifyStopLoss(symbol, trade.price / (1 + pnlPercent / 100), trade.price, pnlPercent / 100);
       } else if (cfg.notify.on_take_profit) {
-        await notifySignal({
-          symbol, type: "sell", price: trade.price,
-          indicators: {} as never,
+        // 止盈通知复用 notifySignal，indicators 仅用于消息格式化，填充占位数据
+        const placeholderIndicators: Indicators = {
+          maShort: trade.price,
+          maLong: trade.price,
+          rsi: 50,
+          price: trade.price,
+          volume: 0,
+          avgVolume: 0,
+        };
+        notifySignal({
+          symbol,
+          type: "sell",
+          price: trade.price,
+          indicators: placeholderIndicators,
           reason: [`止盈: +${pnlPercent.toFixed(2)}%`],
           timestamp: Date.now(),
-        }).catch(() => {});
+        });
       }
     }
 
@@ -188,9 +214,12 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
     if (checkMaxDrawdown(currentPrices, cfg)) {
       log(`${prefix}🚨 总亏损超过上限，场景已暂停！`);
       state.paused = true;
-      await notifyError(`${marketLabel} 风控`, new Error(
-        `总亏损超过 ${cfg.risk.max_total_loss_percent}% 上限，${marketLabel} 模拟盘已自动暂停`
-      ));
+      notifyError(
+        `${marketLabel} 风控`,
+        new Error(
+          `总亏损超过 ${cfg.risk.max_total_loss_percent}% 上限，${marketLabel} 模拟盘已自动暂停`
+        )
+      );
     }
 
     // 定期账户汇报
@@ -199,8 +228,8 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
       log(`${prefix}📊 发送定期账户汇报`);
       const msg = formatSummaryMessage(currentPrices, cfg);
       const { spawnSync } = await import("child_process");
-      const OPENCLAW_BIN = process.env.OPENCLAW_BIN ?? "openclaw";
-      const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
+      const OPENCLAW_BIN = process.env["OPENCLAW_BIN"] ?? "openclaw";
+      const GATEWAY_TOKEN = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
       const args = ["system", "event", "--mode", "now"];
       if (GATEWAY_TOKEN) args.push("--token", GATEWAY_TOKEN);
       args.push("--text", msg);
@@ -221,15 +250,17 @@ async function main(): Promise<void> {
   const done = ping("price_monitor");
 
   const runtimes = loadRuntimeConfigs();
-  if (!runtimes[0].strategy.enabled) {
+  // loadRuntimeConfigs 在无 enabled 场景时会 throw，此处 runtimes[0] 必存在
+  const firstRuntime = runtimes[0]!;
+  if (!firstRuntime.strategy.enabled) {
     log("策略已禁用");
     done();
     return;
   }
 
-  const mode = runtimes[0].mode;
+  const mode = firstRuntime.mode;
   const scenarioNames = runtimes.map((r) => r.paper.scenarioId).join(", ");
-  log(`模式: ${mode} | 场景: ${scenarioNames} | 默认币种: ${runtimes[0].symbols.join(", ")}`);
+  log(`模式: ${mode} | 场景: ${scenarioNames} | 默认币种: ${firstRuntime.symbols.join(", ")}`);
 
   // 所有场景并行运行
   await Promise.all(runtimes.map((cfg) => runScenario(cfg)));
@@ -238,7 +269,7 @@ async function main(): Promise<void> {
   log("─── 监控扫描完成 ───\n");
 }
 
-main().catch((err) => {
-  console.error("Fatal:", err);
+main().catch((err: unknown) => {
+  console.error("Fatal:", String(err));
   process.exit(1);
 });

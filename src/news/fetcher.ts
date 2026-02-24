@@ -7,21 +7,17 @@ import https from "https";
 
 function get(url: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const req = https.get(
-      url,
-      { headers: { "User-Agent": "openclaw-trader/0.1.0" } },
-      (res) => {
-        let data = "";
-        res.on("data", (c) => (data += c));
-        res.on("end", () => {
-          try {
-            resolve(JSON.parse(data));
-          } catch {
-            reject(new Error(`Parse failed: ${data.slice(0, 200)}`));
-          }
-        });
-      }
-    );
+    const req = https.get(url, { headers: { "User-Agent": "openclaw-trader/0.1.0" } }, (res) => {
+      let data = "";
+      res.on("data", (c) => (data += c));
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (_e: unknown) {
+          reject(new Error(`Parse failed: ${data.slice(0, 200)}`));
+        }
+      });
+    });
     req.on("error", reject);
     req.setTimeout(10000, () => req.destroy(new Error("Timeout")));
   });
@@ -32,17 +28,18 @@ function get(url: string): Promise<unknown> {
 // ─────────────────────────────────────────────────────
 
 export interface FearGreedData {
-  value: number;       // 0-100
-  label: string;       // "Extreme Fear" | "Fear" | "Neutral" | "Greed" | "Extreme Greed"
+  value: number; // 0-100
+  label: string; // "Extreme Fear" | "Fear" | "Neutral" | "Greed" | "Extreme Greed"
   timestamp: number;
 }
 
 export async function getFearGreedIndex(): Promise<FearGreedData> {
-  const data = (await get(
-    "https://api.alternative.me/fng/?limit=1&format=json"
-  )) as { data: Array<{ value: string; value_classification: string; timestamp: string }> };
+  const data = (await get("https://api.alternative.me/fng/?limit=1&format=json")) as {
+    data: { value: string; value_classification: string; timestamp: string }[];
+  };
 
   const item = data.data[0];
+  if (!item) throw new Error("Fear & Greed API 返回空数据");
   return {
     value: parseInt(item.value),
     label: item.value_classification,
@@ -60,18 +57,42 @@ export interface NewsItem {
   source: string;
   publishedAt: string;
   currencies?: string[]; // 相关币种，如 ["BTC", "ETH"]
-  categories?: string;   // 如 "MARKET|REGULATION|BTC"
-  important?: boolean;   // 是否判定为重要新闻
+  categories?: string; // 如 "MARKET|REGULATION|BTC"
+  important?: boolean; // 是否判定为重要新闻
 }
 
 // 高影响关键词（出现则标记 important=true）
 const IMPORTANT_KEYWORDS = [
-  "crash", "collapse", "dump", "plunge", "hack", "exploit", "breach",
-  "ban", "regulation", "sec", "etf", "approved", "rejected",
-  "liquidation", "bankruptcy", "shutdown", "fraud", "scam",
-  "all-time high", "ath", "breakout", "capitulation",
-  "federal reserve", "fed rate", "inflation", "sanctions",
-  "surge", "rally", "bull", "bear",
+  "crash",
+  "collapse",
+  "dump",
+  "plunge",
+  "hack",
+  "exploit",
+  "breach",
+  "ban",
+  "regulation",
+  "sec",
+  "etf",
+  "approved",
+  "rejected",
+  "liquidation",
+  "bankruptcy",
+  "shutdown",
+  "fraud",
+  "scam",
+  "all-time high",
+  "ath",
+  "breakout",
+  "capitulation",
+  "federal reserve",
+  "fed rate",
+  "inflation",
+  "sanctions",
+  "surge",
+  "rally",
+  "bull",
+  "bear",
 ];
 
 // 高影响类别
@@ -110,13 +131,13 @@ export async function getLatestNews(limit = 30): Promise<NewsItem[]> {
     const data = (await get(
       `https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=${limit}&sortOrder=latest`
     )) as {
-      Data: Array<{
+      Data: {
         title: string;
         url: string;
         source_info: { name: string };
         published_on: number;
         categories: string;
-      }>;
+      }[];
     };
 
     return data.Data.map((item) => {
@@ -124,14 +145,14 @@ export async function getLatestNews(limit = 30): Promise<NewsItem[]> {
       return {
         title: item.title,
         url: item.url,
-        source: item.source_info?.name || "CryptoCompare",
+        source: item.source_info.name || "CryptoCompare",
         publishedAt: new Date(item.published_on * 1000).toISOString(),
         currencies: extractCurrencies(item.title, categories),
         categories,
         important: isImportant(item.title, categories),
       };
     });
-  } catch {
+  } catch (_e: unknown) {
     return [];
   }
 }
@@ -148,9 +169,7 @@ export interface GlobalMarketData {
 }
 
 export async function getGlobalMarket(): Promise<GlobalMarketData> {
-  const data = (await get(
-    "https://api.coingecko.com/api/v3/global"
-  )) as {
+  const data = (await get("https://api.coingecko.com/api/v3/global")) as {
     data: {
       total_market_cap: { usd: number };
       total_volume: { usd: number };
@@ -177,12 +196,12 @@ export interface PriceChange {
   price: number;
 }
 
-export async function getPriceChanges(
-  symbols: string[]
-): Promise<PriceChange[]> {
-  const data = (await get(
-    "https://api.binance.com/api/v3/ticker/24hr"
-  )) as Array<{ symbol: string; priceChangePercent: string; lastPrice: string }>;
+export async function getPriceChanges(symbols: string[]): Promise<PriceChange[]> {
+  const data = (await get("https://api.binance.com/api/v3/ticker/24hr")) as {
+    symbol: string;
+    priceChangePercent: string;
+    lastPrice: string;
+  }[];
 
   return data
     .filter((t) => symbols.includes(t.symbol))

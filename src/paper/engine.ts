@@ -20,7 +20,7 @@ import {
 
 export interface PaperEngineResult {
   trade: PaperTrade | null;
-  skipped?: string;
+  skipped?: string | undefined;
   stopLossTriggered: boolean;
   stopLossTrade: PaperTrade | null;
   account: PaperAccount;
@@ -44,10 +44,7 @@ function paperOpts(cfg: RuntimeConfig) {
 /**
  * 处理信号：开仓/平仓（含仓位数量、单币占比、每日亏损检查）
  */
-export function handleSignal(
-  signal: Signal,
-  cfg: RuntimeConfig
-): PaperEngineResult {
+export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineResult {
   const sid = scenarioId(cfg);
   const account = loadAccount(cfg.paper.initial_usdt, sid);
   resetDailyLossIfNeeded(account);
@@ -61,9 +58,8 @@ export function handleSignal(
       skipped = `已达最大持仓数 ${cfg.risk.max_positions}，跳过 ${signal.symbol}`;
     } else {
       const equity = calcTotalEquity(account, { [signal.symbol]: signal.price });
-      const symbolValue = account.positions[signal.symbol]
-        ? account.positions[signal.symbol].quantity * signal.price
-        : 0;
+      const existingPos = account.positions[signal.symbol];
+      const symbolValue = existingPos ? existingPos.quantity * signal.price : 0;
       if (symbolValue / equity >= cfg.risk.max_position_per_symbol) {
         skipped = `${signal.symbol} 已达单币最大仓位 ${(cfg.risk.max_position_per_symbol * 100).toFixed(0)}%，跳过`;
       } else if ((account.dailyLoss.loss / equity) * 100 >= cfg.risk.daily_loss_limit_percent) {
@@ -72,10 +68,22 @@ export function handleSignal(
     }
 
     if (!skipped) {
-      trade = paperBuy(account, signal.symbol, signal.price, signal.reason.join(", "), paperOpts(cfg));
+      trade = paperBuy(
+        account,
+        signal.symbol,
+        signal.price,
+        signal.reason.join(", "),
+        paperOpts(cfg)
+      );
     }
   } else if (signal.type === "sell") {
-    trade = paperSell(account, signal.symbol, signal.price, signal.reason.join(", "), paperOpts(cfg));
+    trade = paperSell(
+      account,
+      signal.symbol,
+      signal.price,
+      signal.reason.join(", "),
+      paperOpts(cfg)
+    );
   }
 
   saveAccount(account, sid);
@@ -88,11 +96,21 @@ export function handleSignal(
 export function checkExitConditions(
   prices: Record<string, number>,
   cfg: RuntimeConfig
-): Array<{ symbol: string; trade: PaperTrade; reason: "stop_loss" | "take_profit" | "trailing_stop"; pnlPercent: number }> {
+): {
+  symbol: string;
+  trade: PaperTrade;
+  reason: "stop_loss" | "take_profit" | "trailing_stop";
+  pnlPercent: number;
+}[] {
   const sid = scenarioId(cfg);
   const account = loadAccount(cfg.paper.initial_usdt, sid);
   resetDailyLossIfNeeded(account);
-  const triggered: Array<{ symbol: string; trade: PaperTrade; reason: "stop_loss" | "take_profit" | "trailing_stop"; pnlPercent: number }> = [];
+  const triggered: {
+    symbol: string;
+    trade: PaperTrade;
+    reason: "stop_loss" | "take_profit" | "trailing_stop";
+    pnlPercent: number;
+  }[] = [];
 
   for (const [symbol, pos] of Object.entries(account.positions)) {
     const currentPrice = prices[symbol];
@@ -133,7 +151,7 @@ export function checkExitConditions(
 export function checkStopLoss(
   prices: Record<string, number>,
   cfg: RuntimeConfig
-): Array<{ symbol: string; trade: PaperTrade; loss: number }> {
+): { symbol: string; trade: PaperTrade; loss: number }[] {
   return checkExitConditions(prices, cfg)
     .filter((r) => r.reason === "stop_loss")
     .map((r) => ({ symbol: r.symbol, trade: r.trade, loss: r.pnlPercent / 100 }));
@@ -142,7 +160,9 @@ export function checkStopLoss(
 export function checkMaxDrawdown(prices: Record<string, number>, cfg: RuntimeConfig): boolean {
   const account = loadAccount(cfg.paper.initial_usdt, scenarioId(cfg));
   const equity = calcTotalEquity(account, prices);
-  return (equity - account.initialUsdt) / account.initialUsdt <= -cfg.risk.max_total_loss_percent / 100;
+  return (
+    (equity - account.initialUsdt) / account.initialUsdt <= -cfg.risk.max_total_loss_percent / 100
+  );
 }
 
 export function checkDailyLossLimit(prices: Record<string, number>, cfg: RuntimeConfig): boolean {
@@ -165,8 +185,7 @@ export function formatSummaryMessage(
   const pnlEmoji = summary.totalPnl >= 0 ? "📈" : "📉";
   const pnlSign = summary.totalPnl >= 0 ? "+" : "";
   const marketLabel = cfg.exchange.market.toUpperCase();
-  const leverageLabel = cfg.exchange.leverage?.enabled
-    ? ` ${cfg.exchange.leverage.default}x` : "";
+  const leverageLabel = cfg.exchange.leverage?.enabled ? ` ${cfg.exchange.leverage.default}x` : "";
 
   const lines: string[] = [
     `📊 **[${marketLabel}${leverageLabel}]** ${new Date().toLocaleString("zh-CN")}`,

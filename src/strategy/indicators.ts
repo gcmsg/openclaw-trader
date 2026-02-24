@@ -13,7 +13,8 @@ export function ema(values: number[], period: number): number {
   const k = 2 / (period + 1);
   let result = sma(values.slice(0, period), period);
   for (let i = period; i < values.length; i++) {
-    result = values[i] * k + result * (1 - k);
+    // 守卫：slice + length check 确保 i < values.length，非空断言安全
+    result = values[i]! * k + result * (1 - k);
   }
   return result;
 }
@@ -21,7 +22,8 @@ export function ema(values: number[], period: number): number {
 /** 相对强弱指数（RSI） */
 export function rsi(closes: number[], period = 14): number {
   if (closes.length < period + 1) return NaN;
-  const changes = closes.slice(1).map((c, i) => c - closes[i]);
+  // closes.slice(1).map 的 index 与 closes 对齐（i 在 0..length-2 范围内）
+  const changes = closes.slice(1).map((c, i) => c - closes[i]!);
   const recent = changes.slice(-period);
 
   let gains = 0;
@@ -72,8 +74,9 @@ export function macd(
 
   if (isNaN(signalLine) || isNaN(prevSignalLine)) return null;
 
-  const currentMacd = macdLine[macdLine.length - 1];
-  const prevMacd = macdLine[macdLine.length - 2];
+  // macdLine.length >= signalPeriod + 1 > 1，末尾两个元素必存在
+  const currentMacd = macdLine[macdLine.length - 1]!;
+  const prevMacd = macdLine[macdLine.length - 2]!;
   const histogram = currentMacd - signalLine;
   const prevHistogram = prevMacd - prevSignalLine;
 
@@ -94,7 +97,8 @@ export function macd(
 export function volumeRatio(volumes: number[], period = 20): number {
   if (volumes.length < period + 1) return NaN;
   const avg = sma(volumes.slice(0, -1), period); // 不含当前 K 线
-  const current = volumes[volumes.length - 1];
+  // volumes.length >= period + 1 > 0，末尾元素必存在
+  const current = volumes[volumes.length - 1]!;
   return current / avg;
 }
 
@@ -117,16 +121,19 @@ export function calculateIndicators(
   const prevMaShort = sma(prevCloses, maShortPeriod);
   const prevMaLong = sma(prevCloses, maLongPeriod);
   const rsiValue = rsi(closes, rsiPeriod);
-  const price = closes[closes.length - 1];
 
   if (isNaN(maShort) || isNaN(maLong) || isNaN(rsiValue)) return null;
 
+  // klines.length >= maLongPeriod + 1 > 0，末尾元素必存在
+  const price = closes[closes.length - 1]!;
+  const currentVolume = volumes[volumes.length - 1]!;
+
   // 成交量
   const volPeriod = 20;
-  const avgVol = volumes.length > volPeriod
-    ? sma(volumes.slice(0, -1), volPeriod)
-    : sma(volumes, volumes.length);
-  const currentVolume = volumes[volumes.length - 1];
+  const avgVol =
+    volumes.length > volPeriod
+      ? sma(volumes.slice(0, -1), volPeriod)
+      : sma(volumes, volumes.length);
 
   const result: Indicators = {
     maShort,

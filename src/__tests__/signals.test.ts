@@ -30,22 +30,36 @@ function makeConfig(
     symbols: ["BTCUSDT"],
     timeframe: "1h",
     strategy: {
-      name: "test", enabled: true,
+      name: "test",
+      enabled: true,
       ma: { short: 20, long: 60 },
       rsi: { period: 14, oversold: rsiOversold, overbought: rsiOverbought },
       macd: { enabled: false, fast: 12, slow: 26, signal: 9 },
     },
     signals: { buy: buyConditions, sell: sellConditions },
     risk: {
-      stop_loss_percent: 5, take_profit_percent: 10,
+      stop_loss_percent: 5,
+      take_profit_percent: 10,
       trailing_stop: { enabled: false, activation_percent: 5, callback_percent: 2 },
-      max_total_loss_percent: 20, position_ratio: 0.2,
-      max_positions: 4, max_position_per_symbol: 0.3, daily_loss_limit_percent: 8,
+      max_total_loss_percent: 20,
+      position_ratio: 0.2,
+      max_positions: 4,
+      max_position_per_symbol: 0.3,
+      daily_loss_limit_percent: 8,
     },
-    execution: { order_type: "market", limit_order_offset_percent: 0.1, min_order_usdt: 10, limit_order_timeout_seconds: 300 },
+    execution: {
+      order_type: "market",
+      limit_order_offset_percent: 0.1,
+      min_order_usdt: 10,
+      limit_order_timeout_seconds: 300,
+    },
     notify: {
-      on_signal: true, on_trade: true, on_stop_loss: true,
-      on_take_profit: true, on_error: true, on_daily_summary: true,
+      on_signal: true,
+      on_trade: true,
+      on_stop_loss: true,
+      on_take_profit: true,
+      on_error: true,
+      on_daily_summary: true,
       min_interval_minutes: 30,
     },
     news: { enabled: true, interval_hours: 4, price_alert_threshold: 5, fear_greed_alert: 15 },
@@ -121,8 +135,10 @@ describe("detectSignal() - MA 趋势", () => {
 
   it("ma_golden_cross: 短线上穿长线时触发", () => {
     const ind = makeIndicators({
-      maShort: 105, maLong: 100,
-      prevMaShort: 98, prevMaLong: 100, // 前一根：短 < 长
+      maShort: 105,
+      maLong: 100,
+      prevMaShort: 98,
+      prevMaLong: 100, // 前一根：短 < 长
     });
     const cfg = makeConfig(["ma_golden_cross"], []);
     expect(detectSignal("X", ind, cfg).type).toBe("buy");
@@ -130,8 +146,10 @@ describe("detectSignal() - MA 趋势", () => {
 
   it("ma_golden_cross: 短线已在长线上方（非交叉）时不触发", () => {
     const ind = makeIndicators({
-      maShort: 105, maLong: 100,
-      prevMaShort: 102, prevMaLong: 100, // 前一根也是短 > 长
+      maShort: 105,
+      maLong: 100,
+      prevMaShort: 102,
+      prevMaLong: 100, // 前一根也是短 > 长
     });
     const cfg = makeConfig(["ma_golden_cross"], []);
     expect(detectSignal("X", ind, cfg).type).toBe("none");
@@ -139,8 +157,10 @@ describe("detectSignal() - MA 趋势", () => {
 
   it("ma_death_cross: 短线下穿长线时触发", () => {
     const ind = makeIndicators({
-      maShort: 95, maLong: 100,
-      prevMaShort: 102, prevMaLong: 100, // 前一根：短 > 长
+      maShort: 95,
+      maLong: 100,
+      prevMaShort: 102,
+      prevMaLong: 100, // 前一根：短 > 长
     });
     const cfg = makeConfig([], ["ma_death_cross"]);
     expect(detectSignal("X", ind, cfg).type).toBe("sell");

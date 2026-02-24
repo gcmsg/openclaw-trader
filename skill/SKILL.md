@@ -1,27 +1,31 @@
 ---
 name: openclaw-trader
-description: Operate and maintain the openclaw-trader crypto trading bot. Use when the user wants to set up, configure, monitor, or troubleshoot the automated trading system. Covers paper trading, signal monitoring, news sentiment analysis, health checks, strategy tuning, bug fixes, and weekly review reports. Also use when the user asks about trading signals, account status, cron jobs, or strategy parameters.
+description: Operate and maintain the openclaw-trader crypto trading bot. Use when the user wants to set up, configure, monitor, backtest, or troubleshoot the automated trading system. Covers paper trading, backtesting, signal monitoring, news sentiment analysis, health checks, strategy tuning, bug fixes, and weekly review reports. Also use when the user asks about trading signals, account status, cron jobs, backtesting results, or strategy parameters.
 ---
 
 # openclaw-trader
 
-AI-powered crypto trading bot with paper trading, technical indicators (MA + RSI + MACD), news sentiment gating, and automated health monitoring.
+AI-powered crypto trading bot with paper trading, backtesting engine, technical indicators (MA + RSI + MACD), news sentiment gating, and automated health monitoring.
 
 ## Project Layout
 
 ```
 openclaw-trader/
 ├── config/strategy.yaml    ← All strategy + schedule config (single source of truth)
+├── config/strategies/      ← Named strategy profiles (aggressive/conservative/…)
 ├── src/
 │   ├── monitor.ts          ← Price scanner (runs every minute)
 │   ├── exchange/binance.ts ← Binance REST API
 │   ├── strategy/           ← indicators.ts, signals.ts
 │   ├── paper/              ← account.ts, engine.ts, status.ts
+│   ├── backtest/           ← fetcher.ts, metrics.ts, runner.ts, report.ts
 │   ├── news/               ← fetcher.ts, monitor.ts, sentiment-gate.ts
 │   ├── health/             ← heartbeat.ts, checker.ts
 │   ├── report/weekly.ts    ← Weekly review generator
-│   └── scripts/sync-cron.ts ← Cron sync from config
-├── logs/                   ← Runtime logs and state files
+│   └── scripts/            ← backtest.ts (CLI), sync-cron.ts
+├── logs/
+│   ├── backtest/           ← Backtest JSON reports
+│   └── kline-cache/        ← Cached historical K-line data
 ├── AGENT_POLICY.md         ← Agent authorization boundary (read before acting)
 └── .env                    ← API keys (not committed)
 ```
@@ -54,6 +58,20 @@ Set `mode` in `config/strategy.yaml`:
 - Any real-money operations
 
 ## Key Workflows
+
+### Run a backtest
+```bash
+# Default strategy, 90 days
+npm run backtest
+
+# Specific strategy + custom params
+npm run backtest -- --strategy conservative --days 90
+npm run backtest -- --strategy aggressive --symbols BTCUSDT,ETHUSDT --days 60 --timeframe 4h
+
+# Compare all strategies
+npm run backtest:compare -- --days 90
+```
+Results saved to `logs/backtest/`. Use `--no-save` to skip file output.
 
 ### Check system health
 ```bash
@@ -106,6 +124,8 @@ Sentiment gate adjusts position size before execution. See `references/config.md
 | `logs/paper-account.json` | Paper trading state |
 | `logs/news-report.json` | Latest sentiment report |
 | `logs/reports/weekly-*.json` | Weekly review data |
+| `logs/backtest/*.json` | Backtest results |
+| `logs/kline-cache/` | Cached historical K-line data |
 
 ## References
 

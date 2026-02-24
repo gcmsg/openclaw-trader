@@ -35,7 +35,9 @@ function makeAccount(overrides: Partial<PaperAccount> = {}): PaperAccount {
 
 describe("paperBuy()", () => {
   let account: PaperAccount;
-  beforeEach(() => { account = makeAccount(); });
+  beforeEach(() => {
+    account = makeAccount();
+  });
 
   it("成功买入后 USDT 减少、持仓增加", () => {
     const trade = paperBuy(account, "BTCUSDT", 50000, "test", { positionRatio: 0.2, ...NO_SLIP });
@@ -52,21 +54,29 @@ describe("paperBuy()", () => {
 
   it("持仓数量 = (投入 - 手续费) / 价格", () => {
     paperBuy(account, "BTCUSDT", 50000, "test", { positionRatio: 0.2, ...NO_SLIP });
-    const pos = account.positions["BTCUSDT"];
+    const pos = account.positions["BTCUSDT"]!;
     const spent = 200;
     const expectedQty = (spent * (1 - 0.001)) / 50000;
     expect(pos.quantity).toBeCloseTo(expectedQty, 8);
   });
 
   it("买入时设置止损价格（默认 5%）", () => {
-    paperBuy(account, "BTCUSDT", 50000, "test", { positionRatio: 0.2, stopLossPercent: 5, ...NO_SLIP });
-    const pos = account.positions["BTCUSDT"];
+    paperBuy(account, "BTCUSDT", 50000, "test", {
+      positionRatio: 0.2,
+      stopLossPercent: 5,
+      ...NO_SLIP,
+    });
+    const pos = account.positions["BTCUSDT"]!;
     expect(pos.stopLoss).toBeCloseTo(50000 * 0.95, 0);
   });
 
   it("买入时设置止盈价格（默认 15%）", () => {
-    paperBuy(account, "BTCUSDT", 50000, "test", { positionRatio: 0.2, takeProfitPercent: 15, ...NO_SLIP });
-    const pos = account.positions["BTCUSDT"];
+    paperBuy(account, "BTCUSDT", 50000, "test", {
+      positionRatio: 0.2,
+      takeProfitPercent: 15,
+      ...NO_SLIP,
+    });
+    const pos = account.positions["BTCUSDT"]!;
     expect(pos.takeProfit).toBeCloseTo(50000 * 1.15, 0);
   });
 
@@ -88,15 +98,19 @@ describe("paperBuy()", () => {
     account.usdt = 30;
     account.initialUsdt = 30;
     // 30 * 20% = 6 USDT < minOrderUsdt=10
-    const trade = paperBuy(account, "BTCUSDT", 50000, "test", { positionRatio: 0.2, minOrderUsdt: 10, ...NO_SLIP });
+    const trade = paperBuy(account, "BTCUSDT", 50000, "test", {
+      positionRatio: 0.2,
+      minOrderUsdt: 10,
+      ...NO_SLIP,
+    });
     expect(trade).toBeNull();
   });
 
   it("买入后添加到 trades 记录", () => {
     paperBuy(account, "BTCUSDT", 50000, "test", { positionRatio: 0.2, ...NO_SLIP });
     expect(account.trades).toHaveLength(1);
-    expect(account.trades[0].side).toBe("buy");
-    expect(account.trades[0].symbol).toBe("BTCUSDT");
+    expect(account.trades[0]!.side).toBe("buy");
+    expect(account.trades[0]!.symbol).toBe("BTCUSDT");
   });
 
   it("可以买入不同币种", () => {
@@ -106,8 +120,12 @@ describe("paperBuy()", () => {
   });
 
   it("滑点使成交价略高于当前价", () => {
-    paperBuy(account, "BTCUSDT", 50000, "test", { positionRatio: 0.2, slippagePercent: 0.1, feeRate: 0 });
-    const pos = account.positions["BTCUSDT"];
+    paperBuy(account, "BTCUSDT", 50000, "test", {
+      positionRatio: 0.2,
+      slippagePercent: 0.1,
+      feeRate: 0,
+    });
+    const pos = account.positions["BTCUSDT"]!;
     // 滑点 0.1% → execPrice = 50050
     expect(pos.entryPrice).toBeCloseTo(50050, 0);
   });
@@ -151,7 +169,7 @@ describe("paperSell()", () => {
   });
 
   it("卖出手续费从收入中扣除", () => {
-    const pos = account.positions["BTCUSDT"];
+    const pos = account.positions["BTCUSDT"]!;
     const grossUsdt = pos.quantity * 50000;
     const expectedFee = grossUsdt * 0.001;
     const trade = paperSell(account, "BTCUSDT", 50000, "test", NO_SLIP);
@@ -162,7 +180,7 @@ describe("paperSell()", () => {
     paperSell(account, "BTCUSDT", 55000, "test", NO_SLIP);
     const sells = account.trades.filter((t) => t.side === "sell");
     expect(sells).toHaveLength(1);
-    expect(sells[0].pnl).toBeDefined();
+    expect(sells[0]!.pnl).toBeDefined();
   });
 
   it("盈亏百分比计算正确（约 +20%，扣除双边手续费）", () => {
@@ -172,7 +190,10 @@ describe("paperSell()", () => {
   });
 
   it("滑点使卖出成交价略低于当前价", () => {
-    const trade = paperSell(account, "BTCUSDT", 50000, "test", { slippagePercent: 0.1, feeRate: 0 });
+    const trade = paperSell(account, "BTCUSDT", 50000, "test", {
+      slippagePercent: 0.1,
+      feeRate: 0,
+    });
     // 滑点 0.1% → execPrice = 49950
     expect(trade!.price).toBeCloseTo(49950, 0);
   });
@@ -224,9 +245,48 @@ describe("getAccountSummary()", () => {
   it("胜率计算：2胜1负 = 66.7%", () => {
     const account = makeAccount();
     account.trades = [
-      { id: "1", symbol: "A", side: "sell", quantity: 1, price: 110, usdtAmount: 109.89, fee: 0.11, slippage: 0, timestamp: 1, reason: "", pnl: 9, pnlPercent: 0.09 },
-      { id: "2", symbol: "B", side: "sell", quantity: 1, price: 90, usdtAmount: 89.91, fee: 0.09, slippage: 0, timestamp: 2, reason: "", pnl: -11, pnlPercent: -0.11 },
-      { id: "3", symbol: "C", side: "sell", quantity: 1, price: 120, usdtAmount: 119.88, fee: 0.12, slippage: 0, timestamp: 3, reason: "", pnl: 19, pnlPercent: 0.19 },
+      {
+        id: "1",
+        symbol: "A",
+        side: "sell",
+        quantity: 1,
+        price: 110,
+        usdtAmount: 109.89,
+        fee: 0.11,
+        slippage: 0,
+        timestamp: 1,
+        reason: "",
+        pnl: 9,
+        pnlPercent: 0.09,
+      },
+      {
+        id: "2",
+        symbol: "B",
+        side: "sell",
+        quantity: 1,
+        price: 90,
+        usdtAmount: 89.91,
+        fee: 0.09,
+        slippage: 0,
+        timestamp: 2,
+        reason: "",
+        pnl: -11,
+        pnlPercent: -0.11,
+      },
+      {
+        id: "3",
+        symbol: "C",
+        side: "sell",
+        quantity: 1,
+        price: 120,
+        usdtAmount: 119.88,
+        fee: 0.12,
+        slippage: 0,
+        timestamp: 3,
+        reason: "",
+        pnl: 19,
+        pnlPercent: 0.19,
+      },
     ];
     const summary = getAccountSummary(account, {});
     expect(summary.winRate).toBeCloseTo(2 / 3, 2);
@@ -244,9 +304,14 @@ describe("getAccountSummary()", () => {
 
   it("持仓摘要包含止损和止盈价格", () => {
     const account = makeAccount();
-    paperBuy(account, "BTCUSDT", 50000, "test", { positionRatio: 0.2, stopLossPercent: 5, takeProfitPercent: 15, ...NO_SLIP });
+    paperBuy(account, "BTCUSDT", 50000, "test", {
+      positionRatio: 0.2,
+      stopLossPercent: 5,
+      takeProfitPercent: 15,
+      ...NO_SLIP,
+    });
     const summary = getAccountSummary(account, { BTCUSDT: 50000 });
-    const pos = summary.positions[0];
+    const pos = summary.positions[0]!;
     expect(pos.stopLoss).toBeCloseTo(47500, 0);
     expect(pos.takeProfit).toBeCloseTo(57500, 0);
   });

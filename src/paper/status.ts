@@ -40,8 +40,19 @@ for (const p of priceChanges) prices[p.symbol] = p.price;
 // 详细视图（单个场景）
 // ─────────────────────────────────────────────────────
 
-function printDetail(scenarioId: string, scenarioName: string, strategyId: string, initialUsdt: number): void {
-  const profile = (() => { try { return loadStrategyProfile(strategyId); } catch { return null; } })();
+function printDetail(
+  scenarioId: string,
+  scenarioName: string,
+  strategyId: string,
+  initialUsdt: number
+): void {
+  const profile = (() => {
+    try {
+      return loadStrategyProfile(strategyId);
+    } catch (_e: unknown) {
+      return null;
+    }
+  })();
   const account = fs.existsSync(getAccountPath(scenarioId))
     ? loadAccount(initialUsdt, scenarioId)
     : null;
@@ -49,7 +60,7 @@ function printDetail(scenarioId: string, scenarioName: string, strategyId: strin
   console.log(`\n${"═".repeat(60)}`);
   console.log(`  📊 ${scenarioName}  [${strategyId}]`);
   if (profile?.description) console.log(`  ℹ️  ${profile.description}`);
-  console.log(`${"═".repeat(60)}`);
+  console.log("═".repeat(60));
 
   if (!account) {
     console.log(`  ⏳ 账户未建立（等待第一个交易信号）`);
@@ -63,9 +74,11 @@ function printDetail(scenarioId: string, scenarioName: string, strategyId: strin
 
   console.log(`  💰 USDT 余额    : $${summary.usdt.toFixed(2)}`);
   console.log(`  💼 总资产       : $${summary.totalEquity.toFixed(2)}`);
-  console.log(`  ${pnlEmoji} 总盈亏         : ${pnlSign}$${summary.totalPnl.toFixed(2)} (${pnlSign}${(summary.totalPnlPercent * 100).toFixed(2)}%)`);
+  console.log(
+    `  ${pnlEmoji} 总盈亏         : ${pnlSign}$${summary.totalPnl.toFixed(2)} (${pnlSign}${(summary.totalPnlPercent * 100).toFixed(2)}%)`
+  );
   console.log(`  🔴 今日亏损     : $${summary.dailyLoss.toFixed(2)}`);
-  console.log(`${"─".repeat(60)}`);
+  console.log("─".repeat(60));
 
   if (summary.positions.length === 0) {
     console.log(`  📭 当前无持仓`);
@@ -74,23 +87,29 @@ function printDetail(scenarioId: string, scenarioName: string, strategyId: strin
     for (const pos of summary.positions) {
       const sign = pos.unrealizedPnl >= 0 ? "+" : "";
       const emoji = pos.unrealizedPnl >= 0 ? "🟢" : "🔴";
-      console.log(`     ${emoji} ${pos.symbol.padEnd(10)} 买入: $${pos.entryPrice.toFixed(4)}  现价: $${pos.currentPrice.toFixed(4)}  盈亏: ${sign}${(pos.unrealizedPnlPercent * 100).toFixed(2)}%`);
+      console.log(
+        `     ${emoji} ${pos.symbol.padEnd(10)} 买入: $${pos.entryPrice.toFixed(4)}  现价: $${pos.currentPrice.toFixed(4)}  盈亏: ${sign}${(pos.unrealizedPnlPercent * 100).toFixed(2)}%`
+      );
       console.log(`        止损: $${pos.stopLoss.toFixed(4)}  止盈: $${pos.takeProfit.toFixed(4)}`);
     }
   }
 
-  console.log(`${"─".repeat(60)}`);
-  console.log(`  📈 总交易次数   : ${summary.tradeCount}   胜率: ${summary.tradeCount > 0 ? (summary.winRate * 100).toFixed(0) + "%" : "暂无"}`);
+  console.log("─".repeat(60));
+  console.log(
+    `  📈 总交易次数   : ${summary.tradeCount}   胜率: ${summary.tradeCount > 0 ? (summary.winRate * 100).toFixed(0) + "%" : "暂无"}`
+  );
 
   const recentTrades: PaperTrade[] = account.trades.slice(-8).reverse();
   if (recentTrades.length > 0) {
-    console.log(`${"─".repeat(60)}`);
+    console.log("─".repeat(60));
     console.log(`  🕐 最近交易:`);
     for (const t of recentTrades) {
       const emoji = t.side === "buy" ? "🟢" : "🔴";
       const pnl = t.pnl !== undefined ? `  ${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)}` : "";
       const time = new Date(t.timestamp).toLocaleString("zh-CN");
-      console.log(`     ${emoji} [${time}] ${t.side === "buy" ? "买" : "卖"} ${t.symbol} @$${t.price.toFixed(4)}${pnl}`);
+      console.log(
+        `     ${emoji} [${time}] ${t.side === "buy" ? "买" : "卖"} ${t.symbol} @$${t.price.toFixed(4)}${pnl}`
+      );
     }
   }
   console.log(`${"═".repeat(60)}\n`);
@@ -103,31 +122,46 @@ function printDetail(scenarioId: string, scenarioName: string, strategyId: strin
 function printSummary(): void {
   console.log(`\n${"═".repeat(70)}`);
   console.log(`  📊 模拟盘快览  ${new Date().toLocaleString("zh-CN")}`);
-  console.log(`${"═".repeat(70)}`);
-  console.log(`  ${"场景".padEnd(24)} ${"策略".padEnd(14)} ${"市场".padEnd(12)} ${"总盈亏".padStart(10)}  胜率`);
-  console.log(`${"─".repeat(70)}`);
+  console.log("═".repeat(70));
+  console.log(
+    `  ${"场景".padEnd(24)} ${"策略".padEnd(14)} ${"市场".padEnd(12)} ${"总盈亏".padStart(10)}  胜率`
+  );
+  console.log("─".repeat(70));
 
   for (const s of allScenarios) {
     if (!fs.existsSync(getAccountPath(s.id))) {
-      console.log(`  ${s.name.padEnd(24)} ${s.strategy_id.padEnd(14)} ${s.exchange.market.toUpperCase().padEnd(12)} ${"[无数据]".padStart(10)}`);
+      console.log(
+        `  ${s.name.padEnd(24)} ${s.strategy_id.padEnd(14)} ${s.exchange.market.toUpperCase().padEnd(12)} ${"[无数据]".padStart(10)}`
+      );
       continue;
     }
     const account = loadAccount(s.initial_usdt, s.id);
-    const equity = account.usdt + Object.values(account.positions).reduce((sum, pos) => {
-      const px = prices[pos.symbol]; return px ? sum + pos.quantity * px : sum;
-    }, 0);
-    const pnlPct = (equity - account.initialUsdt) / account.initialUsdt * 100;
+    const equity =
+      account.usdt +
+      Object.values(account.positions).reduce((sum, pos) => {
+        const px = prices[pos.symbol];
+        return px ? sum + pos.quantity * px : sum;
+      }, 0);
+    const pnlPct = ((equity - account.initialUsdt) / account.initialUsdt) * 100;
     const sells = account.trades.filter((t) => t.side === "sell" && t.pnl !== undefined);
     const wins = sells.filter((t) => (t.pnl ?? 0) > 0).length;
-    const wr = sells.length > 0 ? `${(wins / sells.length * 100).toFixed(0)}%` : "--";
+    const wr = sells.length > 0 ? `${((wins / sells.length) * 100).toFixed(0)}%` : "--";
     const pnlStr = `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%`;
 
-    const profile = (() => { try { return loadStrategyProfile(s.strategy_id); } catch { return null; } })();
+    const profile = (() => {
+      try {
+        return loadStrategyProfile(s.strategy_id);
+      } catch (_e: unknown) {
+        return null;
+      }
+    })();
     const stratName = (profile?.name ?? s.strategy_id).padEnd(14).slice(0, 14);
 
-    console.log(`  ${s.name.padEnd(24)} ${stratName} ${s.exchange.market.toUpperCase().padEnd(12)} ${pnlStr.padStart(10)}  ${wr}`);
+    console.log(
+      `  ${s.name.padEnd(24)} ${stratName} ${s.exchange.market.toUpperCase().padEnd(12)} ${pnlStr.padStart(10)}  ${wr}`
+    );
   }
-  console.log(`${"═".repeat(70)}`);
+  console.log("═".repeat(70));
   console.log(`\n  💡 详情: npm run paper:status <scenarioId>`);
   console.log(`  📊 对比: npm run paper:compare\n`);
 }
@@ -138,6 +172,10 @@ function printSummary(): void {
 
 if (filterScenario) {
   const s = allScenarios[0];
+  if (!s) {
+    console.log("未找到匹配场景");
+    process.exit(1);
+  }
   printDetail(s.id, s.name, s.strategy_id, s.initial_usdt);
 } else {
   printSummary();

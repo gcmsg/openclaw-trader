@@ -24,9 +24,8 @@ if (!target) {
 }
 
 const paperCfg = loadPaperConfig();
-const scenarios = target === "all"
-  ? paperCfg.scenarios
-  : paperCfg.scenarios.filter((s) => s.id === target);
+const scenarios =
+  target === "all" ? paperCfg.scenarios : paperCfg.scenarios.filter((s) => s.id === target);
 
 if (scenarios.length === 0) {
   console.log(`未找到场景: ${target}`);
