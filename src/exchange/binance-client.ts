@@ -89,11 +89,11 @@ export interface SymbolInfo {
 const ENDPOINTS = {
   spot: {
     production: "api.binance.com",
-    testnet: "testapi.binance.vision",
+    testnet: "testnet.binance.vision",
   },
   futures: {
     production: "fapi.binance.com",
-    testnet: "testfapi.binance.vision",
+    testnet: "testnet.binancefuture.com",
   },
 } as const;
 
