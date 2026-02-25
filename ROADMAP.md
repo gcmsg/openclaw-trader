@@ -82,6 +82,80 @@ live-monitor.ts 注册 SIGTERM/SIGINT，完成当前轮次后退出。
 
 ---
 
+---
+
+## 🔵 Phase F — Freqtrade 借鉴实现（v0.3 优先项）
+
+> 通过对比 Freqtrade / NautilusTrader / Hummingbot / Jesse 源码，梳理出值得直接借鉴的设计。
+> 核心参考：[freqtrade/freqtrade](https://github.com/freqtrade/freqtrade)（~40k stars，7年生产验证）
+
+### F1 ROI Table 时间衰减止盈 🔴 **高优先级**
+**问题**：固定 `take_profit_percent: 10%` 大多数情况等不到，导致"看着涨然后全跌回来"  
+**Freqtrade 设计**：`minimal_roi` 时间衰减表，持仓越久目标越低  
+```yaml
+minimal_roi:
+  "0":   0.08   # 刚开仓：等 8% 再走
+  "60":  0.04   # 持仓 1h：4% 就走
+  "120": 0.02   # 持仓 2h：2% 就走
+  "240": 0.01   # 持仓 4h：1% 就走
+  "480": 0.00   # 持仓 8h：保本就走
+```
+**预期效果**：实测比固定止盈提升 15-25% 盈利交易比例  
+**实现位置**：`types.ts` + `engine.ts` / `executor.ts` checkExits  
+**对应分批止盈**：可与 `take_profit_stages` 融合为统一出场逻辑
+
+---
+
+### F2 订单超时 + 部分成交处理 🔴 **高优先级**
+**问题**：当前下单后完全不检查成交状态；PARTIALLY_FILLED 会永远挂着；下单失败无重试  
+**Freqtrade 设计**：`unfilledtimeout` 买单 N 分钟未成交→自动取消；卖单→降价重试  
+**实现设计**：
+- `executor.ts`：`pollOrderStatus(orderId, timeoutMs)` — 轮询到 FILLED/CANCELLED/PARTIALLY_FILLED
+- 部分成交：按实际 `executedQty` 更新持仓，取消剩余部分
+- 订单超时（默认 5 分钟）：市价单按当前价补单；限价单取消并重下
+- `live-monitor.ts`：启动时扫描 `account.openOrders`，处理遗留未成交单
+
+---
+
+### F3 回测/实盘统一策略层 🟡 **中优先级**
+**问题**：`monitor.ts`（实盘）和 `backtest/runner.ts`（回测）是两套信号生成代码，容易不同步  
+**NautilusTrader 原则**：策略代码只写一次，通过切换 Data Engine 区分实盘/回测  
+**实现方向**：
+- 抽取 `src/strategy/signal-engine.ts` —— 纯函数：`(klines, indicators, config) → Signal[]`
+- `monitor.ts` 和 `runner.ts` 都调用同一 `signal-engine.ts`，消除逻辑分叉
+- 中期重构，不阻塞当前开发
+
+---
+
+### F4 `confirm_trade_entry()` 防闪崩确认 🟡 **中优先级**
+**问题**：信号触发时价格可能已经大幅偏离（新闻闪崩/滑点），入场前无最终确认  
+**Freqtrade 设计**：`confirm_trade_entry()` 回调 — 检查当前价与信号价偏差 > N% 则取消  
+**实现**：`executor.ts` handleBuy 前加 `entryPriceSlippage` 检查（默认 0.5%，可配置）
+
+---
+
+### F5 Hummingbot 订单状态机 🟡 **中优先级**
+**问题**：当前无订单生命周期追踪，进行中的订单状态不透明  
+**Hummingbot 设计**：`PENDING_CREATE → OPEN → PARTIALLY_FILLED → FILLED/CANCELLED`  
+**实现**：`account.ts` 扩展 `openOrders: Record<string, OrderState>`，持久化到 JSON
+
+---
+
+### F6 SQLite 交易记录数据库 🟢 **低优先级**
+**问题**：`signal-history.jsonl` 是 append-only，无法高效查询/聚合  
+**Freqtrade 设计**：SQLite 存储所有 Trade 记录，支持任意维度查询  
+**评估**：当前 JSONL 在 <1000 笔规模够用；100 笔后考虑迁移
+
+---
+
+### F7 HyperOpt 策略参数自动优化 🟢 **低优先级**
+**问题**：RSI 阈值/MA 周期/止损比例目前手动调参，效率低  
+**Freqtrade 设计**：HyperOpt 在参数空间内做贝叶斯优化，自动找最优区间  
+**实现方向**：`scripts/hyperopt.ts` — 网格搜索 + backtest runner，按 Sharpe 排序输出  
+**前提**：需 Walk-Forward 验证（P4.3）防止过拟合
+
+---
+
 ## 🟠 Phase 4 — 信号质量提升（需要 50+ 真实交易记录）
 
 ### P4.1 信号统计分析
