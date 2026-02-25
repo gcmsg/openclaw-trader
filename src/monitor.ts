@@ -218,6 +218,12 @@ async function scanSymbol(
 
     if (signal.type === "none") return;
 
+    // 🐛 Fix: 通知冷却在 MTF/情绪过滤之前生效，防止被过滤的信号绕过 min_interval_minutes
+    // 若上次信号类型相同且未超过冷却时间，直接跳过（不更新 lastSignals，等冷却到期再统一处理）
+    if (!shouldNotify(state, signal, cfg.notify.min_interval_minutes)) return;
+    // 记录信号时间戳（无论后续是否被 MTF/情绪过滤，均消耗一次冷却窗口）
+    state.lastSignals[signal.symbol] = { type: signal.type, timestamp: Date.now() };
+
     // portfolioRatioOverride：来自引擎（相关性/regime 调整后的仓位比例）
     const portfolioRatioOverride: number | undefined = effectivePositionRatio;
 
@@ -251,8 +257,6 @@ async function scanSymbol(
     if (gate.action === "skip") return;
 
     if (cfg.mode === "paper") {
-      if (!shouldNotify(state, signal, cfg.notify.min_interval_minutes)) return;
-
       let effectiveRatio = "positionRatio" in gate ? gate.positionRatio : baseForGate;
 
       // Kelly 动态仓位（仅开仓信号有效）
@@ -297,12 +301,8 @@ async function scanSymbol(
       if (gate.action === "warn") {
         notifyError(symbol, new Error(`⚠️ 情绪警告：${gate.reason}`));
       }
-      state.lastSignals[signal.symbol] = { type: signal.type, timestamp: Date.now() };
     } else if (cfg.mode === "notify_only" && cfg.notify.on_signal) {
-      if (shouldNotify(state, signal, cfg.notify.min_interval_minutes)) {
-        notifySignal(signal);
-        state.lastSignals[signal.symbol] = { type: signal.type, timestamp: Date.now() };
-      }
+      notifySignal(signal);
     }
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
