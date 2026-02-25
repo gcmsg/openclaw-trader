@@ -64,6 +64,9 @@ signals:
     - rsi_not_overbought   # RSI < 65（未超买，避免追高）
   sell:
     - ma_bearish           # EMA20 < EMA60（趋势反转，离场）
+    # 可选出场条件（P0.2 动量衰竭出场）：
+    # - macd_histogram_shrinking  # MACD 柱状图连续 3 根收缩（趋势减弱）
+    # - rsi_overbought_exit       # RSI > 75 超买止盈（默认75，可设 rsi.overbought_exit）
 
 # ───────────────────────────────────────
 # 风险控制（各场景可单独覆盖部分字段）

@@ -414,3 +414,110 @@ describe("detectSignal() - short / cover 信号（持仓感知）", () => {
     expect(sig.reason).toContain("rsi_oversold");
   });
 });
+
+// ─────────────────────────────────────────────────────
+// P0.2 出场逻辑升级：新信号检测器
+// ─────────────────────────────────────────────────────
+
+describe("macd_histogram_shrinking", () => {
+  it("三根连续收缩时返回 sell（持多头）", () => {
+    const ind = makeIndicators({
+      maShort: 90, maLong: 100, // ma_bearish 也满足，但这里只测 shrinking
+      macd: {
+        macd: 0.1, signal: 0.2, histogram: 0.1,  // 当前柱
+        prevHistogram: 0.5,                        // 前一根更大
+        prevPrevHistogram: 1.0,                    // 前两根最大 → 连续收缩
+      },
+    });
+    const cfg = makeConfig([], ["macd_histogram_shrinking"]);
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    expect(sig.type).toBe("sell");
+    expect(sig.reason).toContain("macd_histogram_shrinking");
+  });
+
+  it("只有两根数据时退化为两根收缩检测", () => {
+    const ind = makeIndicators({
+      macd: {
+        macd: 0.1, signal: 0.2, histogram: 0.2,
+        prevHistogram: 0.5, // 无 prevPrevHistogram → 退化
+      },
+    });
+    const cfg = makeConfig([], ["macd_histogram_shrinking"]);
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    expect(sig.type).toBe("sell");
+  });
+
+  it("柱状图在扩张时不触发", () => {
+    const ind = makeIndicators({
+      macd: {
+        macd: 0.5, signal: 0.2, histogram: 0.3,
+        prevHistogram: 0.1,      // 当前 > 前一根 → 扩张
+        prevPrevHistogram: 0.05,
+      },
+    });
+    const cfg = makeConfig([], ["macd_histogram_shrinking"]);
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    expect(sig.type).toBe("none");
+  });
+
+  it("第二根未收缩时（只有最后一根收缩）不触发三根检测", () => {
+    const ind = makeIndicators({
+      macd: {
+        macd: 0.1, signal: 0.2, histogram: 0.1,
+        prevHistogram: 0.5,
+        prevPrevHistogram: 0.3, // prevPrev < prev → 前两根在扩张，不是连续收缩
+      },
+    });
+    const cfg = makeConfig([], ["macd_histogram_shrinking"]);
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    // twoBarShrink=true but prevPrevHistogram(0.3) < prevHistogram(0.5) is false → false
+    expect(sig.type).toBe("none");
+  });
+
+  it("macd 未启用时不触发", () => {
+    const ind = makeIndicators(); // 默认无 macd 字段
+    const cfg = makeConfig([], ["macd_histogram_shrinking"]);
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    expect(sig.type).toBe("none");
+  });
+});
+
+describe("rsi_overbought_exit", () => {
+  it("RSI > 75 时触发出场（持多头）", () => {
+    const ind = makeIndicators({ rsi: 78 });
+    const cfg = makeConfig([], ["rsi_overbought_exit"]);
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    expect(sig.type).toBe("sell");
+    expect(sig.reason).toContain("rsi_overbought_exit");
+  });
+
+  it("RSI = 75 时不触发（严格大于）", () => {
+    const ind = makeIndicators({ rsi: 75 });
+    const cfg = makeConfig([], ["rsi_overbought_exit"]);
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    expect(sig.type).toBe("none");
+  });
+
+  it("RSI < 75 时不触发", () => {
+    const ind = makeIndicators({ rsi: 72 });
+    const cfg = makeConfig([], ["rsi_overbought_exit"]);
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    expect(sig.type).toBe("none");
+  });
+
+  it("自定义 overbought_exit 阈值生效", () => {
+    const ind = makeIndicators({ rsi: 82 });
+    const cfg = makeConfig([], ["rsi_overbought_exit"]);
+    cfg.strategy.rsi.overbought_exit = 80;
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    expect(sig.type).toBe("sell");
+  });
+
+  it("自定义阈值 80：RSI=79 不触发", () => {
+    const ind = makeIndicators({ rsi: 79 });
+    const cfg = makeConfig([], ["rsi_overbought_exit"]);
+    cfg.strategy.rsi.overbought_exit = 80;
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    expect(sig.type).toBe("none");
+  });
+});

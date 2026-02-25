@@ -32,6 +32,7 @@ export interface MacdResult {
   prevMacd?: number;
   prevSignal?: number;
   prevHistogram?: number;
+  prevPrevHistogram?: number; // 第 -3 根柱，用于三根连续收缩检测
 }
 
 export interface Indicators {
@@ -143,7 +144,7 @@ export interface StrategyConfig {
     name: string;
     enabled: boolean;
     ma: { short: number; long: number };
-    rsi: { period: number; oversold: number; overbought: number };
+    rsi: { period: number; oversold: number; overbought: number; overbought_exit?: number };
     macd: { enabled: boolean; fast: number; slow: number; signal: number };
     volume?: { surge_ratio: number; low_ratio: number };
   };
@@ -207,7 +208,7 @@ export interface StrategyProfile {
   trend_timeframe?: Timeframe;
   strategy?: {
     ma?: { short: number; long: number };
-    rsi?: { period?: number; oversold?: number; overbought?: number };
+    rsi?: { period?: number; oversold?: number; overbought?: number; overbought_exit?: number };
     macd?: { enabled?: boolean; fast?: number; slow?: number; signal?: number };
     volume?: { surge_ratio?: number; low_ratio?: number };
   };

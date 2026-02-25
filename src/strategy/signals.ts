@@ -70,6 +70,30 @@ const SIGNAL_CHECKERS: Record<string, SignalChecker> = {
     ind.macd.prevHistogram !== undefined &&
     Math.abs(ind.macd.histogram) > Math.abs(ind.macd.prevHistogram),
 
+  /**
+   * MACD 柱状图连续收缩（动量衰竭出场）
+   * 连续 3 根柱状图绝对值递减 → 趋势动能正在减弱
+   * 建议配合 rsi_overbought / rsi_overbought_exit 一起作为出场条件
+   */
+  macd_histogram_shrinking: (ind) => {
+    if (!ind.macd) return false;
+    const { histogram, prevHistogram, prevPrevHistogram } = ind.macd;
+    if (prevHistogram === undefined) return false;
+    const twoBarShrink = Math.abs(histogram) < Math.abs(prevHistogram);
+    if (prevPrevHistogram === undefined) return twoBarShrink; // 退化为两根检测
+    return twoBarShrink && Math.abs(prevHistogram) < Math.abs(prevPrevHistogram);
+  },
+
+  /**
+   * RSI 超买离场（动态阈值）
+   * RSI 超过 overbought_exit（默认 75）→ 建议减仓/止盈
+   * 比 rsi_overbought（通常70）更严格，避免过早出场
+   */
+  rsi_overbought_exit: (ind, cfg) => {
+    const threshold = cfg.strategy.rsi.overbought_exit ?? 75;
+    return ind.rsi > threshold;
+  },
+
   // ── 成交量 ──────────────────────────────────────
   /** 成交量放量（当前 > 均量 1.5 倍） */
   volume_surge: (ind, cfg) => {

@@ -118,12 +118,16 @@ export function macd(
 
   const signalLine = signalArr[signalArr.length - 1] ?? 0;
   const prevSignalLine = signalArr[signalArr.length - 2] ?? 0;
+  const prevPrevSignalLine = signalArr[signalArr.length - 3] ?? 0;
 
-  // macdLine 末尾两个元素
+  // macdLine 末尾三个元素
   const currentMacd = macdLine[macdLine.length - 1] ?? 0;
   const prevMacd = macdLine[macdLine.length - 2] ?? 0;
+  const prevPrevMacd = macdLine[macdLine.length - 3] ?? 0;
   const histogram = currentMacd - signalLine;
   const prevHistogram = prevMacd - prevSignalLine;
+  const prevPrevHistogram =
+    signalArr.length >= 3 ? prevPrevMacd - prevPrevSignalLine : undefined;
 
   return {
     macd: currentMacd,
@@ -132,6 +136,7 @@ export function macd(
     prevMacd,
     prevSignal: prevSignalLine,
     prevHistogram,
+    ...(prevPrevHistogram !== undefined ? { prevPrevHistogram } : {}),
   };
 }
 
