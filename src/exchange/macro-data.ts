@@ -89,9 +89,10 @@ function buildMacroAsset(
   const data = parseFredCsv(csv, 8);
   if (data.length < 2) return null;
 
-  const latest = data[data.length - 1]!;
-  const prev = data[data.length - 2]!;
-  const first = data[0]!;
+  const latest = data.at(-1);
+  const prev = data.at(-2);
+  const first = data.at(0);
+  if (!latest || !prev || !first) return null;
 
   const price = latest.value;
   const change1d = prev.value > 0 ? ((price - prev.value) / prev.value) * 100 : 0;

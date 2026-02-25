@@ -161,7 +161,7 @@ async function estimateKeyLevels(
     const klines = await getKlines(symbol, "4h", lookback);
     const lows = klines.map((k) => k.low);
     const highs = klines.map((k) => k.high);
-    const price = klines[klines.length - 1]!.close;
+    const price = klines.at(-1)?.close ?? 0;
 
     // 找最近的支撑（低于当前价的近期低点）和阻力（高于当前价的近期高点）
     const belowPriceHighs = highs.filter((h) => h < price * 1.005).sort((a, b) => b - a);
@@ -200,10 +200,9 @@ export async function getMultiTfContext(
   ]);
 
   const tfMap: Partial<Record<Timeframe, TfAnalysis>> = {};
-  for (let i = 0; i < timeframes.length; i++) {
-    const r = tfResults[i]!;
+  for (const [i, r] of tfResults.entries()) {
     if (r.status === "fulfilled" && r.value) {
-      tfMap[timeframes[i]!] = r.value;
+      tfMap[timeframes[i] ?? "1d"] = r.value;
     }
   }
 
@@ -350,8 +349,8 @@ export async function getBatchMultiTfContext(
       batch.map((sym) => getMultiTfContext(sym, cfg, timeframes))
     );
     for (let j = 0; j < batch.length; j++) {
-      const r = results[j]!;
-      if (r.status === "fulfilled") map.set(batch[j]!, r.value);
+      const r = results[j];
+      if (r?.status === "fulfilled") map.set(batch[j] ?? "", r.value);
     }
     // 限速：每批之间等 300ms
     if (i + concurrency < symbols.length) {

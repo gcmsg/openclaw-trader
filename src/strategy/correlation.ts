@@ -19,9 +19,9 @@ import type { Kline } from "../types.js";
 export function calcReturns(klines: Kline[]): number[] {
   const returns: number[] = [];
   for (let i = 1; i < klines.length; i++) {
-    const prev = klines[i - 1]!;
-    const curr = klines[i]!;
-    if (prev.close > 0 && curr.close > 0) {
+    const prev = klines[i - 1];
+    const curr = klines[i];
+    if (prev && curr && prev.close > 0 && curr.close > 0) {
       returns.push(Math.log(curr.close / prev.close));
     }
   }
@@ -46,8 +46,8 @@ export function pearsonCorrelation(a: number[], b: number[]): number {
   let varA = 0;
   let varB = 0;
   for (let i = 0; i < n; i++) {
-    const da = aSlice[i]! - meanA;
-    const db = bSlice[i]! - meanB;
+    const da = (aSlice[i] ?? 0) - meanA;
+    const db = (bSlice[i] ?? 0) - meanB;
     cov += da * db;
     varA += da * da;
     varB += db * db;

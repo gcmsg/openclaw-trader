@@ -163,7 +163,8 @@ export function closeSignal(
   const idx = records.findIndex((r) => r.id === id);
   if (idx === -1) return null;
 
-  const record = records[idx]!;
+  const record = records[idx];
+  if (!record) return null;
   const exitTime = Date.now();
   const holdingHours = (exitTime - record.entryTime) / 3600000;
 

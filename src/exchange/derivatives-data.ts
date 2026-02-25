@@ -226,8 +226,8 @@ function parseOptionName(name: string): { strike: number; expiry: string; isCall
   // 格式：BTC-28FEB25-60000-C 或 ETH-28FEB25-2500-P
   const parts = name.split("-");
   if (parts.length < 4) return null;
-  const strike = parseInt(parts[2]!, 10);
-  const expiry = parts[1]!;
+  const strike = parseInt(parts[2] ?? "", 10);
+  const expiry = parts[1] ?? "";
   const isCall = parts[3] === "C";
   if (isNaN(strike)) return null;
   return { strike, expiry, isCall };
@@ -256,7 +256,7 @@ function calcMaxPain(options: DeribitOption[], spot: number): { price: number; e
     if (!parsed || opt.open_interest <= 0) continue;
     const key = parsed.expiry;
     if (!expiryMap.has(key)) expiryMap.set(key, []);
-    expiryMap.get(key)!.push(opt);
+    expiryMap.get(key)?.push(opt);
   }
 
   if (expiryMap.size === 0) return { price: spot, expiry: "N/A" };
@@ -281,7 +281,7 @@ function calcMaxPain(options: DeribitOption[], spot: number): { price: number; e
 
   // 对每个行权价计算如果到期在该价格时，总期权价值
   let minPain = Infinity;
-  let maxPainStrike = strikes[0]!;
+  let maxPainStrike = strikes[0] ?? 0;
 
   for (const targetStrike of strikes) {
     let totalPain = 0;
@@ -353,7 +353,7 @@ export async function getOptionsData(currency: "BTC" | "ETH"): Promise<OptionsDa
     throw new Error(`No options data for ${currency}`);
   }
 
-  const spot = options[0]!.underlying_price;
+  const spot = options[0]?.underlying_price ?? 0;
 
   // PCR 计算
   const pcr = calcPCR(options);
@@ -518,7 +518,7 @@ function calcTermStructure(options: DeribitOption[], spot: number): IvTermPoint[
     const p = parseOptionName(opt.instrument_name);
     if (!p || opt.mark_iv <= 0) continue;
     if (!expiryMap.has(p.expiry)) expiryMap.set(p.expiry, []);
-    expiryMap.get(p.expiry)!.push(opt);
+    expiryMap.get(p.expiry)?.push(opt);
   }
 
   const points: IvTermPoint[] = [];
@@ -549,7 +549,7 @@ export async function getIvSkewData(currency: "BTC" | "ETH"): Promise<IvSkewData
   const options = data.result.filter((o) => o.mark_iv > 0 && o.open_interest > 0);
   if (options.length === 0) throw new Error(`No IV data for ${currency}`);
 
-  const spot = options[0]!.underlying_price;
+  const spot = options[0]?.underlying_price ?? 0;
   const now = Date.now();
 
   // 找最近到期日（用于 skew 计算）
@@ -579,8 +579,8 @@ export async function getIvSkewData(currency: "BTC" | "ETH"): Promise<IvSkewData
   let termStructureSlope: IvSkewData["termStructureSlope"] = "flat";
   let termStructureLabel: string;
   if (termStructure.length >= 2) {
-    const near = termStructure[0]!.atmIv;
-    const far = termStructure[termStructure.length - 1]!.atmIv;
+    const near = termStructure[0]?.atmIv ?? 0;
+    const far = termStructure[termStructure.length - 1]?.atmIv ?? 0;
     const diff = near - far;
     if (diff > 5) {
       termStructureSlope = "backwardation";

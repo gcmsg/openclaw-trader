@@ -114,9 +114,10 @@ export function calculateMetrics(
   // ── 权益曲线逐点收益率（用于 Sharpe / Sortino）──
   const periodReturns: number[] = [];
   for (let i = 1; i < equityCurve.length; i++) {
-    // i ∈ [1, length-1]，i-1 和 i 都在范围内
-    const prev = equityCurve[i - 1]!.equity;
-    const curr = equityCurve[i]!.equity;
+    const prevPoint = equityCurve[i - 1];
+    const currPoint = equityCurve[i];
+    const prev = prevPoint?.equity ?? 0;
+    const curr = currPoint?.equity ?? 0;
     if (prev > 0) periodReturns.push((curr - prev) / prev);
   }
 

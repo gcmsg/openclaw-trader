@@ -89,7 +89,7 @@ async function main() {
     console.log("📊 Walk-Forward 验证（5 折）\n");
 
     const wfResults = symbols.map((sym) =>
-      walkForwardSingle(allKlines[sym]!, cfg, sym, 5, 0.7)
+walkForwardSingle(allKlines[sym] ?? [], cfg, sym, 5, 0.7)
     );
     console.log(formatWalkForwardReport(wfResults));
 
@@ -108,8 +108,8 @@ async function main() {
     console.log(`\n${sep}`);
     console.log("📊 参数敏感性分析\n");
 
-    const sym = symbols[0]!;
-    const klines = allKlines[sym]!;
+    const sym = symbols[0] ?? "";
+    const klines = allKlines[sym] ?? [];
     const params = getDefaultParams(sensParam);
 
     for (const param of params) {

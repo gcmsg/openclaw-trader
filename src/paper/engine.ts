@@ -101,9 +101,10 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
       );
 
       // ── 初始化分批止盈进度 + 记录信号历史 ──
-      if (trade && account.positions[signal.symbol]) {
+      const newPos = trade ? account.positions[signal.symbol] : undefined;
+      if (newPos) {
         if (cfg.risk.take_profit_stages?.length) {
-          account.positions[signal.symbol]!.tpStages = cfg.risk.take_profit_stages.map((s) => ({
+          newPos.tpStages = cfg.risk.take_profit_stages.map((s) => ({
             stagePct: s.at_percent,
             closeRatio: s.close_ratio,
             triggered: false,
@@ -125,16 +126,16 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
             scenarioId: cfg.paper.scenarioId,
             source: "paper",
           });
-          account.positions[signal.symbol]!.signalHistoryId = sigId;
+          newPos.signalHistoryId = sigId;
         } catch { /* 不影响主流程 */ }
 
         // ── 初始化 DCA 状态（如已配置）──
         const dcaCfg = cfg.risk.dca;
         if (dcaCfg?.enabled && dcaCfg.tranches > 1) {
-          account.positions[signal.symbol]!.dcaState = {
+          newPos.dcaState = {
             totalTranches: dcaCfg.tranches,
             completedTranches: 1,
-            lastTranchePrice: trade.price,
+            lastTranchePrice: trade?.price ?? signal.price,
             dropPct: dcaCfg.drop_pct,
             startedAt: Date.now(),
             maxMs: dcaCfg.max_hours * 3600 * 1000,
@@ -204,7 +205,8 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
         }
       );
       // 记录开空信号
-      if (trade && account.positions[signal.symbol]) {
+      const newShortPos = trade ? account.positions[signal.symbol] : undefined;
+      if (newShortPos) {
         try {
           const sigId = logSignal({
             symbol: signal.symbol,
@@ -220,7 +222,7 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
             scenarioId: cfg.paper.scenarioId,
             source: "paper",
           });
-          account.positions[signal.symbol]!.signalHistoryId = sigId;
+          newShortPos.signalHistoryId = sigId;
         } catch { /* 不影响主流程 */ }
       }
     }

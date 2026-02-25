@@ -267,7 +267,8 @@ function doCoverShort(
   if (pnl < 0) account.dailyLoss.loss += Math.abs(pnl);
 
   account.usdt += proceeds;
-  delete account.positions[symbol];
+  const { [symbol]: _coveredPos, ...remainingAfterCover } = account.positions;
+  account.positions = remainingAfterCover;
 
   account.trades.push({
     symbol,
@@ -312,7 +313,8 @@ function doSell(
   if (pnl < 0) account.dailyLoss.loss += Math.abs(pnl);
 
   account.usdt += proceeds;
-  delete account.positions[symbol];
+  const { [symbol]: _soldPos, ...remainingAfterSell } = account.positions;
+  account.positions = remainingAfterSell;
 
   account.trades.push({
     symbol,
@@ -430,11 +432,9 @@ export function runBacktest(
 
   // ── 合并所有 K 线时间戳（取交集，确保所有 symbol 都有数据）──
   const timeSets = symbols.map(
-    // Object.keys 返回的 key 一定在 map 中，! 断言安全
-    (s) => new Set(klinesBySymbol[s]!.map((k) => k.openTime))
+    (s) => new Set((klinesBySymbol[s] ?? []).map((k) => k.openTime))
   );
-  // timeSets[0] 一定存在（symbols 非空已检查）
-  const allTimes = Array.from(timeSets[0]!)
+  const allTimes = Array.from(timeSets[0] ?? new Set<number>())
     .filter((t) => timeSets.every((set) => set.has(t)))
     .sort((a, b) => a - b);
 
@@ -442,7 +442,7 @@ export function runBacktest(
   const klineIndex: Record<string, Record<number, Kline>> = {};
   for (const sym of symbols) {
     klineIndex[sym] = {};
-    for (const k of klinesBySymbol[sym]!) {
+    for (const k of klinesBySymbol[sym] ?? []) {
       klineIndex[sym][k.openTime] = k;
     }
   }
@@ -489,12 +489,13 @@ export function runBacktest(
     const pos = trendWindowPos[sym] ?? 0;
     let nextPos = pos;
     // 将 closeTime < time 的趋势 K 线推入窗口（已关闭的才算，避免前瞻偏差）
-    while (nextPos < sorted.length && sorted[nextPos]!.closeTime < time) {
-      trendWindows[sym]!.push(sorted[nextPos]!);
+    while (nextPos < sorted.length && (sorted[nextPos]?.closeTime ?? Infinity) < time) {
+      const trendKline = sorted[nextPos];
+      if (trendKline) trendWindows[sym]?.push(trendKline);
       nextPos++;
     }
     trendWindowPos[sym] = nextPos;
-    const tw = trendWindows[sym]!;
+    const tw = trendWindows[sym] ?? [];
     if (tw.length < trendWarmup) return null; // 数据不足，放行
     const ind = calculateIndicators(
       tw,
@@ -513,13 +514,12 @@ export function runBacktest(
 
     // Step 1：推进滑动窗口
     for (const sym of symbols) {
-      // sym 由 symbols = Object.keys(klinesBySymbol) 产生，klineIndex[sym] 一定存在
-      const kline = klineIndex[sym]![time];
+      const kline = klineIndex[sym]?.[time];
       if (!kline) continue;
-      windows[sym]!.push(kline);
+      windows[sym]?.push(kline);
       // 只保留足够指标计算的历史（窗口不超过 warmupBars * 2）
-      if (windows[sym]!.length > warmupBars * 2) {
-        windows[sym]!.shift();
+      if ((windows[sym]?.length ?? 0) > warmupBars * 2) {
+        windows[sym]?.shift();
       }
       currentPrices[sym] = kline.close;
     }
@@ -570,7 +570,7 @@ export function runBacktest(
     for (const sym of symbols) {
       const pos = account.positions[sym];
       if (!pos) continue;
-      const kline = klineIndex[sym]![time];
+      const kline = klineIndex[sym]?.[time];
       if (!kline) continue;
 
       const trailingTriggered = updateTrailingStop(pos, kline.high, kline.low, cfg);
@@ -598,9 +598,9 @@ export function runBacktest(
 
     // Step 3：计算指标 & 信号
     for (const sym of symbols) {
-      const window = windows[sym]!; // sym ∈ symbols，windows[sym] 必存在
+      const window = windows[sym] ?? [];
       if (window.length < warmupBars) continue;
-      const kline = klineIndex[sym]![time];
+      const kline = klineIndex[sym]?.[time];
       if (!kline) continue;
 
       const indicators = calculateIndicators(

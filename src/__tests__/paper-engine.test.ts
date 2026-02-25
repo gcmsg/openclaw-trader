@@ -99,6 +99,7 @@ describe("checkStopLoss()", () => {
       BTCUSDT: makePosition("BTCUSDT", 50000, 0.004, 5), // stopLoss = 47500
     });
     vi.spyOn(accountModule, "loadAccount").mockReturnValue(account);
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     vi.spyOn(accountModule, "saveAccount").mockImplementation(() => {});
   });
 

@@ -91,7 +91,7 @@ export function calcVolumeProfile(klines: Kline[], buckets = 50): VolumeProfile 
     const volumePerBucket = klVolume / coveredBuckets;
     for (let b = startBucket; b <= endBucket; b++) {
       if (b >= 0 && b < buckets) {
-        volumeBuckets[b]! += volumePerBucket;
+        volumeBuckets[b] = (volumeBuckets[b] ?? 0) + volumePerBucket;
       }
     }
   }
@@ -103,7 +103,7 @@ export function calcVolumeProfile(klines: Kline[], buckets = 50): VolumeProfile 
   // POC：成交量最大的桶
   let pocBucket = 0;
   for (let i = 1; i < buckets; i++) {
-    if (volumeBuckets[i]! > volumeBuckets[pocBucket]!) pocBucket = i;
+    if ((volumeBuckets[i] ?? 0) > (volumeBuckets[pocBucket] ?? 0)) pocBucket = i;
   }
   const poc = priceMin + (pocBucket + 0.5) * bucketSize;
 
@@ -111,11 +111,11 @@ export function calcVolumeProfile(klines: Kline[], buckets = 50): VolumeProfile 
   const targetVolume = totalVolume * 0.7;
   let vaLow = pocBucket;
   let vaHigh = pocBucket;
-  let accVolume = volumeBuckets[pocBucket]!;
+  let accVolume = volumeBuckets[pocBucket] ?? 0;
 
   while (accVolume < targetVolume) {
-    const expandLow = vaLow > 0 ? volumeBuckets[vaLow - 1]! : 0;
-    const expandHigh = vaHigh < buckets - 1 ? volumeBuckets[vaHigh + 1]! : 0;
+    const expandLow = vaLow > 0 ? (volumeBuckets[vaLow - 1] ?? 0) : 0;
+    const expandHigh = vaHigh < buckets - 1 ? (volumeBuckets[vaHigh + 1] ?? 0) : 0;
 
     if (expandLow === 0 && expandHigh === 0) break;
 
@@ -159,7 +159,8 @@ export function calcPivotPoints(klines: Kline[]): PivotPoints | null {
   if (klines.length < 2) return null;
 
   // 用倒数第二根（最近完整周期）的高低收计算
-  const prev = klines[klines.length - 2]!;
+  const prev = klines[klines.length - 2];
+  if (!prev) return null;
   const { high, low, close } = prev;
   const range = high - low;
 

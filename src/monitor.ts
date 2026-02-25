@@ -376,8 +376,8 @@ async function main(): Promise<void> {
   const done = ping("price_monitor");
 
   const runtimes = loadRuntimeConfigs();
-  // loadRuntimeConfigs 在无 enabled 场景时会 throw，此处 runtimes[0] 必存在
-  const firstRuntime = runtimes[0]!;
+  const firstRuntime = runtimes[0];
+  if (!firstRuntime) { log("无可用策略配置"); return; }
   if (!firstRuntime.strategy.enabled) {
     log("策略已禁用");
     done();

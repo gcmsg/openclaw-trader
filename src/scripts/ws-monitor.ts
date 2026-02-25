@@ -116,7 +116,7 @@ async function preloadKlines(
 function appendKline(buffer: KlineBuffer, symbol: string, kline: Kline, maxLen: number): void {
   const existing = buffer.get(symbol) ?? [];
   // 若最后一根 openTime 相同则替换（更新），否则追加
-  if (existing.length > 0 && existing[existing.length - 1]!.openTime === kline.openTime) {
+  if (existing.length > 0 && existing[existing.length - 1]?.openTime === kline.openTime) {
     existing[existing.length - 1] = kline;
   } else {
     existing.push(kline);
@@ -349,7 +349,8 @@ async function main(): Promise<void> {
   log("─── WebSocket 监控启动 ───");
 
   const runtimes = loadRuntimeConfigs();
-  const firstRuntime = runtimes[0]!;
+  const firstRuntime = runtimes[0];
+  if (!firstRuntime) { log("无可用策略配置"); return; }
   if (!firstRuntime.strategy.enabled) {
     log("策略已禁用，退出");
     return;
@@ -377,7 +378,7 @@ async function main(): Promise<void> {
   const currentPrices: Record<string, number> = {};
   for (const [symbol, klines] of buffer) {
     if (klines.length > 0) {
-      currentPrices[symbol] = klines[klines.length - 1]!.close;
+      currentPrices[symbol] = klines[klines.length - 1]?.close ?? 0;
     }
   }
 

@@ -13,8 +13,7 @@ export function ema(values: number[], period: number): number {
   const k = 2 / (period + 1);
   let result = sma(values.slice(0, period), period);
   for (let i = period; i < values.length; i++) {
-    // 守卫：slice + length check 确保 i < values.length，非空断言安全
-    result = values[i]! * k + result * (1 - k);
+    result = (values[i] ?? 0) * k + result * (1 - k);
   }
   return result;
 }
@@ -33,13 +32,13 @@ export function emaArray(values: number[], period: number): number[] {
   const k = 2 / (period + 1);
   // 以前 period 根的 SMA 作为初始 EMA
   let seed = 0;
-  for (let i = 0; i < period; i++) seed += values[i]!;
+  for (let i = 0; i < period; i++) seed += values[i] ?? 0;
   seed /= period;
 
   const result = new Array<number>(values.length - period + 1);
   result[0] = seed;
   for (let i = period; i < values.length; i++) {
-    result[i - period + 1] = values[i]! * k + result[i - period]! * (1 - k);
+    result[i - period + 1] = (values[i] ?? 0) * k + (result[i - period] ?? 0) * (1 - k);
   }
   return result;
 }
@@ -54,14 +53,13 @@ export function emaArray(values: number[], period: number): number[] {
  */
 export function rsi(closes: number[], period = 14): number {
   if (closes.length < period + 1) return NaN;
-  // closes.slice(1).map 的 index 与 closes 对齐（i 在 0..length-2 范围内）
-  const changes = closes.slice(1).map((c, i) => c - closes[i]!);
+  const changes = closes.slice(1).map((c, i) => c - (closes[i] ?? 0));
 
   // ── 步骤 1：前 period 根取 SMA 作为初始均值 ──
   let avgGain = 0;
   let avgLoss = 0;
   for (let i = 0; i < period; i++) {
-    const change = changes[i]!;
+    const change = changes[i] ?? 0;
     if (change > 0) avgGain += change;
     else avgLoss -= change;
   }
@@ -70,7 +68,7 @@ export function rsi(closes: number[], period = 14): number {
 
   // ── 步骤 2：Wilder 平滑剩余变化 ──
   for (let i = period; i < changes.length; i++) {
-    const change = changes[i]!;
+    const change = changes[i] ?? 0;
     const gain = change > 0 ? change : 0;
     const loss = change < 0 ? -change : 0;
     avgGain = (avgGain * (period - 1) + gain) / period;
@@ -109,7 +107,7 @@ export function macd(
   // ── MACD 线 = fastEma - slowEma（对齐到 slowPeriod 起始点）──
   // fastEmaArr 比 slowEmaArr 多 (slowPeriod - fastPeriod) 个元素（在前面）
   const offset = slowPeriod - fastPeriod; // fastEmaArr 的偏移量
-  const macdLine = slowEmaArr.map((slowVal, i) => fastEmaArr[i + offset]! - slowVal);
+  const macdLine = slowEmaArr.map((slowVal, i) => (fastEmaArr[i + offset] ?? 0) - slowVal);
 
   if (macdLine.length < signalPeriod + 1) return null;
 
@@ -118,12 +116,12 @@ export function macd(
   // signalArr 末尾两个元素分别对应"当前"和"前一根"
   if (signalArr.length < 2) return null;
 
-  const signalLine = signalArr[signalArr.length - 1]!;
-  const prevSignalLine = signalArr[signalArr.length - 2]!;
+  const signalLine = signalArr[signalArr.length - 1] ?? 0;
+  const prevSignalLine = signalArr[signalArr.length - 2] ?? 0;
 
   // macdLine 末尾两个元素
-  const currentMacd = macdLine[macdLine.length - 1]!;
-  const prevMacd = macdLine[macdLine.length - 2]!;
+  const currentMacd = macdLine[macdLine.length - 1] ?? 0;
+  const prevMacd = macdLine[macdLine.length - 2] ?? 0;
   const histogram = currentMacd - signalLine;
   const prevHistogram = prevMacd - prevSignalLine;
 
@@ -151,8 +149,9 @@ export function atr(klines: Kline[], period = 14): number {
   // 计算每根 K 线的真实波幅
   const trueRanges: number[] = [];
   for (let i = 1; i < klines.length; i++) {
-    const curr = klines[i]!;
-    const prev = klines[i - 1]!;
+    const curr = klines[i];
+    const prev = klines[i - 1];
+    if (!curr || !prev) continue;
     trueRanges.push(Math.max(
       curr.high - curr.low,
       Math.abs(curr.high - prev.close),
@@ -165,7 +164,7 @@ export function atr(klines: Kline[], period = 14): number {
 
   // Wilder 平滑
   for (let i = period; i < trueRanges.length; i++) {
-    atrValue = (atrValue * (period - 1) + trueRanges[i]!) / period;
+    atrValue = (atrValue * (period - 1) + (trueRanges[i] ?? 0)) / period;
   }
 
   return atrValue;
@@ -213,8 +212,7 @@ export function calcAtrPositionSize(
 export function volumeRatio(volumes: number[], period = 20): number {
   if (volumes.length < period + 1) return NaN;
   const avg = sma(volumes.slice(0, -1), period); // 不含当前 K 线
-  // volumes.length >= period + 1 > 0，末尾元素必存在
-  const current = volumes[volumes.length - 1]!;
+  const current = volumes[volumes.length - 1] ?? 0;
   return current / avg;
 }
 
@@ -241,9 +239,8 @@ export function calculateIndicators(
 
   if (isNaN(maShort) || isNaN(maLong) || isNaN(rsiValue)) return null;
 
-  // klines.length >= maLongPeriod + 1 > 0，末尾元素必存在
-  const price = closes[closes.length - 1]!;
-  const currentVolume = volumes[volumes.length - 1]!;
+  const price = closes[closes.length - 1] ?? 0;
+  const currentVolume = volumes[volumes.length - 1] ?? 0;
 
   // 成交量
   const volPeriod = 20;

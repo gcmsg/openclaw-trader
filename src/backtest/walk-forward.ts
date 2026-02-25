@@ -203,7 +203,7 @@ export function runSensitivity(
   return {
     paramName: param.name,
     results,
-    bestValue: best?.paramValue ?? param.values[0]!,
+    bestValue: best?.paramValue ?? param.values[0] ?? 0,
     robustPct,
     verdict,
   };
@@ -263,10 +263,10 @@ export function runMonteCarlo(
   maxDrawdowns.sort((a, b) => b - a);
 
   const avg = finalReturns.reduce((a, b) => a + b, 0) / finalReturns.length;
-  const median = finalReturns[Math.floor(finalReturns.length * 0.5)]!;
-  const p5 = finalReturns[Math.floor(finalReturns.length * 0.05)]!;
-  const p95 = finalReturns[Math.floor(finalReturns.length * 0.95)]!;
-  const p5DD = maxDrawdowns[Math.floor(maxDrawdowns.length * 0.05)]!;
+  const median = finalReturns[Math.floor(finalReturns.length * 0.5)] ?? 0;
+  const p5 = finalReturns[Math.floor(finalReturns.length * 0.05)] ?? 0;
+  const p95 = finalReturns[Math.floor(finalReturns.length * 0.95)] ?? 0;
+  const p5DD = maxDrawdowns[Math.floor(maxDrawdowns.length * 0.05)] ?? 0;
 
   const sign = (n: number) => (n >= 0 ? "+" : "");
   let verdict: string;
@@ -328,12 +328,12 @@ function deepSetPath(obj: StrategyConfig, path: string, value: unknown): Strateg
   const parts = path.split(".");
   let current: Record<string, unknown> = obj as unknown as Record<string, unknown>;
   for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i]!;
+    const part = parts[i] ?? "";
     if (typeof current[part] !== "object" || current[part] === null) {
       current[part] = {};
     }
     current = current[part] as Record<string, unknown>;
   }
-  current[parts[parts.length - 1]!] = value;
+  current[parts[parts.length - 1] ?? ""] = value;
   return obj;
 }

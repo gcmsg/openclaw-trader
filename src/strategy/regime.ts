@@ -74,8 +74,9 @@ export function calcAdx(klines: Kline[], period = 14): {
   const minusDMs: number[] = [];
 
   for (let i = 1; i < klines.length; i++) {
-    const curr = klines[i]!;
-    const prev = klines[i - 1]!;
+    const curr = klines[i];
+    const prev = klines[i - 1];
+    if (!curr || !prev) continue;
 
     // True Range
     const tr = Math.max(
@@ -100,7 +101,7 @@ export function calcAdx(klines: Kline[], period = 14): {
     let sum = arr.slice(0, p).reduce((a, b) => a + b, 0);
     smoothed.push(sum);
     for (let i = p; i < arr.length; i++) {
-      sum = sum - sum / p + arr[i]!;
+      sum = sum - sum / p + (arr[i] ?? 0);
       smoothed.push(sum);
     }
     return smoothed;
@@ -116,11 +117,11 @@ export function calcAdx(klines: Kline[], period = 14): {
   let lastDiMinus = 0;
 
   for (let i = 0; i < smoothTR.length; i++) {
-    const tr = smoothTR[i]!;
+    const tr = smoothTR[i] ?? 0;
     if (tr === 0) { dxValues.push(0); continue; }
 
-    const diPlus = 100 * smoothPlusDM[i]! / tr;
-    const diMinus = 100 * smoothMinusDM[i]! / tr;
+    const diPlus = 100 * (smoothPlusDM[i] ?? 0) / tr;
+    const diMinus = 100 * (smoothMinusDM[i] ?? 0) / tr;
     lastDiPlus = diPlus;
     lastDiMinus = diMinus;
 
@@ -135,7 +136,7 @@ export function calcAdx(klines: Kline[], period = 14): {
   }
 
   const smoothDX = wilderSmooth(dxValues, period);
-  const adx = smoothDX[smoothDX.length - 1]! / period; // 归一化
+  const adx = (smoothDX[smoothDX.length - 1] ?? 0) / period; // 归一化
 
   return { adx, diPlus: lastDiPlus, diMinus: lastDiMinus };
 }
@@ -169,7 +170,7 @@ export function calcBollingerWidth(closes: number[], period = 20, stdDevMult = 2
     allWidths.push(mean > 0 ? (upper - lower) / mean : 0);
   }
 
-  const current = allWidths[allWidths.length - 1]!;
+  const current = allWidths[allWidths.length - 1] ?? 0;
   const sorted = [...allWidths].sort((a, b) => a - b);
   const rank = sorted.filter((w) => w <= current).length;
   const percentile = Math.round((rank / sorted.length) * 100);

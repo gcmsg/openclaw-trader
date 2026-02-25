@@ -136,8 +136,7 @@ export async function fetchHistoricalKlines(
 
     onProgress?.(allKlines.length);
 
-    // raw.length > 0 已在上方检查，末尾元素必存在
-    cursor = raw[raw.length - 1]![6] + 1;
+    cursor = (raw[raw.length - 1]?.[6] ?? 0) + 1;
     if (raw.length < BATCH_SIZE) break; // 已到末尾
 
     await sleep(REQUEST_DELAY_MS);
@@ -205,7 +204,7 @@ export async function fetchHistoricalFundingRates(
     for (const r of raw) {
       all.push({ ts: r.fundingTime, rate: parseFloat(r.fundingRate) });
     }
-    cursor = raw[raw.length - 1]!.fundingTime + 1;
+    cursor = (raw[raw.length - 1]?.fundingTime ?? 0) + 1;
     if (raw.length < LIMIT) break;
     await sleep(REQUEST_DELAY_MS);
   }

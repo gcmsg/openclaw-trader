@@ -117,7 +117,7 @@ async function checkExits(cfg: RuntimeConfig): Promise<void> {
   for (const symbol of cfg.symbols) {
     try {
       const kl = await getKlines(symbol, "1m", 2);
-      if (kl.length > 0) prices[symbol] = kl[kl.length - 1]!.close;
+      if (kl.length > 0) prices[symbol] = kl[kl.length - 1]?.close ?? 0;
     } catch (_e: unknown) { /* 忽略单个 symbol 的价格获取失败 */ }
   }
 

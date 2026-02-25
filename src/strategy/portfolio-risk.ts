@@ -216,8 +216,8 @@ export function calcPortfolioExposure(
     const pairs: number[] = [];
     for (let i = 0; i < positions.length; i++) {
       for (let j = i + 1; j < positions.length; j++) {
-        const aKlines = klinesBySymbol[positions[i]!.symbol];
-        const bKlines = klinesBySymbol[positions[j]!.symbol];
+        const aKlines = klinesBySymbol[positions[i]?.symbol ?? ""];
+        const bKlines = klinesBySymbol[positions[j]?.symbol ?? ""];
         if (!aKlines || !bKlines) continue;
         const corr = pearsonCorrelation(calcReturns(aKlines.slice(-61)), calcReturns(bKlines.slice(-61)));
         if (!isNaN(corr)) pairs.push(Math.abs(corr));
@@ -236,10 +236,10 @@ export function calcPortfolioExposure(
 
   if (grossExposureRatio > 0.8 && isHighCorr) {
     riskLevel = "extreme";
-    riskLabel = `🔴 极高风险：杠杆 ${(grossExposureRatio * 100).toFixed(0)}% + 高相关（${(avgPairwiseCorrelation! * 100).toFixed(0)}%）`;
+    riskLabel = `🔴 极高风险：杠杆 ${(grossExposureRatio * 100).toFixed(0)}% + 高相关（${((avgPairwiseCorrelation ?? 0) * 100).toFixed(0)}%）`;
   } else if (grossExposureRatio > 0.6 || isHighCorr) {
     riskLevel = "high";
-    riskLabel = `🟠 较高风险：仓位 ${(grossExposureRatio * 100).toFixed(0)}%` + (isHighCorr ? `，相关 ${(avgPairwiseCorrelation! * 100).toFixed(0)}%` : "");
+    riskLabel = `🟠 较高风险：仓位 ${(grossExposureRatio * 100).toFixed(0)}%` + (isHighCorr ? `，相关 ${((avgPairwiseCorrelation ?? 0) * 100).toFixed(0)}%` : "");
   } else if (grossExposureRatio > 0.3) {
     riskLevel = "medium";
     riskLabel = `🟡 中等风险：仓位 ${(grossExposureRatio * 100).toFixed(0)}%`;

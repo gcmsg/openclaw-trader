@@ -152,9 +152,8 @@ export async function getFundingRate(symbol: string): Promise<FundingRate> {
 export async function getFundingRates(symbols: string[]): Promise<Map<string, FundingRate>> {
   const results = await Promise.allSettled(symbols.map(getFundingRate));
   const map = new Map<string, FundingRate>();
-  for (let i = 0; i < symbols.length; i++) {
-    const r = results[i]!;
-    if (r.status === "fulfilled") map.set(symbols[i]!, r.value);
+  for (const [i, r] of results.entries()) {
+    if (r.status === "fulfilled") map.set(symbols[i] ?? "", r.value);
   }
   return map;
 }
@@ -183,11 +182,11 @@ export async function getOpenInterest(symbol: string, currentPrice: number): Pro
   let change1h = 0;
   let change4h = 0;
   if (history.length >= 2) {
-    const oi1hAgo = parseFloat(history[history.length - 2]!.sumOpenInterest);
+    const oi1hAgo = parseFloat(history[history.length - 2]?.sumOpenInterest ?? "0");
     change1h = oi1hAgo > 0 ? ((oiNow - oi1hAgo) / oi1hAgo) * 100 : 0;
   }
   if (history.length >= 5) {
-    const oi4hAgo = parseFloat(history[0]!.sumOpenInterest);
+    const oi4hAgo = parseFloat(history[0]?.sumOpenInterest ?? "0");
     change4h = oi4hAgo > 0 ? ((oiNow - oi4hAgo) / oi4hAgo) * 100 : 0;
   }
 
@@ -260,9 +259,8 @@ export async function getBatchFuturesData(
     symbols.map((sym) => getFuturesMarketData(sym, prices[sym] ?? 0))
   );
   const map = new Map<string, FuturesMarketData>();
-  for (let i = 0; i < symbols.length; i++) {
-    const r = results[i]!;
-    if (r.status === "fulfilled") map.set(symbols[i]!, r.value);
+  for (const [i, r] of results.entries()) {
+    if (r.status === "fulfilled") map.set(symbols[i] ?? "", r.value);
   }
   return map;
 }
