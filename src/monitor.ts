@@ -27,6 +27,7 @@ import { classifyRegime } from "./strategy/regime.js";
 import { checkRiskReward } from "./strategy/rr-filter.js";
 import { fetchFundingRatePct } from "./strategy/funding-rate-signal.js";
 import { getBtcDominanceTrend } from "./strategy/btc-dominance.js";
+import { readEmergencyHalt } from "./news/emergency-monitor.js";
 import { calcKellyRatio } from "./strategy/kelly.js";
 import { loadAccount, calcTotalEquity } from "./paper/account.js";
 import { ping } from "./health/heartbeat.js";
@@ -152,6 +153,15 @@ async function scanSymbol(
     const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
     const currentPosSide = currentAccount.positions[symbol]?.side;
     const signal = detectSignal(symbol, indicators, cfg, currentPosSide);
+
+    // 突发新闻紧急暂停（仅限开仓信号；止损/止盈平仓不受影响）
+    if (signal.type === "buy" || signal.type === "short") {
+      const emergencyState = readEmergencyHalt();
+      if (emergencyState.halt) {
+        log(`${scenarioPrefix}${symbol}: ⛔ 紧急暂停：${emergencyState.reason ?? "突发高危新闻"}`);
+        return;
+      }
+    }
 
     // MTF 过滤：买入信号且大趋势为空头 → 跳过
     if (signal.type === "buy" && mtfTrendBull === false) {

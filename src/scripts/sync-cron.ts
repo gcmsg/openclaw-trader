@@ -27,6 +27,7 @@ const TASK_SCRIPTS: Record<string, string> = {
   health_check: "src/health/checker.ts",
   watchdog: "src/health/watchdog.ts",
   log_rotate: "src/health/log-rotate.ts",
+  news_emergency: "src/news/emergency-monitor.ts",
 };
 
 const CRONTAB_MARKER_START = "# ===== openclaw-trader BEGIN =====";
