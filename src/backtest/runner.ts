@@ -9,10 +9,7 @@
  */
 
 import { calculateIndicators } from "../strategy/indicators.js";
-import { detectSignal } from "../strategy/signals.js";
-import { classifyRegime } from "../strategy/regime.js";
-import { checkRiskReward } from "../strategy/rr-filter.js";
-import { checkCorrelation } from "../strategy/correlation.js";
+import { processSignal } from "../strategy/signal-engine.js";
 import { getMinimalRoiThreshold } from "../strategy/roi-table.js";
 import type { Kline, StrategyConfig } from "../types.js";
 import {
@@ -634,68 +631,37 @@ export function runBacktest(
       const kline = klineIndex[sym]?.[time];
       if (!kline) continue;
 
-      const indicators = calculateIndicators(
-        window,
-        cfg.strategy.ma.short,
-        cfg.strategy.ma.long,
-        cfg.strategy.rsi.period,
-        cfg.strategy.macd
-      );
-      if (!indicators) continue;
+      // ── 统一信号引擎（F3）──────────────────────────────────
+      // 构建已持仓 K 线 Map（用于相关性检查）
+      const heldKlinesBySymbol: Record<string, Kline[]> = {};
+      if (cfg.risk.correlation_filter?.enabled) {
+        for (const heldSym of Object.keys(account.positions)) {
+          if (heldSym === sym) continue;
+          const heldWin = windows[heldSym];
+          if (heldWin) heldKlinesBySymbol[heldSym] = heldWin;
+        }
+      }
 
       const currentPos = account.positions[sym];
-      // 传入持仓方向，让 detectSignal 使用正确的优先级
-      // long 持仓 → 只检查 sell；short 持仓 → 只检查 cover；无持仓 → 检查 buy/short
       const posSide = currentPos?.side;
-      const signal = detectSignal(sym, indicators, cfg, posSide);
+      const externalCtx = {
+        ...(posSide !== undefined ? { currentPosSide: posSide } : {}),
+        ...(Object.keys(heldKlinesBySymbol).length > 0 ? { heldKlinesMap: heldKlinesBySymbol } : {}),
+      };
 
-      // ── Regime 感知：震荡市过滤（仅对开仓信号）──────────────
-      // breakout_watch → 等待突破确认，跳过开仓
-      // reduced_size   → 震荡市仓位减半
-      let regimeCfg = cfg;
-      if (signal.type === "buy" || signal.type === "short") {
-        const regime = classifyRegime(window);
-        if (regime.confidence >= 60) {
-          if (regime.signalFilter === "breakout_watch") {
-            continue; // 等待突破确认，不开仓
-          } else if (regime.signalFilter === "reduced_size") {
-            regimeCfg = {
-              ...cfg,
-              risk: { ...cfg.risk, position_ratio: cfg.risk.position_ratio * 0.5 },
-            };
-          }
-        }
-      }
+      const engineResult = processSignal(sym, window, cfg, externalCtx);
+      if (!engineResult.indicators) continue;
 
-      // ── 相关性过滤（需配置 risk.correlation_filter.enabled）──────
-      if (
-        (signal.type === "buy" || signal.type === "short") &&
-        cfg.risk.correlation_filter?.enabled
-      ) {
-        const corrCfg = cfg.risk.correlation_filter;
-        const heldSymbols = Object.keys(account.positions).filter((s) => s !== sym);
-        if (heldSymbols.length > 0) {
-          const heldKlinesMap = new Map<string, Kline[]>();
-          for (const heldSym of heldSymbols) {
-            const heldWin = windows[heldSym];
-            if (heldWin) heldKlinesMap.set(heldSym, heldWin);
-          }
-          const corrResult = checkCorrelation(sym, window, heldKlinesMap, corrCfg.threshold);
-          if (corrResult.correlated) continue; // 相关性过高，跳过
-        }
-      }
+      const { signal, effectiveRisk, effectivePositionRatio, rejected } = engineResult;
+      if (rejected) continue;
+      if (signal.type === "none") continue;
 
-      // ── R:R 过滤（仅开仓，需配置 risk.min_rr > 0，sell/cover 不受影响）──
-      if ((signal.type === "buy" || signal.type === "short") && (cfg.risk.min_rr ?? 0) > 0) {
-        const minRr = cfg.risk.min_rr;
-        const rrResult = checkRiskReward(
-          window,
-          kline.close,
-          signal.type === "short" ? "short" : "long",
-          minRr
-        );
-        if (!rrResult.passed) continue;
-      }
+      // effectiveCfg：合并 regime 参数覆盖 + 相关性仓位调整
+      const effectiveRatio = effectivePositionRatio ?? effectiveRisk.position_ratio;
+      const regimeCfg: typeof cfg = {
+        ...cfg,
+        risk: { ...effectiveRisk, position_ratio: effectiveRatio },
+      };
 
       if (signal.type === "buy") {
         // MTF 过滤：多头信号需高级别 MA 也是多头

@@ -9,7 +9,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { getKlines } from "./exchange/binance.js";
 import { calculateIndicators } from "./strategy/indicators.js";
-import { detectSignal } from "./strategy/signals.js";
 import { notifySignal, notifyError, notifyPaperTrade, notifyStopLoss } from "./notify/openclaw.js";
 import {
   handleSignal,
@@ -21,16 +20,13 @@ import {
 } from "./paper/engine.js";
 import { loadNewsReport, evaluateSentimentGate } from "./news/sentiment-gate.js";
 import { readSentimentCache } from "./news/sentiment-cache.js";
-import { checkCorrelation } from "./strategy/correlation.js";
-import { calcCorrelationAdjustedSize } from "./strategy/portfolio-risk.js";
-import { classifyRegime } from "./strategy/regime.js";
-import { checkRiskReward } from "./strategy/rr-filter.js";
+import { processSignal } from "./strategy/signal-engine.js";
 import { fetchFundingRatePct } from "./strategy/funding-rate-signal.js";
 import { getBtcDominanceTrend } from "./strategy/btc-dominance.js";
 import { readEmergencyHalt } from "./news/emergency-monitor.js";
 import { readCvdCache } from "./exchange/order-flow.js";
 import { calcKellyRatio } from "./strategy/kelly.js";
-import { loadAccount, calcTotalEquity } from "./paper/account.js";
+import { loadAccount } from "./paper/account.js";
 import { ping } from "./health/heartbeat.js";
 import { loadRuntimeConfigs } from "./config/loader.js";
 import type { RuntimeConfig, Signal, Indicators, Kline } from "./types.js";
@@ -98,17 +94,6 @@ async function scanSymbol(
     const klines = await getKlines(symbol, cfg.timeframe, limit + 1);
     if (klines.length < limit) return;
 
-    const indicators = calculateIndicators(
-      klines,
-      cfg.strategy.ma.short,
-      cfg.strategy.ma.long,
-      cfg.strategy.rsi.period,
-      cfg.strategy.macd
-    );
-    if (!indicators) return;
-
-    currentPrices[symbol] = indicators.price;
-
     // ── 多时间框架趋势过滤（MTF）──────────────────────────
     // 如果配置了 trend_timeframe，拉取更高级别 K 线判断大趋势方向
     // 买入信号只在大趋势为多头时执行；卖出/止损不受限制
@@ -135,35 +120,94 @@ async function scanSymbol(
       }
     }
 
-    // 资金费率注入（期货/永续合约，带10分钟缓存，失败静默跳过）
+    // ── 构建外部上下文（CVD / 资金费率 / BTC 主导率 / 持仓方向 / 相关性 K 线）──
+    let externalCvd: number | undefined;
+    let externalFundingRate: number | undefined;
+    let externalBtcDom: number | undefined;
+    let externalBtcDomChange: number | undefined;
+
+    // 资金费率（期货/永续合约，带10分钟缓存，失败静默跳过）
     try {
       const frPct = await fetchFundingRatePct(symbol);
-      if (frPct !== undefined) indicators.fundingRate = frPct;
-    } catch { /* 资金费率拉取失败不影响主流程 */ }
+      if (frPct !== undefined) externalFundingRate = frPct;
+    } catch { /* 失败静默跳过 */ }
 
-    // BTC 主导率趋势注入（读历史文件，非阻塞）
+    // BTC 主导率趋势（读历史文件，非阻塞）
     try {
       const domTrend = getBtcDominanceTrend();
       if (!isNaN(domTrend.latest)) {
-        indicators.btcDominance = domTrend.latest;
-        indicators.btcDomChange = domTrend.change;
+        externalBtcDom = domTrend.latest;
+        externalBtcDomChange = domTrend.change;
       }
-    } catch { /* 主导率读取失败不影响主流程 */ }
+    } catch { /* 失败静默跳过 */ }
 
-    // 真实 CVD 覆盖（若 CvdManager 已运行并写入缓存，优先用真实数据）
+    // 真实 CVD（若 CvdManager 已运行并写入缓存，优先用真实数据）
     try {
       const realCvd = readCvdCache(symbol) as { cvd?: number; updatedAt?: number } | undefined;
-      const maxAgeMs = 5 * 60_000; // 超过 5 分钟视为过期
+      const maxAgeMs = 5 * 60_000;
       if (realCvd?.cvd !== undefined && realCvd.updatedAt !== undefined &&
           Date.now() - realCvd.updatedAt < maxAgeMs) {
-        indicators.cvd = realCvd.cvd;
+        externalCvd = realCvd.cvd;
       }
-    } catch { /* CVD 缓存读取失败不影响主流程 */ }
+    } catch { /* 失败静默跳过 */ }
 
-    // 获取当前持仓方向，让 detectSignal 使用正确优先级
+    // 当前持仓方向 + 持仓 K 线（用于 processSignal 内部的相关性检查）
     const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
     const currentPosSide = currentAccount.positions[symbol]?.side;
-    const signal = detectSignal(symbol, indicators, cfg, currentPosSide);
+    const heldKlinesMap: Record<string, Kline[]> = {};
+    if (cfg.risk.correlation_filter?.enabled) {
+      const heldSymbols = Object.keys(currentAccount.positions).filter((s) => s !== symbol);
+      const corrLookback = cfg.risk.correlation_filter.lookback;
+      await Promise.all(
+        heldSymbols.map(async (sym) => {
+          try {
+            heldKlinesMap[sym] = await getKlines(sym, cfg.timeframe, corrLookback + 1);
+          } catch { /* 获取失败跳过 */ }
+        })
+      );
+    }
+
+    // ── 统一信号引擎（F3）────────────────────────────────
+    const externalCtx = {
+      ...(externalCvd !== undefined ? { cvd: externalCvd } : {}),
+      ...(externalFundingRate !== undefined ? { fundingRate: externalFundingRate } : {}),
+      ...(externalBtcDom !== undefined ? { btcDominance: externalBtcDom } : {}),
+      ...(externalBtcDomChange !== undefined ? { btcDomChange: externalBtcDomChange } : {}),
+      ...(currentPosSide !== undefined ? { currentPosSide } : {}),
+      ...(Object.keys(heldKlinesMap).length > 0 ? { heldKlinesMap } : {}),
+    };
+    const engineResult = processSignal(symbol, klines, cfg, externalCtx);
+
+    if (!engineResult.indicators) return;
+
+    const { indicators, signal, effectiveRisk, effectivePositionRatio, rejected, rejectionReason, regimeLabel } = engineResult;
+    const regimeEffectiveRisk = effectiveRisk;
+
+    currentPrices[symbol] = indicators.price;
+
+    const trend = indicators.maShort > indicators.maLong ? "📈 多头" : "📉 空头";
+    const macdInfo = indicators.macd
+      ? ` MACD=${indicators.macd.macd.toFixed(2)}/${indicators.macd.signal.toFixed(2)}`
+      : "";
+    const volRatio =
+      indicators.avgVolume > 0 ? (indicators.volume / indicators.avgVolume).toFixed(2) : "?";
+
+    log(
+      `${scenarioPrefix}${symbol}: 价格=${indicators.price.toFixed(4)}, ` +
+        `MA短=${indicators.maShort.toFixed(4)}, MA长=${indicators.maLong.toFixed(4)}, ` +
+        `RSI=${indicators.rsi.toFixed(1)},${macdInfo} 成交量=${volRatio}x, ${trend}, 信号=${signal.type}` +
+        (regimeLabel ? ` [${regimeLabel}]` : "")
+    );
+
+    if (rejected) {
+      log(`${scenarioPrefix}${symbol}: 🚫 ${rejectionReason ?? "filtered"}`);
+      return;
+    }
+
+    if (signal.type === "none") return;
+
+    // portfolioRatioOverride：来自引擎（相关性/regime 调整后的仓位比例）
+    let portfolioRatioOverride: number | undefined = effectivePositionRatio;
 
     // 突发新闻紧急暂停（仅限开仓信号；止损/止盈平仓不受影响）
     if (signal.type === "buy" || signal.type === "short") {
@@ -183,128 +227,6 @@ async function scanSymbol(
     if (signal.type === "short" && mtfTrendBull === true) {
       log(`${scenarioPrefix}${symbol}: 🚫 MTF 趋势过滤：${cfg.trend_timeframe} 多头，忽略 1h 开空信号`);
       return;
-    }
-
-    const trend = indicators.maShort > indicators.maLong ? "📈 多头" : "📉 空头";
-    const macdInfo = indicators.macd
-      ? ` MACD=${indicators.macd.macd.toFixed(2)}/${indicators.macd.signal.toFixed(2)}`
-      : "";
-    const volRatio =
-      indicators.avgVolume > 0 ? (indicators.volume / indicators.avgVolume).toFixed(2) : "?";
-
-    log(
-      `${scenarioPrefix}${symbol}: 价格=${indicators.price.toFixed(4)}, ` +
-        `MA短=${indicators.maShort.toFixed(4)}, MA长=${indicators.maLong.toFixed(4)}, ` +
-        `RSI=${indicators.rsi.toFixed(1)},${macdInfo} 成交量=${volRatio}x, ${trend}, 信号=${signal.type}`
-    );
-
-    if (signal.type === "none") return;
-
-    // portfolioRatioOverride：相关性调整后的仓位比例（覆盖 cfg.risk.position_ratio）
-    let portfolioRatioOverride: number | undefined;
-
-    // ── Regime 感知：震荡市过滤 + P5.2 自适应参数覆盖 ──────────
-    // breakout_watch → 等待突破确认，暂不开仓
-    // reduced_size   → 信号可用但仓位减半（高波动震荡）
-    // regime_overrides → 自动切换止盈/止损/ROI Table 参数
-    let regimeEffectiveRisk = cfg.risk; // 默认使用原始 risk config
-    if (signal.type === "buy" || signal.type === "short") {
-      const regime = classifyRegime(klines);
-      if (regime.confidence >= 60) {
-        if (regime.signalFilter === "breakout_watch") {
-          log(`${scenarioPrefix}${symbol}: 🚫 Regime 过滤 [${regime.label}] ${regime.detail}`);
-          return;
-        } else if (regime.signalFilter === "reduced_size") {
-          portfolioRatioOverride = cfg.risk.position_ratio * 0.5;
-          log(
-            `${scenarioPrefix}${symbol}: ⚠️ Regime 缩减 [${regime.label}] → 仓位缩至 ${(portfolioRatioOverride * 100).toFixed(0)}%`
-          );
-        }
-        // P5.2: 应用 regime_overrides 参数覆盖
-        const override = cfg.regime_overrides?.[regime.signalFilter];
-        if (override) {
-          regimeEffectiveRisk = { ...cfg.risk, ...override };
-          const changedKeys = Object.keys(override).join(", ");
-          log(`${scenarioPrefix}${symbol}: 🔄 Regime 参数覆盖 [${regime.label}]: ${changedKeys}`);
-        }
-      }
-    }
-
-    // ── 风险/回报比检查（仅对开仓信号，需配置 risk.min_rr > 0）──
-    if ((signal.type === "buy" || signal.type === "short") && (regimeEffectiveRisk.min_rr ?? 0) > 0) {
-      const minRr = regimeEffectiveRisk.min_rr ?? 1.5;
-      const rrResult = checkRiskReward(
-        klines,
-        indicators.price,
-        signal.type === "short" ? "short" : "long",
-        minRr
-      );
-      if (!rrResult.passed) {
-        log(`${scenarioPrefix}${symbol}: 🚫 R:R 过滤 — ${rrResult.reason}`);
-        return;
-      }
-      log(`${scenarioPrefix}${symbol}: ✅ R:R 通过 — ${rrResult.reason}`);
-    }
-
-    // ── 相关性过滤 + 组合暴露度调整（仅对开仓信号）────────────
-    if ((signal.type === "buy" || signal.type === "short") && cfg.risk.correlation_filter?.enabled) {
-      const corrCfg = cfg.risk.correlation_filter;
-      const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
-      const heldSymbols = Object.keys(account.positions);
-      if (heldSymbols.length > 0) {
-        // 拉取所有已持仓 K 线（用于相关性 + 暴露度计算）
-        const heldKlinesMap = new Map<string, Kline[]>();
-        await Promise.all(
-          heldSymbols.map(async (sym) => {
-            try {
-              const k = await getKlines(sym, cfg.timeframe, corrCfg.lookback + 1);
-              heldKlinesMap.set(sym, k);
-            } catch { /* 获取失败跳过 */ }
-          })
-        );
-
-        // ── 旧二值检查（保留兼容）───────────────────────
-        const heldKlinesObj = Object.fromEntries(heldKlinesMap);
-        const corrResult = checkCorrelation(symbol, klines, heldKlinesMap, corrCfg.threshold);
-
-        // ── 新：相关性加权仓位调整 ────────────────────────
-        const totalEquity = calcTotalEquity(account, Object.fromEntries(
-          [...heldKlinesMap.entries()].map(([s, k]) => [s, k[k.length - 1]?.close ?? 0])
-        ));
-        const positionWeights = Object.entries(account.positions).map(([sym, pos]) => {
-          const lastClose = heldKlinesMap.get(sym)?.at(-1)?.close ?? pos.entryPrice;
-          const notional = pos.quantity * lastClose;
-          return {
-            symbol: sym,
-            side: (pos.side ?? "long") as "long" | "short",
-            notionalUsdt: notional,
-            weight: totalEquity > 0 ? notional / totalEquity : 0,
-          };
-        });
-
-        const portfolioHeat = calcCorrelationAdjustedSize(
-          symbol,
-          signal.type === "short" ? "short" : "long",
-          cfg.risk.position_ratio,
-          positionWeights,
-          { ...heldKlinesObj, [symbol]: klines },
-          corrCfg.lookback,
-          0.9  // 热度上限 90%（高于此则拒绝）
-        );
-
-        if (portfolioHeat.decision === "blocked") {
-          log(`${scenarioPrefix}${symbol}: 🔗 组合热度过高 → ${portfolioHeat.reason}`);
-          return;
-        }
-
-        if (portfolioHeat.decision === "reduced") {
-          log(`${scenarioPrefix}${symbol}: 📉 组合暴露度调整 → ${portfolioHeat.reason}`);
-          // portfolioRatioOverride 在后续情绪门控和 handleSignal 时替代 cfg.risk.position_ratio
-          portfolioRatioOverride = portfolioHeat.adjustedPositionRatio;
-        } else if (corrResult.maxCorrelation > 0) {
-          log(`${scenarioPrefix}${symbol}: 相关性 ${corrResult.correlatedWith}=${corrResult.maxCorrelation.toFixed(3)}，热度 ${(portfolioHeat.heat * 100).toFixed(0)}%，正常开仓`);
-        }
-      }
     }
 
     // 情绪门控
