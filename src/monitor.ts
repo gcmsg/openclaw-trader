@@ -26,6 +26,7 @@ import { calcCorrelationAdjustedSize } from "./strategy/portfolio-risk.js";
 import { classifyRegime } from "./strategy/regime.js";
 import { checkRiskReward } from "./strategy/rr-filter.js";
 import { fetchFundingRatePct } from "./strategy/funding-rate-signal.js";
+import { getBtcDominanceTrend } from "./strategy/btc-dominance.js";
 import { loadAccount, calcTotalEquity } from "./paper/account.js";
 import { ping } from "./health/heartbeat.js";
 import { loadRuntimeConfigs } from "./config/loader.js";
@@ -136,6 +137,15 @@ async function scanSymbol(
       const frPct = await fetchFundingRatePct(symbol);
       if (frPct !== undefined) indicators.fundingRate = frPct;
     } catch { /* 资金费率拉取失败不影响主流程 */ }
+
+    // BTC 主导率趋势注入（读历史文件，非阻塞）
+    try {
+      const domTrend = getBtcDominanceTrend();
+      if (!isNaN(domTrend.latest)) {
+        indicators.btcDominance = domTrend.latest;
+        indicators.btcDomChange = domTrend.change;
+      }
+    } catch { /* 主导率读取失败不影响主流程 */ }
 
     // 获取当前持仓方向，让 detectSignal 使用正确优先级
     const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);

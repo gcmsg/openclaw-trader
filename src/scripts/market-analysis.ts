@@ -19,6 +19,7 @@ import { loadNewsReport, scoreNewsTitles } from "../news/sentiment-gate.js";
 import { writeKeywordSentimentCache, writeSentimentCache } from "../news/sentiment-cache.js";
 import { analyzeSentimentWithLLM, llmResultToEntry, formatLLMSentimentReport } from "../news/llm-sentiment.js";
 import { loadStrategyConfig } from "../config/loader.js";
+import { trackBtcDominance, getBtcDominanceTrend } from "../strategy/btc-dominance.js";
 import { getKlines } from "../exchange/binance.js";
 import type { Timeframe } from "../types.js";
 
@@ -68,6 +69,11 @@ async function main() {
   const llmBtcDom = localNewsReport?.globalMarket.btcDominance ?? 50;
   const llmMktChange = localNewsReport?.globalMarket.marketCapChangePercent24h ?? 0;
 
+  // 追踪 BTC 主导率历史（每次分析后记录，供 7 日趋势计算）
+  if (localNewsReport?.globalMarket.btcDominance !== undefined) {
+    trackBtcDominance(localNewsReport.globalMarket.btcDominance);
+  }
+
   // 并发拉取所有数据 + LLM 分析（同步进行，互不阻塞）
   const [futuresData, multiTf, btcDeriv, ethDeriv, onchain, newsDigest, llmSentiment] = await Promise.all([
     getBatchFuturesData(FUTURES_SYMBOLS, prices),
@@ -109,6 +115,23 @@ async function main() {
   // 3. 情绪指数
   if (fearGreed) {
     sections.push(`\n😨 **恐惧贪婪指数**: ${fearGreed}`);
+  }
+
+  // 3.5 BTC 主导率趋势
+  {
+    const domTrend = getBtcDominanceTrend(7);
+    if (!isNaN(domTrend.latest)) {
+      const arrow = domTrend.direction === "rising" ? "📈" : domTrend.direction === "falling" ? "📉" : "➡️";
+      const changeStr = `${domTrend.change >= 0 ? "+" : ""}${domTrend.change.toFixed(2)}%`;
+      const label = domTrend.direction === "rising"
+        ? "⚠️ 山寨风险（资金流向BTC）"
+        : domTrend.direction === "falling"
+        ? "✅ 山寨季节信号（资金分散）"
+        : "正常";
+      sections.push(
+        `\n${arrow} **BTC 主导率**: ${domTrend.latest.toFixed(1)}% | 7日变化 ${changeStr} | ${label}`
+      );
+    }
   }
 
   // 4. 资金费率 + OI

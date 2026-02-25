@@ -55,6 +55,8 @@ export interface Indicators {
   vwapUpper2?: number;  // VWAP + 2σ（二阶偏差带上沿）
   vwapLower2?: number;  // VWAP - 2σ
   prevPrice?: number;   // 前一根 K 线收盘价（用于 vwap_bounce 等跨 K 信号）
+  btcDominance?: number; // BTC 市值主导率百分比（如 54.3），由 market-analysis 注入
+  btcDomChange?: number; // 7 日主导率变化量（正=上升=山寨风险；负=下降=山寨机会）
 }
 
 export interface Signal {

@@ -143,6 +143,23 @@ const SIGNAL_CHECKERS: Record<string, SignalChecker> = {
   price_below_vwap_lower2: (ind) =>
     ind.vwapLower2 !== undefined && ind.price < ind.vwapLower2,
 
+  // ── BTC 主导率趋势 ────────────────────────────────
+  /**
+   * BTC 主导率上升（7 日 > +0.5%）→ 山寨币风险高
+   * 资金从山寨流向 BTC，不宜开多山寨；可做空山寨或减仓
+   * 通常作为 sell 或 cover 的辅助条件
+   */
+  btc_dominance_rising: (ind) =>
+    ind.btcDomChange !== undefined && ind.btcDomChange > 0.5,
+
+  /**
+   * BTC 主导率下降（7 日 < -0.5%）→ 山寨季节信号
+   * 资金从 BTC 流向山寨，可加大山寨敞口
+   * 通常作为 buy 的辅助确认条件
+   */
+  btc_dominance_falling: (ind) =>
+    ind.btcDomChange !== undefined && ind.btcDomChange < -0.5,
+
   // ── 资金费率逆向 ─────────────────────────────────
   /**
    * 多头极度拥挤（资金费率超高）→ 逆向做空辅助条件
