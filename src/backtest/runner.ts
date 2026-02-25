@@ -12,6 +12,7 @@ import { calculateIndicators } from "../strategy/indicators.js";
 import { detectSignal } from "../strategy/signals.js";
 import { classifyRegime } from "../strategy/regime.js";
 import { checkRiskReward } from "../strategy/rr-filter.js";
+import { checkCorrelation } from "../strategy/correlation.js";
 import type { Kline, StrategyConfig } from "../types.js";
 import {
   calculateMetrics,
@@ -635,6 +636,24 @@ export function runBacktest(
               risk: { ...cfg.risk, position_ratio: cfg.risk.position_ratio * 0.5 },
             };
           }
+        }
+      }
+
+      // ── 相关性过滤（需配置 risk.correlation_filter.enabled）──────
+      if (
+        (signal.type === "buy" || signal.type === "short") &&
+        cfg.risk.correlation_filter?.enabled
+      ) {
+        const corrCfg = cfg.risk.correlation_filter;
+        const heldSymbols = Object.keys(account.positions).filter((s) => s !== sym);
+        if (heldSymbols.length > 0) {
+          const heldKlinesMap = new Map<string, Kline[]>();
+          for (const heldSym of heldSymbols) {
+            const heldWin = windows[heldSym];
+            if (heldWin) heldKlinesMap.set(heldSym, heldWin);
+          }
+          const corrResult = checkCorrelation(sym, window, heldKlinesMap, corrCfg.threshold);
+          if (corrResult.correlated) continue; // 相关性过高，跳过
         }
       }
 

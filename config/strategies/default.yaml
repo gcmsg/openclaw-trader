@@ -45,3 +45,7 @@ risk:
   max_position_per_symbol: 0.3
   max_total_loss_percent: 20
   daily_loss_limit_percent: 8
+  correlation_filter:
+    enabled: true
+    threshold: 0.75
+    lookback: 60
