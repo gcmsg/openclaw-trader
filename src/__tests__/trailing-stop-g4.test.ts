@@ -36,7 +36,7 @@ function makePosition(symbol: string, entryPrice: number, opts: {
     trailingStop: {
       active: opts.trailingActive ?? false,
       highestPrice: opts.highestPrice ?? entryPrice,
-      lowestPrice: opts.lowestPrice,
+      ...(opts.lowestPrice !== undefined ? { lowestPrice: opts.lowestPrice } : {}),
       stopPrice: opts.stopPrice ?? (isShort ? entryPrice * 1.05 : entryPrice * 0.95),
     },
   };
@@ -95,8 +95,6 @@ function makeConfig(riskOverrides: Partial<RuntimeConfig["risk"]> = {}): Runtime
     paper: { scenarioId: "test-trailing", initial_usdt: 10000, fee_rate: 0, slippage_percent: 0, report_interval_hours: 24 },
   };
 }
-
-const MOCK_SCENARIO = "test-trailing";
 
 let mockAccount: PaperAccount;
 
@@ -178,8 +176,8 @@ describe("G4 Enhanced Trailing Stop — positive trailing offset", () => {
     const exits = checkExitConditions({ BTCUSDT: 104 }, cfg);
     // 即使不触发止损，trailingStopActivated 应该变为 true
     // （通过检查 mockAccount.positions）
-    expect(mockAccount.positions.BTCUSDT?.trailingStopActivated).toBe(true);
-    void exits; // suppress unused warning
+    expect(mockAccount.positions["BTCUSDT"]?.trailingStopActivated).toBe(true);
+    expect(exits).toBeDefined();
   });
 
   it("positive trailing 使用更紧的 callback (2% vs 5%)", () => {
