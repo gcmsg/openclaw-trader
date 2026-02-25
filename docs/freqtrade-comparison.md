@@ -50,14 +50,16 @@ for(;;)
 | **止盈逻辑** | ROI Table（时间衰减，分段目标） | 固定 `take_profit_percent` | 🔴 大 |
 | **订单超时** | `unfilledtimeout` 自动取消/重下 | ❌ 无 | 🔴 大 |
 | **部分成交** | `update_trade_state()` 按实际 filled 更新 | ❌ 假设 100% 成交 | 🔴 大 |
-| **持久化** | SQLite（SQLAlchemy ORM，崩溃安全） | JSONL 文件（append-only，无法查询） | 🟡 中 |
+| **持久化** | SQLite（SQLAlchemy ORM，崩溃安全） | ✅ **G5** `better-sqlite3`（`use_sqlite: true` 开启） | 🟢 已对齐 |
+| **订单超时** | `unfilledtimeout` 自动取消/重下 | ✅ **G3** `checkOrderTimeouts()` 每轮主循环 | 🟢 已对齐 |
 | **订单状态机** | `PENDING→OPEN→PARTIALLY_FILLED→FILLED/CANCELLED` | ❌ 无状态追踪 | 🔴 大 |
 | **策略设计** | Class 继承 IStrategy，插件式 | Config YAML + 纯函数 | 🟡 中 |
 | **入场确认** | `confirm_trade_entry()` 最终校验 | ❌ 无 | 🟡 中 |
-| **K 线缓存** | DataProvider 集中缓存 | 每 symbol 单独请求 | 🟡 中 |
-| **保护机制** | CooldownPeriod/MaxDrawdown/StoplossGuard | 简单 totalLoss 暂停 | 🟡 中 |
+| **K 线缓存** | DataProvider 集中缓存 | ✅ **G2** `DataProvider` 30s TTL，预拉所有 pair | 🟢 已对齐 |
+| **保护机制** | CooldownPeriod/MaxDrawdown/StoplossGuard | ✅ **G1** `protection-manager.ts` 全 4 种保护 | 🟢 已对齐 |
+| **Trailing Stop Positive** | `trailing_stop_positive_offset` | ✅ **G4** `trailing_stop_positive / offset / only_offset` | 🟢 已对齐 |
 | **DCA** | `adjust_trade_position()` 策略回调 | 硬编码 checkDcaTranches() | 🟡 中 |
-| **回测/实盘统一** | ✅ 同一套策略代码 | ❌ monitor.ts vs runner.ts 两套 | 🔴 大 |
+| **回测/实盘统一** | ✅ 同一套策略代码 | ✅ **F3** `processSignal()` live + backtest 共用 | 🟢 已对齐 |
 | **多空支持** | ✅ Long/Short 统一 Trade 模型 | ✅ spot buy + futures short | 相当 |
 | **LLM 情绪** | ❌（FreqAI 是 ML，不是 LLM） | ✅ Gateway LLM 分析 | 我们领先 |
 | **VWAP 偏差带** | ❌ 需自行实现 | ✅ ±1σ/±2σ，6 个信号 | 我们领先 |

@@ -175,9 +175,10 @@ live-monitor.ts 启动 CvdManager WebSocket；monitor.ts 读 cvd-state.json 缓�
 大单挂墙（>100 BTC 买单）/ 大单撤单 / 买卖压力比  
 需要 Binance WebSocket 订单簿流（Level 2）
 
-### ✅ P5.2 Regime 自适应参数 — **已实现** (本 commit)
+### ✅ P5.2 Regime 自适应参数 — **已完成（全链路串联）**
 `types.ts`：`StrategyConfig.regime_overrides?: Partial<Record<string, Partial<RiskConfig>>>`  
 `monitor.ts` + `live-monitor.ts`：regime 检测 → 自动覆盖 risk 参数（止盈/止损/ROI Table/仓位）  
+R:R 检查使用 `regimeEffectiveRisk.min_rr`；handleSignal 传 effectiveCfg；情绪门控使用 `regimeEffectiveRisk.position_ratio`  
 配置示例：`regime_overrides.reduced_size.take_profit_percent: 5`
 
 ### P5.3 清算热力图（Coinglass）
@@ -220,19 +221,77 @@ live-monitor.ts 启动 CvdManager WebSocket；monitor.ts 读 cvd-state.json 缓�
 
 ---
 
-## 当前项目状态（2026-02-25 23:xx CST）
+---
+
+## ✅ Phase F (F3) — 统一信号引擎
+
+### ✅ F3 统一信号引擎 — **已完成**
+`src/strategy/signal-engine.ts`：`processSignal()` 统一入口  
+`monitor.ts` + `backtest/runner.ts` 均已替换为 `processSignal()`  
+包含：`calculateIndicators → detectSignal → regime → R:R → correlation → protections`  
+外部上下文注入：CVD / 资金费率 / BTC 主导率 / heldKlinesMap  
+**测试**：25 个 signal-engine.test.ts
+
+---
+
+## ✅ Phase G — Freqtrade 对齐（新增）
+
+### ✅ G1 Protection Manager — **已完成**
+`src/strategy/protection-manager.ts`：TypeScript 重写 4 个 Freqtrade protection 插件  
+- CooldownPeriod：止损后 N 根K线冷却  
+- StoplossGuard：全局/per-pair 止损次数上限  
+- MaxDrawdownProtection：回看窗口内总亏损超限 → 全局暂停  
+- LowProfitPairs：pair 均盈不足 → 暂停该 pair  
+集成至 `signal-engine.ts`，`StrategyConfig.protections` 配置  
+**测试**：25 个 protection-manager.test.ts
+
+### ✅ G2 DataProvider 集中 K 线缓存 — **已完成**
+`src/exchange/data-provider.ts`：`DataProvider` 类，30 秒 TTL 缓存  
+`monitor.ts` 中 `runScenario()` 预拉所有 symbol K 线（API 请求减少约 70%）  
+MTF 趋势 K 线也走 DataProvider 缓存  
+**测试**：11 个 data-provider.test.ts
+
+### ✅ G3 完整订单超时循环 — **已完成**
+`src/live/executor.ts`：`LiveExecutor.checkOrderTimeouts(account)` 方法  
+`src/scripts/live-monitor.ts`：每轮 checkExitConditions 后调用 checkOrderTimeouts  
+处理：FILLED → 同步；PARTIALLY_FILLED → 同步；NEW → cancel + 通知
+
+### ✅ G4 增强型 Trailing Stop — **已完成（仿 Freqtrade）**
+`types.ts`：`RiskConfig` 新增 `trailing_stop_positive / trailing_stop_positive_offset / trailing_only_offset_is_reached`  
+`paper/account.ts`：`PaperPosition.trailingStopActivated`  
+`paper/engine.ts`：`checkExitConditions()` 实现 positive trailing 激活逻辑  
+`backtest/runner.ts`：`updateTrailingStop()` 逐K线模拟  
+**测试**：10 个 trailing-stop-g4.test.ts
+
+### ✅ G5 SQLite 可选持久化 — **已完成**
+`npm install better-sqlite3` + `@types/better-sqlite3`  
+`src/persistence/db.ts`：`TradeDB` 类（migrations + CRUD + snapshot）  
+`types.ts`：`RuntimeConfig.paper.use_sqlite?: boolean`  
+`paper/account.ts`：`PaperPosition.dbId?: number`  
+`paper/engine.ts`：开仓 `db.insertTrade()`，平仓 `db.closeTrade()`  
+**测试**：12 个 persistence-db.test.ts（":memory:" DB）
+
+### ✅ G6 P5.3/P5.4 调研报告 — **已完成**
+`docs/p5.3-p5.4-research.md`：详细评估各数据源可用性与成本  
+P5.3-Lite（Binance OI）和 P5.4-Reddit 均可免费实现  
+LunarCrush 免费注册 API Key 可用，建议主人提供
+
+---
+
+## 当前项目状态（2026-02-25）
 
 | 指标 | 数值 |
 |------|------|
-| 测试覆盖 | **518 tests passing** |
+| 测试覆盖 | **602 tests passing** |
 | TypeScript errors | **0** |
 | ESLint warnings | **0** |
 | Testnet 状态 | 🟢 运行中（tmux: trader-live） |
 | Phase 0-3 + 3.5 | ✅ 全部完成（B1-B7 修复）|
-| Phase F (Freqtrade) | ✅ F1/F2/F4/F5 完成；F3 长期重构 |
+| Phase F (Freqtrade) | ✅ F1/F2/F3/F4/F5 全部完成 |
 | Phase 4 | ✅ P4.2-P4.6 全部完成；P4.1 等 50+ 交易 |
-| Phase 5 | ✅ P5.2 Regime 自适应参数 完成 |
-| 总体评分 | **7.8/10** → v1.0 目标 **8.5/10** |
+| Phase 5 | ✅ P5.2 Regime 自适应参数 全链路完成 |
+| **Phase G** | ✅ **G1-G6 全部完成（Freqtrade 对齐）** |
+| 总体评分 | **8.0/10** → v1.0 目标 **8.5/10** |
 
 ---
 
