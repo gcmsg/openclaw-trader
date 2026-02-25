@@ -8,6 +8,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { getKlines } from "./exchange/binance.js";
+import { DataProvider } from "./exchange/data-provider.js";
 import { calculateIndicators } from "./strategy/indicators.js";
 import { notifySignal, notifyError, notifyPaperTrade, notifyStopLoss } from "./notify/openclaw.js";
 import {
@@ -83,7 +84,8 @@ async function scanSymbol(
   cfg: RuntimeConfig,
   state: MonitorState,
   currentPrices: Record<string, number>,
-  scenarioPrefix: string
+  scenarioPrefix: string,
+  provider: DataProvider
 ): Promise<void> {
   try {
     // 计算所需 K 线数量：取 MA、RSI、MACD 三者的最大值，多留 10 根余量
@@ -91,8 +93,14 @@ async function scanSymbol(
       ? cfg.strategy.macd.slow + cfg.strategy.macd.signal + 1
       : 0;
     const limit = Math.max(cfg.strategy.ma.long, cfg.strategy.rsi.period, macdMinBars) + 10;
-    const klines = await getKlines(symbol, cfg.timeframe, limit + 1);
-    if (klines.length < limit) return;
+
+    // 优先从 DataProvider 缓存取（减少重复 API 请求）
+    let klines = provider.get(symbol, cfg.timeframe);
+    if (!klines || klines.length < limit) {
+      // 缓存未命中（首次或过期），回退到直接拉取
+      klines = await getKlines(symbol, cfg.timeframe, limit + 1);
+      if (klines.length < limit) return;
+    }
 
     // ── 多时间框架趋势过滤（MTF）──────────────────────────
     // 如果配置了 trend_timeframe，拉取更高级别 K 线判断大趋势方向
@@ -101,7 +109,9 @@ async function scanSymbol(
     if (cfg.trend_timeframe && cfg.trend_timeframe !== cfg.timeframe) {
       try {
         const trendLimit = cfg.strategy.ma.long + 10;
-        const trendKlines = await getKlines(symbol, cfg.trend_timeframe, trendLimit);
+        // 优先用 DataProvider 缓存（MTF K 线，由 runScenario 预拉）
+        const trendKlines = provider.get(symbol, cfg.trend_timeframe)
+          ?? await getKlines(symbol, cfg.trend_timeframe, trendLimit);
         const trendInd = calculateIndicators(
           trendKlines,
           cfg.strategy.ma.short,
@@ -161,7 +171,9 @@ async function scanSymbol(
       await Promise.all(
         heldSymbols.map(async (sym) => {
           try {
-            heldKlinesMap[sym] = await getKlines(sym, cfg.timeframe, corrLookback + 1);
+            // 优先从 DataProvider 取缓存
+            const cached = provider.get(sym, cfg.timeframe);
+            heldKlinesMap[sym] = cached ?? await getKlines(sym, cfg.timeframe, corrLookback + 1);
           } catch { /* 获取失败跳过 */ }
         })
       );
@@ -316,11 +328,24 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
 
   const currentPrices: Record<string, number> = {};
 
+  // ── DataProvider：预拉所有 symbol 的 K 线，减少重复 API 请求 ──
+  const macdMinBars = cfg.strategy.macd.enabled
+    ? cfg.strategy.macd.slow + cfg.strategy.macd.signal + 1
+    : 0;
+  const klineLimit = Math.max(cfg.strategy.ma.long, cfg.strategy.rsi.period, macdMinBars) + 11;
+  const provider = new DataProvider(30);
+  await provider.refresh(cfg.symbols, cfg.timeframe, klineLimit);
+  // MTF 预拉（如果配置了 trend_timeframe）
+  if (cfg.trend_timeframe && cfg.trend_timeframe !== cfg.timeframe) {
+    const trendLimit = cfg.strategy.ma.long + 10;
+    await provider.refresh(cfg.symbols, cfg.trend_timeframe, trendLimit);
+  }
+
   // 并发扫描（批次 3）
   const BATCH = 3;
   for (let i = 0; i < cfg.symbols.length; i += BATCH) {
     const batch = cfg.symbols.slice(i, i + BATCH);
-    await Promise.all(batch.map((sym) => scanSymbol(sym, cfg, state, currentPrices, prefix)));
+    await Promise.all(batch.map((sym) => scanSymbol(sym, cfg, state, currentPrices, prefix, provider)));
   }
 
   // 止损/止盈/追踪止损检查
