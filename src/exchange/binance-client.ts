@@ -430,6 +430,18 @@ export class BinanceClient {
   }
 
   /**
+   * 获取 Futures 持仓风险（/fapi/v2/positionRisk）
+   * 仅在 futures 市场有效；返回所有 symbol 的持仓信息
+   */
+  async getFuturesPositions(): Promise<{ symbol: string; positionAmt: string; entryPrice: string; unrealizedProfit: string }[]> {
+    if (this.market !== "futures") return [];
+    const qs = this.buildSignedQuery({});
+    const path = `/fapi/v2/positionRisk?${qs}`;
+    const raw = await httpsRequest(this.hostname, "GET", path, this.signedHeaders());
+    return raw as { symbol: string; positionAmt: string; entryPrice: string; unrealizedProfit: string }[];
+  }
+
+  /**
    * 市价买入（USDT 金额 → 自动计算数量）
    * 返回实际成交的 OrderResponse
    */

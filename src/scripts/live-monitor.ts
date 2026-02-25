@@ -29,6 +29,9 @@ import type { RuntimeConfig } from "../types.js";
 
 const POLL_INTERVAL_MS = 60 * 1000; // 1 分钟轮询
 
+// ── 优雅退出标志（用对象包裹，避免 no-unnecessary-condition 误报）──
+const _state = { shuttingDown: false };
+
 function log(msg: string): void {
   console.log(`[${new Date().toLocaleString("zh-CN")}] ${msg}`);
 }
@@ -127,6 +130,41 @@ async function processSymbol(symbol: string, cfg: RuntimeConfig): Promise<void> 
         }
       } catch { /* 不影响主流程 */ }
     }
+  } else if (signal.type === "short") {
+    // 开空（Futures / Margin 市场）
+    const emergency = readEmergencyHalt();
+    if (emergency.halt) {
+      log(`${label} ${symbol}: ⛔ 紧急暂停 — ${emergency.reason ?? "突发高危新闻"}`);
+      return;
+    }
+    if (cfg.notify.on_signal) notifySignal(signal);
+    const result = await executor.handleShort(signal);
+    if (result.skipped) {
+      log(`${label} ${symbol}: 跳过开空 — ${result.skipped}`);
+    } else if (result.trade) {
+      log(`${label} ${symbol}: 开空成功，orderId=${result.orderId ?? "N/A"}`);
+      try {
+        const sigId = logSignal({
+          symbol,
+          type: "short",
+          entryPrice: result.trade.price,
+          conditions: {
+            maShort: indicators.maShort,
+            maLong: indicators.maLong,
+            rsi: indicators.rsi,
+            ...(indicators.atr !== undefined && { atr: indicators.atr }),
+            triggeredRules: signal.reason,
+          },
+          scenarioId: cfg.paper.scenarioId,
+          source: "live",
+        });
+        const acc = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+        if (acc.positions[symbol]) {
+          acc.positions[symbol].signalHistoryId = sigId;
+          saveAccount(acc, cfg.paper.scenarioId);
+        }
+      } catch { /* 不影响主流程 */ }
+    }
   } else if (signal.type === "sell") {
     const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
     const sigHistId = account.positions[symbol]?.signalHistoryId;
@@ -134,6 +172,19 @@ async function processSymbol(symbol: string, cfg: RuntimeConfig): Promise<void> 
       const result = await executor.handleSell(symbol, signal.price, signal.reason.join(", "));
       if (result.trade) {
         log(`${label} ${symbol}: 卖出成功，orderId=${result.orderId ?? "N/A"}`);
+        if (sigHistId) {
+          try { closeSignal(sigHistId, result.trade.price, "signal", result.trade.pnl); } catch { /* skip */ }
+        }
+      }
+    }
+  } else if (signal.type === "cover") {
+    // 平空
+    const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+    const sigHistId = account.positions[symbol]?.signalHistoryId;
+    if (account.positions[symbol]) {
+      const result = await executor.handleCover(symbol, signal.price, signal.reason.join(", "));
+      if (result.trade) {
+        log(`${label} ${symbol}: 平空成功，orderId=${result.orderId ?? "N/A"}`);
         if (sigHistId) {
           try { closeSignal(sigHistId, result.trade.price, "signal", result.trade.pnl); } catch { /* skip */ }
         }
@@ -234,7 +285,8 @@ async function main(): Promise<void> {
     // Testnet/paper 模式下交易所无真实持仓，预期结果为 ok
     try {
       const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
-      const reconcile = reconcilePositions(account, []); // exchangePositions = [] (API 集成待扩展)
+      const exchangePositions = await executor.getExchangePositions();
+      const reconcile = reconcilePositions(account, exchangePositions);
       const report = formatReconcileReport(reconcile);
       log(report.replace(/\*\*/g, "")); // 去除 markdown，在终端更易读
       if (reconcile.status === "critical") {
@@ -246,9 +298,20 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── SIGTERM / SIGINT 优雅退出 ───────────────────────
+  const handleShutdown = (sig: string) => {
+    if (_state.shuttingDown) return;
+    _state.shuttingDown = true;
+    log(`\n🛑 收到 ${sig}，完成当前轮次后退出...`);
+  };
+  process.on("SIGTERM", () => { handleShutdown("SIGTERM"); });
+  process.on("SIGINT", () => { handleShutdown("SIGINT"); });
+
   // 轮询循环
   for (;;) {
+    if (_state.shuttingDown) break;
     for (const scenario of scenarios) {
+      if (_state.shuttingDown) break; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
       const cfg = buildPaperRuntime(base, paperCfg, scenario);
 
       try {
@@ -257,6 +320,7 @@ async function main(): Promise<void> {
 
         // 再检测买卖信号
         for (const symbol of cfg.symbols) {
+          if (_state.shuttingDown) break; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
           await processSymbol(symbol, cfg).catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
             log(`❌ ${scenario.id} ${symbol}: ${msg}`);
@@ -271,9 +335,13 @@ async function main(): Promise<void> {
       }
     }
 
+    if (_state.shuttingDown) break; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
     log(`⏰ 等待 ${POLL_INTERVAL_MS / 1000}s 后下一轮...`);
     await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
+
+  log("✅ Live monitor 已安全退出。");
+  process.exit(0);
 }
 
 main().catch((err: unknown) => {

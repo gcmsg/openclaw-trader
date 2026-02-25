@@ -26,6 +26,7 @@ import {
 } from "../paper/account.js";
 import { calcAtrPositionSize } from "../strategy/indicators.js";
 import type { ExitReason } from "../paper/engine.js";
+import type { ExchangePosition } from "./reconcile.js";
 
 // ─────────────────────────────────────────────────────
 // 结果类型（与 PaperEngineResult 兼容）
@@ -117,6 +118,27 @@ export class LiveExecutor {
   }
 
   /**
+   * 从交易所读取真实持仓（用于对账）
+   * Futures：读取 positionRisk，过滤 positionAmt != 0
+   * Spot：当前不支持，返回空数组
+   */
+  async getExchangePositions(): Promise<ExchangePosition[]> {
+    try {
+      const raw = await this.client.getFuturesPositions();
+      return raw
+        .filter((p) => parseFloat(p.positionAmt) !== 0)
+        .map((p) => ({
+          symbol: p.symbol,
+          side: parseFloat(p.positionAmt) > 0 ? ("long" as const) : ("short" as const),
+          qty: Math.abs(parseFloat(p.positionAmt)),
+          avgPrice: parseFloat(p.entryPrice),
+        }));
+    } catch {
+      return []; // spot 或不支持的市场返回空数组
+    }
+  }
+
+  /**
    * 处理买入信号
    * 流程：检查仓位上限 → 计算仓位大小 → 下市价单 → 更新本地账户
    */
@@ -188,7 +210,11 @@ export class LiveExecutor {
     const totalFee = order.fills?.reduce((s, f) => s + parseFloat(f.commission), 0) ?? 0;
 
     // 更新本地账户（镜像真实状态）
-    const stopLossPrice = avgPrice * (1 - this.cfg.risk.stop_loss_percent / 100);
+    // ATR 动态止损：当 atr_position 启用且信号含有 ATR 时，用 ATR × multiplier 作为止损距离
+    const signalAtr = signal.indicators.atr;
+    const stopLossPrice = (atrCfg?.enabled && signalAtr)
+      ? avgPrice - signalAtr * atrCfg.atr_multiplier
+      : avgPrice * (1 - this.cfg.risk.stop_loss_percent / 100);
     const takeProfitPrice = avgPrice * (1 + this.cfg.risk.take_profit_percent / 100);
 
     // 🛡️ 在交易所挂止损单（限价或市价），防止极端行情漏停
@@ -377,7 +403,12 @@ export class LiveExecutor {
     const totalFee = order.fills?.reduce((s, f) => s + parseFloat(f.commission), 0) ?? 0;
     const actualMargin = marginToLock - totalFee;
 
-    const shortStopLoss = avgPrice * (1 + this.cfg.risk.stop_loss_percent / 100);
+    // ATR 动态止损（做空方向：止损在入场价 + ATR × multiplier）
+    const sAtrCfg = this.cfg.risk.atr_position;
+    const sSignalAtr = signal.indicators.atr;
+    const shortStopLoss = (sAtrCfg?.enabled && sSignalAtr)
+      ? avgPrice + sSignalAtr * sAtrCfg.atr_multiplier
+      : avgPrice * (1 + this.cfg.risk.stop_loss_percent / 100);
     const shortTakeProfit = avgPrice * (1 - this.cfg.risk.take_profit_percent / 100);
 
     // 🛡️ 挂止损单（Futures: 做空止损需 BUY 方向）
