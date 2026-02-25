@@ -28,6 +28,7 @@ import { checkRiskReward } from "./strategy/rr-filter.js";
 import { fetchFundingRatePct } from "./strategy/funding-rate-signal.js";
 import { getBtcDominanceTrend } from "./strategy/btc-dominance.js";
 import { readEmergencyHalt } from "./news/emergency-monitor.js";
+import { readCvdCache } from "./exchange/order-flow.js";
 import { calcKellyRatio } from "./strategy/kelly.js";
 import { loadAccount, calcTotalEquity } from "./paper/account.js";
 import { ping } from "./health/heartbeat.js";
@@ -148,6 +149,16 @@ async function scanSymbol(
         indicators.btcDomChange = domTrend.change;
       }
     } catch { /* 主导率读取失败不影响主流程 */ }
+
+    // 真实 CVD 覆盖（若 CvdManager 已运行并写入缓存，优先用真实数据）
+    try {
+      const realCvd = readCvdCache(symbol) as { cvd?: number; updatedAt?: number } | undefined;
+      const maxAgeMs = 5 * 60_000; // 超过 5 分钟视为过期
+      if (realCvd?.cvd !== undefined && realCvd.updatedAt !== undefined &&
+          Date.now() - realCvd.updatedAt < maxAgeMs) {
+        indicators.cvd = realCvd.cvd;
+      }
+    } catch { /* CVD 缓存读取失败不影响主流程 */ }
 
     // 获取当前持仓方向，让 detectSignal 使用正确优先级
     const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);

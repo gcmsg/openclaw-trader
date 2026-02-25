@@ -18,6 +18,8 @@ import {
 } from "./fetcher.js";
 // sendNewsReport 已移至 openclaw.ts，monitor 直接调用 notifyStatus
 import { ping } from "../health/heartbeat.js";
+import { analyzeSentimentWithLLM, llmResultToEntry } from "./llm-sentiment.js";
+import { writeSentimentCache } from "./sentiment-cache.js";
 import type { StrategyConfig } from "../types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -163,7 +165,31 @@ async function main(): Promise<void> {
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
   log(`报告已写入: ${reportPath}`);
 
-  // 更新状态
+  // ── LLM 语义情绪分析（自动化，非阻塞失败）──────────────────
+  // 每次 news_collector 跑完后自动分析，更新 6h 情绪缓存
+  // OPENCLAW_GATEWAY_TOKEN 未配置时自动跳过
+  try {
+    const headlines = importantNews.slice(0, 10).map((n) => n.title);
+    const llmResult = await analyzeSentimentWithLLM({
+      headlines,
+      fearGreed: fearGreed.value,
+      btcDominance: 0, // dominance 由 btc-dominance.ts 维护，此处传 0 降级
+      marketCapChange: globalMarket.marketCapChangePercent24h,
+    });
+
+    if (llmResult) {
+      const entry = llmResultToEntry(llmResult, headlines.length);
+      writeSentimentCache(entry);
+      log(`🧠 LLM 情绪分析完成: ${entry.label} (${entry.score}/10)`);
+    } else {
+      log("⚠️ LLM 情绪分析跳过（未配置 Gateway Token 或返回空）");
+    }
+  } catch (err: unknown) {
+    // LLM 失败不阻断主流程，继续使用关键词降级
+    log(`⚠️ LLM 情绪分析失败（降级到关键词）: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // ── 更新状态 ────────────────────────────────────────
   saveState({
     lastRunAt: Date.now(),
     lastFearGreed: fearGreed.value,
@@ -171,6 +197,8 @@ async function main(): Promise<void> {
 
   done();
   log("─── 新闻情绪扫描完成 ───\n");
+
+
 }
 
 main().catch((err: unknown) => {

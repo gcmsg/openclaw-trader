@@ -25,6 +25,7 @@ import { notifySignal, notifyError } from "../notify/openclaw.js";
 import { loadAccount, saveAccount } from "../paper/account.js";
 import { logSignal, closeSignal } from "../signals/history.js";
 import { readEmergencyHalt } from "../news/emergency-monitor.js";
+import { CvdManager } from "../exchange/order-flow.js";
 import type { RuntimeConfig } from "../types.js";
 
 const POLL_INTERVAL_MS = 60 * 1000; // 1 分钟轮询
@@ -267,6 +268,17 @@ async function main(): Promise<void> {
 
   log(`🚀 启动实盘监控，共 ${scenarios.length} 个场景`);
 
+  // ── 真实 CVD — aggTrade WebSocket ────────────────────
+  // 从第一个场景取 symbols；所有场景共用同一个 CVD 数据源
+  const cvdSymbols = scenarios[0]
+    ? [...new Set(scenarios.flatMap((s) => s.symbols ?? []))]
+    : [];
+  const cvdManager = cvdSymbols.length > 0 ? new CvdManager(cvdSymbols, { windowMs: 3_600_000 }) : null;
+  if (cvdManager) {
+    cvdManager.start();
+    log(`📊 真实 CVD 已启动，监控 ${cvdSymbols.length} 个 symbol`);
+  }
+
   // 测试连接
   for (const scenario of scenarios) {
     const cfg = buildPaperRuntime(base, paperCfg, scenario);
@@ -340,6 +352,7 @@ async function main(): Promise<void> {
     await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
 
+  cvdManager?.stop();
   log("✅ Live monitor 已安全退出。");
   process.exit(0);
 }

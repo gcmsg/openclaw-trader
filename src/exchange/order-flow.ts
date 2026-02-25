@@ -8,7 +8,7 @@
  *   - m = true：卖方挂单（maker），买方主动成交 → buyer-initiated → +volume
  *   - m = false：买方挂单（maker），卖方主动成交 → seller-initiated → -volume
  *
- * CVD = Σ( m=true ? +volume : -volume )，正 = 净买压，负 = 净卖压
+ * CVD = Σ( m=false(买方主动) ? +volume : -volume )，正 = 净买压，负 = 净卖压
  *
  * ## 用途
  * - 真实 CVD 上升但价格横盘 → 买压积累，可能突破上行
@@ -186,9 +186,10 @@ export class CvdManager {
       entry.windowStartMs = nowMs;
     }
 
-    // trade.m = true → 买方主动（价格上行压力）→ +qty
-    // trade.m = false → 卖方主动（价格下行压力）→ -qty
-    if (trade.m) {
+    // Binance aggTrade: m = isBuyerMaker
+    //   m = false → 买方是 taker（主动买，hit ask）→ 买压 → CVD +
+    //   m = true  → 买方是 maker（卖方主动，hit bid）→ 卖压 → CVD -
+    if (!trade.m) {
       entry.cvd += qty;
       entry.buyVolume += qty;
     } else {

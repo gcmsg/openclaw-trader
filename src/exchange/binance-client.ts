@@ -14,6 +14,47 @@ import crypto from "crypto";
 import fs from "fs";
 
 // ─────────────────────────────────────────────────────
+// 令牌桶限速器（Token Bucket Rate Limiter）
+// Binance 限制：Spot 1200 weight/min · Futures 2400 weight/min
+// 保守上限：600 weight/min = 10/s，留出充分余量
+// ─────────────────────────────────────────────────────
+
+class RateLimiter {
+  private tokens: number;
+  private lastRefill: number;
+  private readonly maxTokens: number;
+  private readonly refillRate: number; // tokens per ms
+
+  constructor(maxPerMinute = 600) {
+    this.maxTokens = maxPerMinute;
+    this.tokens = maxPerMinute;
+    this.lastRefill = Date.now();
+    this.refillRate = maxPerMinute / 60_000;
+  }
+
+  async acquire(weight = 1): Promise<void> {
+    for (;;) {
+      const now = Date.now();
+      const elapsed = now - this.lastRefill;
+      this.tokens = Math.min(this.maxTokens, this.tokens + elapsed * this.refillRate);
+      this.lastRefill = now;
+
+      if (this.tokens >= weight) {
+        this.tokens -= weight;
+        return;
+      }
+
+      // 等待令牌补充，最短等待 50ms
+      const waitMs = Math.ceil((weight - this.tokens) / this.refillRate);
+      await new Promise<void>((r) => setTimeout(r, Math.max(50, waitMs)));
+    }
+  }
+}
+
+// 全局限速器（每个进程共享一个实例）
+const globalRateLimiter = new RateLimiter(600);
+
+// ─────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────
 
@@ -128,13 +169,14 @@ function isBinanceApiError(obj: unknown): obj is BinanceApiError {
     ((obj as Record<string, unknown>)["code"] as number) < 0;
 }
 
-function httpsRequest(
+async function httpsRequest(
   hostname: string,
   method: "GET" | "POST" | "DELETE",
   path: string,
   headers: Record<string, string>,
   body?: string
 ): Promise<unknown> {
+  await globalRateLimiter.acquire();
   return new Promise((resolve, reject) => {
     const options: https.RequestOptions = {
       hostname,
@@ -151,6 +193,12 @@ function httpsRequest(
       let data = "";
       res.on("data", (chunk) => (data += chunk));
       res.on("end", () => {
+        // 429: 触发限速，消耗所有令牌并提示
+        if (res.statusCode === 429 || res.statusCode === 418) {
+          const retryAfter = parseInt(res.headers["retry-after"] ?? "60", 10);
+          reject(new Error(`Binance rate limit hit (HTTP ${res.statusCode}), retry after ${retryAfter}s`));
+          return;
+        }
         try {
           const parsed: unknown = JSON.parse(data) as unknown;
           if (isBinanceApiError(parsed)) {
