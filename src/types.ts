@@ -104,6 +104,12 @@ export interface RiskConfig {
     lookback: number;
   };
 
+  // ── 风险/回报比过滤（可选）──
+  /** 最低可接受 R:R 比率（默认 1.5，0 = 禁用）
+   *  多头：距阻力 / 距支撑 ≥ min_rr
+   *  空头：距支撑 / 距阻力 ≥ min_rr */
+  min_rr?: number;
+
   // ── 分批建仓 DCA（可选）──
   dca?: {
     enabled: boolean;

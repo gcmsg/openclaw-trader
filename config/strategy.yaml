@@ -72,6 +72,7 @@ signals:
 # 风险控制（各场景可单独覆盖部分字段）
 # ───────────────────────────────────────
 risk:
+  min_rr: 1.5              # 最低风险/回报比（盈利空间 ≥ 止损空间×1.5），0 = 禁用
   stop_loss_percent: 5
   take_profit_percent: 15
   trailing_stop:

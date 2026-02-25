@@ -11,6 +11,7 @@
 import { calculateIndicators } from "../strategy/indicators.js";
 import { detectSignal } from "../strategy/signals.js";
 import { classifyRegime } from "../strategy/regime.js";
+import { checkRiskReward } from "../strategy/rr-filter.js";
 import type { Kline, StrategyConfig } from "../types.js";
 import {
   calculateMetrics,
@@ -635,6 +636,18 @@ export function runBacktest(
             };
           }
         }
+      }
+
+      // ── R:R 过滤（仅开仓，需配置 risk.min_rr > 0，sell/cover 不受影响）──
+      if ((signal.type === "buy" || signal.type === "short") && (cfg.risk.min_rr ?? 0) > 0) {
+        const minRr = cfg.risk.min_rr;
+        const rrResult = checkRiskReward(
+          window,
+          kline.close,
+          signal.type === "short" ? "short" : "long",
+          minRr
+        );
+        if (!rrResult.passed) continue;
       }
 
       if (signal.type === "buy") {

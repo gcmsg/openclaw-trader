@@ -24,6 +24,7 @@ import { readSentimentCache } from "./news/sentiment-cache.js";
 import { checkCorrelation } from "./strategy/correlation.js";
 import { calcCorrelationAdjustedSize } from "./strategy/portfolio-risk.js";
 import { classifyRegime } from "./strategy/regime.js";
+import { checkRiskReward } from "./strategy/rr-filter.js";
 import { loadAccount, calcTotalEquity } from "./paper/account.js";
 import { ping } from "./health/heartbeat.js";
 import { loadRuntimeConfigs } from "./config/loader.js";
@@ -179,6 +180,22 @@ async function scanSymbol(
           );
         }
       }
+    }
+
+    // ── 风险/回报比检查（仅对开仓信号，需配置 risk.min_rr > 0）──
+    if ((signal.type === "buy" || signal.type === "short") && (cfg.risk.min_rr ?? 0) > 0) {
+      const minRr = cfg.risk.min_rr ?? 1.5;
+      const rrResult = checkRiskReward(
+        klines,
+        indicators.price,
+        signal.type === "short" ? "short" : "long",
+        minRr
+      );
+      if (!rrResult.passed) {
+        log(`${scenarioPrefix}${symbol}: 🚫 R:R 过滤 — ${rrResult.reason}`);
+        return;
+      }
+      log(`${scenarioPrefix}${symbol}: ✅ R:R 通过 — ${rrResult.reason}`);
     }
 
     // ── 相关性过滤 + 组合暴露度调整（仅对开仓信号）────────────
