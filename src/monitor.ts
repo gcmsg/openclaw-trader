@@ -231,8 +231,8 @@ async function scanSymbol(
     }
 
     // ── 风险/回报比检查（仅对开仓信号，需配置 risk.min_rr > 0）──
-    if ((signal.type === "buy" || signal.type === "short") && (cfg.risk.min_rr ?? 0) > 0) {
-      const minRr = cfg.risk.min_rr ?? 1.5;
+    if ((signal.type === "buy" || signal.type === "short") && (regimeEffectiveRisk.min_rr ?? 0) > 0) {
+      const minRr = regimeEffectiveRisk.min_rr ?? 1.5;
       const rrResult = checkRiskReward(
         klines,
         indicators.price,
@@ -310,7 +310,7 @@ async function scanSymbol(
     // 情绪门控
     const newsReport = loadNewsReport();
     // 情绪门控以「组合调整后的仓位比例」为基准（双重叠加缩减）
-    const baseForGate = portfolioRatioOverride ?? cfg.risk.position_ratio;
+    const baseForGate = portfolioRatioOverride ?? regimeEffectiveRisk.position_ratio;
     const sentimentCache = readSentimentCache();  // 从磁盘读取 LLM 情绪缓存
     const gate = evaluateSentimentGate(signal, newsReport, baseForGate, sentimentCache);
     log(`${scenarioPrefix}${symbol}: 情绪门控 → ${gate.action}（${gate.reason}）`);
