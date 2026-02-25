@@ -21,6 +21,11 @@ import {
   saveAccount,
   resetDailyLossIfNeeded,
   calcTotalEquity,
+  registerOrder,
+  confirmOrder,
+  getTimedOutOrders,
+  cancelOrder,
+  cleanupOrders,
   type PaperTrade,
   type PaperAccount,
 } from "../paper/account.js";
@@ -191,6 +196,19 @@ export class LiveExecutor {
       return { trade: null, skipped, stopLossTriggered: false, stopLossTrade: null, account };
     }
 
+    // 🛡️ F4: 入场前价格偏离检查（防闪崩误买）
+    const maxSlippage = this.cfg.execution.max_entry_slippage ?? 0;
+    if (maxSlippage > 0) {
+      const currentPrice = await this.client.getPrice(signal.symbol);
+      const drift = Math.abs(currentPrice - signal.price) / signal.price;
+      if (drift > maxSlippage) {
+        const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+        const skipped = `${label} 入场取消 ${signal.symbol}: 价格偏离 ${(drift * 100).toFixed(2)}% > ${(maxSlippage * 100).toFixed(1)}%（信号 $${signal.price.toFixed(4)}，当前 $${currentPrice.toFixed(4)}）`;
+        console.log(skipped);
+        return { trade: null, skipped, stopLossTriggered: false, stopLossTrade: null, account };
+      }
+    }
+
     // 🔥 执行真实下单
     let order: OrderResponse;
     try {
@@ -199,6 +217,18 @@ export class LiveExecutor {
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`[LiveExecutor] 买入 ${signal.symbol} 失败: ${msg}`, { cause: err });
     }
+
+    // F5: 注册入场订单（孤儿检测基础）
+    const expectedQty = usdtToSpend / signal.price;
+    registerOrder(account, {
+      orderId: order.orderId,
+      symbol: signal.symbol,
+      side: "buy",
+      placedAt: Date.now(),
+      requestedQty: expectedQty,
+      filledQty: 0,
+      timeoutMs: (this.cfg.execution.order_timeout_seconds ?? 30) * 1000,
+    });
 
     // 计算实际成交均价
     const avgPrice =
@@ -209,6 +239,14 @@ export class LiveExecutor {
 
     const execQty = parseFloat(order.executedQty);
     const totalFee = order.fills?.reduce((s, f) => s + parseFloat(f.commission), 0) ?? 0;
+
+    // F2: 部分成交检测
+    const fillRatio = execQty / (expectedQty || 1);
+    if (fillRatio < 0.95) {
+      const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+      console.warn(`${label} ⚠️ 部分成交 ${signal.symbol}: 请求 ${expectedQty.toFixed(6)}, 实际成交 ${execQty.toFixed(6)} (${(fillRatio * 100).toFixed(1)}%)`);
+    }
+    confirmOrder(account, order.orderId, execQty, expectedQty);
 
     // 更新本地账户（镜像真实状态）
     // ATR 动态止损：当 atr_position 启用且信号含有 ATR 时，用 ATR × multiplier 作为止损距离
@@ -248,12 +286,14 @@ export class LiveExecutor {
       entryTime: order.transactTime,
       stopLoss: stopLossPrice,
       takeProfit: takeProfitPrice,
+      entryOrderId: order.orderId,
       ...(stopLossOrderId !== undefined && { stopLossOrderId }),
       ...(takeProfitOrderId !== undefined && { takeProfitOrderId }),
     };
 
     const trade = orderToPaperTrade(order, "buy", signal.reason.join(", "));
     account.trades.push(trade);
+    cleanupOrders(account); // 清理已完成订单，避免状态表膨胀
     saveAccount(account, this.scenarioId);
 
     const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
@@ -387,6 +427,19 @@ export class LiveExecutor {
     const rawQty = marginToLock / signal.price;
     const qty = Math.floor(rawQty / symbolInfo.stepSize) * symbolInfo.stepSize;
 
+    // 🛡️ F4: 入场前价格偏离检查（防闪崩误空）
+    const sMaxSlippage = this.cfg.execution.max_entry_slippage ?? 0;
+    if (sMaxSlippage > 0) {
+      const currentPrice = await this.client.getPrice(signal.symbol);
+      const drift = Math.abs(currentPrice - signal.price) / signal.price;
+      if (drift > sMaxSlippage) {
+        const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+        const skipped = `${label} 开空取消 ${signal.symbol}: 价格偏离 ${(drift * 100).toFixed(2)}% > ${(sMaxSlippage * 100).toFixed(1)}%（信号 $${signal.price.toFixed(4)}，当前 $${currentPrice.toFixed(4)}）`;
+        console.log(skipped);
+        return { trade: null, skipped, stopLossTriggered: false, stopLossTrade: null, account };
+      }
+    }
+
     // 🔥 执行真实做空下单（Futures: SELL = 开空）
     let order: OrderResponse;
     try {
@@ -396,6 +449,17 @@ export class LiveExecutor {
       throw new Error(`[LiveExecutor] 开空 ${signal.symbol} 失败: ${msg}`, { cause: err });
     }
 
+    // F5: 注册空头入场订单
+    registerOrder(account, {
+      orderId: order.orderId,
+      symbol: signal.symbol,
+      side: "short",
+      placedAt: Date.now(),
+      requestedQty: qty,
+      filledQty: 0,
+      timeoutMs: (this.cfg.execution.order_timeout_seconds ?? 30) * 1000,
+    });
+
     const avgPrice = order.fills && order.fills.length > 0
       ? order.fills.reduce((s, f) => s + parseFloat(f.price) * parseFloat(f.qty), 0) / parseFloat(order.executedQty)
       : signal.price;
@@ -403,6 +467,14 @@ export class LiveExecutor {
     const execQty = parseFloat(order.executedQty);
     const totalFee = order.fills?.reduce((s, f) => s + parseFloat(f.commission), 0) ?? 0;
     const actualMargin = marginToLock - totalFee;
+
+    // F2: 部分成交检测
+    const sFillRatio = execQty / (qty || 1);
+    if (sFillRatio < 0.95) {
+      const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+      console.warn(`${label} ⚠️ 空头部分成交 ${signal.symbol}: 请求 ${qty.toFixed(6)}, 实际成交 ${execQty.toFixed(6)} (${(sFillRatio * 100).toFixed(1)}%)`);
+    }
+    confirmOrder(account, order.orderId, execQty, qty);
 
     // ATR 动态止损（做空方向：止损在入场价 + ATR × multiplier）
     const sAtrCfg = this.cfg.risk.atr_position;
@@ -438,12 +510,14 @@ export class LiveExecutor {
       stopLoss: shortStopLoss,
       takeProfit: shortTakeProfit,
       marginUsdt: actualMargin,
+      entryOrderId: order.orderId,
       ...(shortSlOrderId !== undefined && { stopLossOrderId: shortSlOrderId }),
       ...(shortTpOrderId !== undefined && { takeProfitOrderId: shortTpOrderId }),
     };
 
     const trade = orderToPaperTrade(order, "short", signal.reason.join(", "));
     account.trades.push(trade);
+    cleanupOrders(account);
     saveAccount(account, this.scenarioId);
 
     const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
@@ -621,6 +695,61 @@ export class LiveExecutor {
     }
 
     return results;
+  }
+
+  /**
+   * F2/F5: 启动时孤儿订单扫描
+   *
+   * 在 live-monitor 启动时调用，检测上次进程崩溃后遗留的孤儿挂单：
+   * 1. 拉取 Binance 当前所有 open orders
+   * 2. 对比本地 account.openOrders（已注册但状态仍 pending 的订单）
+   * 3. 孤儿订单（Binance 有但本地超时仍 pending）→ 尝试取消
+   * 4. 清理已成交/已取消订单的本地状态
+   *
+   * @returns 取消的孤儿订单数量
+   */
+  async scanOpenOrders(): Promise<number> {
+    const account = loadAccount(this.cfg.paper.initial_usdt, this.scenarioId);
+    const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+    let cancelledCount = 0;
+
+    // 获取所有超时仍未确认的本地挂单
+    const timedOut = getTimedOutOrders(account);
+    if (timedOut.length === 0) {
+      cleanupOrders(account);
+      saveAccount(account, this.scenarioId);
+      return 0;
+    }
+
+    console.log(`${label} 发现 ${timedOut.length} 个超时挂单，检查孤儿状态...`);
+
+    for (const pending of timedOut) {
+      try {
+        const orderStatus = await this.client.getOrder(pending.symbol, pending.orderId);
+        const status = orderStatus.status;
+
+        if (status === "FILLED") {
+          // 订单已成交但本地未确认 → 标记为已完成
+          confirmOrder(account, pending.orderId, parseFloat(orderStatus.executedQty), pending.requestedQty);
+          console.log(`${label} 孤儿订单 #${pending.orderId} (${pending.symbol}) 已成交，同步本地状态`);
+        } else if (status === "PARTIALLY_FILLED" || status === "NEW") {
+          // 仍在挂单 → 取消
+          await this.client.cancelOrder(pending.symbol, pending.orderId);
+          cancelOrder(account, pending.orderId);
+          cancelledCount++;
+          console.log(`${label} 已取消孤儿挂单 #${pending.orderId} (${pending.symbol}, 状态=${status})`);
+        } else {
+          // CANCELLED / EXPIRED 等 → 直接清理本地记录
+          cancelOrder(account, pending.orderId);
+        }
+      } catch (err) {
+        console.warn(`${label} 扫描订单 #${pending.orderId} 失败:`, err instanceof Error ? err.message : err);
+      }
+    }
+
+    cleanupOrders(account);
+    saveAccount(account, this.scenarioId);
+    return cancelledCount;
   }
 }
 

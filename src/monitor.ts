@@ -203,9 +203,11 @@ async function scanSymbol(
     // portfolioRatioOverride：相关性调整后的仓位比例（覆盖 cfg.risk.position_ratio）
     let portfolioRatioOverride: number | undefined;
 
-    // ── Regime 感知：震荡市过滤 ───────────────────────────────
+    // ── Regime 感知：震荡市过滤 + P5.2 自适应参数覆盖 ──────────
     // breakout_watch → 等待突破确认，暂不开仓
     // reduced_size   → 信号可用但仓位减半（高波动震荡）
+    // regime_overrides → 自动切换止盈/止损/ROI Table 参数
+    let regimeEffectiveRisk = cfg.risk; // 默认使用原始 risk config
     if (signal.type === "buy" || signal.type === "short") {
       const regime = classifyRegime(klines);
       if (regime.confidence >= 60) {
@@ -217,6 +219,13 @@ async function scanSymbol(
           log(
             `${scenarioPrefix}${symbol}: ⚠️ Regime 缩减 [${regime.label}] → 仓位缩至 ${(portfolioRatioOverride * 100).toFixed(0)}%`
           );
+        }
+        // P5.2: 应用 regime_overrides 参数覆盖
+        const override = cfg.regime_overrides?.[regime.signalFilter];
+        if (override) {
+          regimeEffectiveRisk = { ...cfg.risk, ...override };
+          const changedKeys = Object.keys(override).join(", ");
+          log(`${scenarioPrefix}${symbol}: 🔄 Regime 参数覆盖 [${regime.label}]: ${changedKeys}`);
         }
       }
     }
@@ -337,7 +346,8 @@ async function scanSymbol(
         } catch { /* Kelly 计算失败不影响主流程，沿用 effectiveRatio */ }
       }
 
-      const adjustedCfg = { ...cfg, risk: { ...cfg.risk, position_ratio: effectiveRatio } };
+      // P5.2: 合并 regime 参数覆盖（止盈/止损/ROI Table 等）+ 仓位比例调整
+      const adjustedCfg = { ...cfg, risk: { ...regimeEffectiveRisk, position_ratio: effectiveRatio } };
       const result = handleSignal(signal, adjustedCfg);
 
       if (result.skipped) {

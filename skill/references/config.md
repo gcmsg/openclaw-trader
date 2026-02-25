@@ -120,6 +120,26 @@ risk:
     enabled: true
     threshold: 0.7             # Skip if Pearson correlation > 0.7 with existing positions
     lookback: 30               # Lookback candles for correlation calc
+
+  # Optional: ROI Table (Freqtrade-style time-decayed take-profit)
+  # Overrides take_profit_percent when configured. Priority: SL > ROI Table > fixed TP > trailing
+  minimal_roi:
+    "0":   0.08                # 0-60 min: wait for 8%
+    "60":  0.04                # 1-2h: exit at 4%
+    "120": 0.02                # 2-8h: exit at 2%
+    "480": 0.00                # 8h+: exit at breakeven (any positive profit)
+
+# Optional: Regime-adaptive parameter overrides (P5.2)
+# When classifyRegime() detects the matching market condition (confidence >= 60%),
+# the listed risk fields are merged into the active config automatically.
+regime_overrides:
+  reduced_size:                # Choppy/high-volatility sideways market
+    take_profit_percent: 5     # Lower target — take profits faster
+    stop_loss_percent: 1.5     # Tighter stop
+    minimal_roi:
+      "0":   0.03
+      "30":  0.015
+      "60":  0.005
 ```
 
 ## Available Signal Conditions

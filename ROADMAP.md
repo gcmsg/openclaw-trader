@@ -89,55 +89,40 @@ live-monitor.ts 注册 SIGTERM/SIGINT，完成当前轮次后退出。
 > 通过对比 Freqtrade / NautilusTrader / Hummingbot / Jesse 源码，梳理出值得直接借鉴的设计。
 > 核心参考：[freqtrade/freqtrade](https://github.com/freqtrade/freqtrade)（~40k stars，7年生产验证）
 
-### F1 ROI Table 时间衰减止盈 🔴 **高优先级**
-**问题**：固定 `take_profit_percent: 10%` 大多数情况等不到，导致"看着涨然后全跌回来"  
-**Freqtrade 设计**：`minimal_roi` 时间衰减表，持仓越久目标越低  
-```yaml
-minimal_roi:
-  "0":   0.08   # 刚开仓：等 8% 再走
-  "60":  0.04   # 持仓 1h：4% 就走
-  "120": 0.02   # 持仓 2h：2% 就走
-  "240": 0.01   # 持仓 4h：1% 就走
-  "480": 0.00   # 持仓 8h：保本就走
-```
-**预期效果**：实测比固定止盈提升 15-25% 盈利交易比例  
-**实现位置**：`types.ts` + `engine.ts` / `executor.ts` checkExits  
-**对应分批止盈**：可与 `take_profit_stages` 融合为统一出场逻辑
+### ✅ F1 ROI Table 时间衰减止盈 — **已实现** (commit `4350d07`)
+`src/strategy/roi-table.ts`：`checkMinimalRoi(roiTable, holdMs, profitRatio)`  
+3 个引擎统一接入（engine.ts / executor.ts / backtest runner）；出场优先级：止损 → ROI → 固定TP → 追踪止损  
+配置：`risk.minimal_roi: { "0": 0.08, "60": 0.04, "120": 0.02, "480": 0 }`
 
 ---
 
-### F2 订单超时 + 部分成交处理 🔴 **高优先级**
-**问题**：当前下单后完全不检查成交状态；PARTIALLY_FILLED 会永远挂着；下单失败无重试  
-**Freqtrade 设计**：`unfilledtimeout` 买单 N 分钟未成交→自动取消；卖单→降价重试  
-**实现设计**：
-- `executor.ts`：`pollOrderStatus(orderId, timeoutMs)` — 轮询到 FILLED/CANCELLED/PARTIALLY_FILLED
-- 部分成交：按实际 `executedQty` 更新持仓，取消剩余部分
-- 订单超时（默认 5 分钟）：市价单按当前价补单；限价单取消并重下
-- `live-monitor.ts`：启动时扫描 `account.openOrders`，处理遗留未成交单
+### ✅ F2 订单超时 + 部分成交处理 — **已实现** (本 commit)
+- `account.ts`：`PendingOrder` 类型 + `registerOrder / confirmOrder / getTimedOutOrders / cleanupOrders`
+- `executor.ts`：下单后 `registerOrder()` 注册，成交后 `confirmOrder()`，部分成交 (<95%) 告警
+- `executor.ts`：`scanOpenOrders()` — 启动时扫描孤儿订单，自动取消或同步成交状态
+- `live-monitor.ts`：启动时调用 `scanOpenOrders()`
+- `types.ts`：`ExecutionConfig.order_timeout_seconds?`（默认 30s）
 
 ---
 
-### F3 回测/实盘统一策略层 🟡 **中优先级**
-**问题**：`monitor.ts`（实盘）和 `backtest/runner.ts`（回测）是两套信号生成代码，容易不同步  
-**NautilusTrader 原则**：策略代码只写一次，通过切换 Data Engine 区分实盘/回测  
-**实现方向**：
-- 抽取 `src/strategy/signal-engine.ts` —— 纯函数：`(klines, indicators, config) → Signal[]`
-- `monitor.ts` 和 `runner.ts` 都调用同一 `signal-engine.ts`，消除逻辑分叉
-- 中期重构，不阻塞当前开发
+### F3 回测/实盘统一策略层 🟡 **中优先级（长期重构）**
+**问题**：`monitor.ts` 和 `backtest/runner.ts` 是两套信号生成代码，容易不同步  
+**方向**：抽取 `src/strategy/signal-engine.ts`，两端复用同一纯函数层  
+**评估**：中期重构，不阻塞当前开发
 
 ---
 
-### F4 `confirm_trade_entry()` 防闪崩确认 🟡 **中优先级**
-**问题**：信号触发时价格可能已经大幅偏离（新闻闪崩/滑点），入场前无最终确认  
-**Freqtrade 设计**：`confirm_trade_entry()` 回调 — 检查当前价与信号价偏差 > N% 则取消  
-**实现**：`executor.ts` handleBuy 前加 `entryPriceSlippage` 检查（默认 0.5%，可配置）
+### ✅ F4 `confirm_trade_entry()` 防闪崩确认 — **已实现** (本 commit)
+`executor.ts` handleBuy / handleShort：下单前调用 `client.getPrice()` 获取当前价  
+偏离 `execution.max_entry_slippage`（默认 0，禁用；建议 0.005=0.5%）则取消入场  
+`types.ts`：`ExecutionConfig.max_entry_slippage?: number`
 
 ---
 
-### F5 Hummingbot 订单状态机 🟡 **中优先级**
-**问题**：当前无订单生命周期追踪，进行中的订单状态不透明  
-**Hummingbot 设计**：`PENDING_CREATE → OPEN → PARTIALLY_FILLED → FILLED/CANCELLED`  
-**实现**：`account.ts` 扩展 `openOrders: Record<string, OrderState>`，持久化到 JSON
+### ✅ F5 Hummingbot 订单状态机 — **已实现** (本 commit)
+`account.ts`：`PendingOrder`（pending→filled/partial/cancelled）+ `openOrders?: Record<number, PendingOrder>`  
+`PaperPosition.entryOrderId`：追踪入场订单 ID  
+生命周期：`registerOrder → confirmOrder / cancelOrder → cleanupOrders`
 
 ---
 
@@ -162,25 +147,25 @@ minimal_roi:
 **前提**：`logs/signal-history.jsonl` 积累 ≥ 50 笔已关闭交易  
 **目标**：`getSignalStats()` 分析胜率/盈亏比/最优入场时段；输出排行榜供策略迭代
 
-### P4.2 真实 CVD（aggTrade WebSocket）
-**目标**：`CvdManager` 接入真实逐笔成交流，替换 K 线近似  
-框架已有（`order-flow.ts`），需要接入 Binance aggTrade 流并持久化状态
+### ✅ P4.2 真实 CVD（aggTrade WebSocket）— **已实现** (commit `084607c`)
+`order-flow.ts`：aggressor 方向修正（m=true=卖方主动→bearish）  
+live-monitor.ts 启动 CvdManager WebSocket；monitor.ts 读 cvd-state.json 缓存（<5min 有效）
 
-### P4.3 Walk-Forward 回测验证
-**目标**：前 70% 样本调参，后 30% 验证，滚动推进 6 次  
-防止回测过拟合；输出 OOS（样本外）净值曲线
+### ✅ P4.3 Walk-Forward 回测验证 — **已实现**
+`src/backtest/walk-forward.ts`：`walkForwardSingle()` — 70/30 分割，滚动 N 折  
+`scripts/analyze-strategy.ts`：`npm run analyze -- --wf` 触发
 
-### P4.4 Monte Carlo 风险模拟
-**目标**：用历史胜率/盈亏分布模拟 1000 次账户路径  
-输出：最大连续亏损次数、99% 置信区间内最大回撤
+### ✅ P4.4 Monte Carlo 风险模拟 — **已实现**
+`src/backtest/walk-forward.ts`：`runMonteCarlo(trades, 1000)` — 1000 次路径模拟  
+输出 p5/p50/p95 收益率 + 最大回撤分布；`npm run analyze -- --mc` 触发
 
-### P4.5 LLM 情绪自动化闭环
-**目标**：`news_collector` 完成后自动调用 OpenClaw Gateway LLM 分析 → 写缓存  
-当前是手动触发；应当 24h 内至少自动分析 2 次
+### ✅ P4.5 LLM 情绪自动化闭环 — **已实现** (commit `084607c`)
+`news/monitor.ts` news_collector 完成后自动调用 Gateway LLM → `writeSentimentCache()`  
+无需手动触发；6h TTL 自动过期
 
-### P4.6 支撑阻力算法升级
-**现状**：Pivot Point 用近期高低点，无成交量加权，假信号多  
-**目标**：Volume Profile（价格成交量分布）+ 历史多次测试次数加权
+### ✅ P4.6 支撑阻力算法升级 — **已实现**
+`src/strategy/volume-profile.ts`：`calcVolumeProfile()` + `calcSupportResistance()`  
+双层算法：Volume Profile POC/HVN + Pivot Point fallback
 
 ---
 
@@ -190,9 +175,10 @@ minimal_roi:
 大单挂墙（>100 BTC 买单）/ 大单撤单 / 买卖压力比  
 需要 Binance WebSocket 订单簿流（Level 2）
 
-### P5.2 波动率自适应参数
-BTC 年化波动率 >80% → 宽 MA 周期；<40% → 窄 MA 周期  
-前提：P4.3 Walk-Forward 先验证基础参数有效性
+### ✅ P5.2 Regime 自适应参数 — **已实现** (本 commit)
+`types.ts`：`StrategyConfig.regime_overrides?: Partial<Record<string, Partial<RiskConfig>>>`  
+`monitor.ts` + `live-monitor.ts`：regime 检测 → 自动覆盖 risk 参数（止盈/止损/ROI Table/仓位）  
+配置示例：`regime_overrides.reduced_size.take_profit_percent: 5`
 
 ### P5.3 清算热力图（Coinglass）
 大量强平聚集价位 = 价格磁铁，可作为止盈目标参考  
@@ -234,18 +220,19 @@ BTC 年化波动率 >80% → 宽 MA 周期；<40% → 窄 MA 周期
 
 ---
 
-## 当前项目状态（2026-02-25 22:xx CST）
+## 当前项目状态（2026-02-25 23:xx CST）
 
 | 指标 | 数值 |
 |------|------|
-| 测试覆盖 | **489 tests passing** |
+| 测试覆盖 | **518 tests passing** |
 | TypeScript errors | **0** |
 | ESLint warnings | **0** |
-| 最新 commit | `084607c` |
 | Testnet 状态 | 🟢 运行中（tmux: trader-live） |
-| Phase 0-3 | ✅ 全部完成 |
-| Phase 3.5 Bug | ✅ B1-B7 全部修复/验证 |
-| 总体评分 | **7.2/10** → v1.0 目标 **8.5/10** |
+| Phase 0-3 + 3.5 | ✅ 全部完成（B1-B7 修复）|
+| Phase F (Freqtrade) | ✅ F1/F2/F4/F5 完成；F3 长期重构 |
+| Phase 4 | ✅ P4.2-P4.6 全部完成；P4.1 等 50+ 交易 |
+| Phase 5 | ✅ P5.2 Regime 自适应参数 完成 |
+| 总体评分 | **7.8/10** → v1.0 目标 **8.5/10** |
 
 ---
 

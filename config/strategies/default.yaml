@@ -43,6 +43,17 @@ risk:
   #   "60":  0.04   # 1h：4% 就走
   #   "120": 0.02   # 2h：2% 就走
   #   "480": 0.00   # 8h：保本就走（0 = 任意正盈利即出场）
+
+# P5.2 Regime 自适应参数（检测到震荡市/等待突破市时自动切换参数）
+# 当 classifyRegime() 检测到对应市场状态（confidence >= 60%），自动覆盖 risk 参数
+# regime_overrides:
+#   reduced_size:          # 震荡高波动市（reduced_size）：快进快出
+#     take_profit_percent: 5   # 目标降低：2.5→5%
+#     stop_loss_percent: 1.5   # 止损收紧
+#     minimal_roi:
+#       "0":   0.03        # 刚开仓等 3%
+#       "30":  0.015       # 30min 等 1.5%
+#       "60":  0.005       # 1h 等 0.5%
   trailing_stop:
     enabled: true
     activation_percent: 8

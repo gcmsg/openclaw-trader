@@ -159,6 +159,17 @@ export interface ExecutionConfig {
   limit_order_offset_percent: number;
   min_order_usdt: number;
   limit_order_timeout_seconds: number;
+  /**
+   * 入场前价格偏离保护（参考 Freqtrade confirm_trade_entry）。
+   * 若当前价格偏离信号价格超过此比率则取消入场（防闪崩误买/误空）。
+   * 默认 0（禁用）。建议值：0.005（0.5%）。
+   */
+  max_entry_slippage?: number;
+  /**
+   * 订单超时：市价单下单后若 N 秒内 executedQty=0 则视为失败（默认 30s）。
+   * 部分成交时按实际成交量记账。
+   */
+  order_timeout_seconds?: number;
 }
 
 export interface NotifyConfig {
@@ -217,6 +228,22 @@ export interface StrategyConfig {
     }
   >;
   mode: TradeMode;
+  /**
+   * P5.2 Regime 自适应参数覆盖
+   * 当检测到特定市场状态时，自动覆盖对应的 risk 参数。
+   * key = SignalFilter（"breakout_watch" | "reduced_size" | "all_clear"）
+   * value = Partial<RiskConfig>（仅需列出需要覆盖的字段）
+   *
+   * 示例（震荡市快进快出）：
+   *   regime_overrides:
+   *     reduced_size:
+   *       take_profit_percent: 5
+   *       stop_loss_percent: 1.5
+   *       minimal_roi:
+   *         "0": 0.03
+   *         "30": 0.01
+   */
+  regime_overrides?: Partial<Record<string, Partial<RiskConfig>>>;
 }
 
 // ─────────────────────────────────────────────────────

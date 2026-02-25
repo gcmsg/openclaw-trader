@@ -43,8 +43,12 @@ export interface PaperPosition {
   entryAtr?: number;
   // 信号历史数据库 ID（用于平仓时回写结果）
   signalHistoryId?: string;
-  // 实盘止损/止盈挂单 ID（用于查询成交状态和取消冗余挂单）
+  // 实盘订单 ID 追踪（F5 订单状态机）
+  /** 入场订单 ID（用于启动时孤儿检测）*/
+  entryOrderId?: number;
+  /** 止损挂单 ID */
   stopLossOrderId?: number;
+  /** 止盈挂单 ID */
   takeProfitOrderId?: number;
   // 分批建仓（DCA）状态
   dcaState?: {
@@ -79,6 +83,26 @@ export interface PaperTrade {
   pnlPercent?: number;
 }
 
+/**
+ * 挂单状态（F5 订单状态机）
+ * 追踪系统发出的所有入场/出场订单生命周期，用于：
+ * - 重启后识别并处理孤儿订单（进程崩溃时未清理）
+ * - 部分成交检测与持仓修正
+ */
+export interface PendingOrder {
+  orderId: number;
+  symbol: string;
+  /** buy=多头入场, sell=多头出场, short=空头入场, cover=空头平仓 */
+  side: "buy" | "sell" | "short" | "cover";
+  placedAt: number;      // Date.now()
+  requestedQty: number;  // 请求成交量
+  filledQty: number;     // 实际成交量（可能部分成交）
+  /** pending=等待确认, filled=完全成交, partial=部分成交, cancelled=已取消 */
+  status: "pending" | "filled" | "partial" | "cancelled";
+  /** 超时阈值（ms），超过后若仍 pending 则视为孤儿 */
+  timeoutMs: number;
+}
+
 export interface PaperAccount {
   initialUsdt: number;
   usdt: number;
@@ -91,6 +115,8 @@ export interface PaperAccount {
     date: string; // YYYY-MM-DD
     loss: number; // 当日亏损 USDT（累计）
   };
+  /** 挂单状态表（F5 订单状态机）——key: orderId */
+  openOrders?: Record<number, PendingOrder>;
 }
 
 function generateId(): string {
@@ -653,4 +679,66 @@ export function getAccountSummary(
     winRate,
     dailyLoss: account.dailyLoss.loss,
   };
+}
+
+// ─────────────────────────────────────────────────────
+// F5: 订单状态机辅助函数
+// ─────────────────────────────────────────────────────
+
+/**
+ * 注册一个新挂单到账户状态表
+ */
+export function registerOrder(
+  account: PaperAccount,
+  order: Omit<PendingOrder, "status">
+): void {
+  account.openOrders ??= {};
+  account.openOrders[order.orderId] = { ...order, status: "pending" };
+}
+
+/**
+ * 确认订单成交（完全或部分），并从 openOrders 中移除或更新
+ */
+export function confirmOrder(
+  account: PaperAccount,
+  orderId: number,
+  filledQty: number,
+  requestedQty: number
+): "filled" | "partial" | "not_found" {
+  if (!account.openOrders?.[orderId]) return "not_found";
+  const status: PendingOrder["status"] = filledQty >= requestedQty * 0.999 ? "filled" : "partial";
+  account.openOrders[orderId] = { ...account.openOrders[orderId], filledQty, status };
+  // 已完成的订单保留一段时间用于 audit，最终会被 scanOpenOrders 清理
+  return status;
+}
+
+/**
+ * 将订单标记为已取消，并从 openOrders 移除
+ */
+export function cancelOrder(account: PaperAccount, orderId: number): void {
+  if (!account.openOrders) return;
+  Reflect.deleteProperty(account.openOrders, orderId);
+}
+
+/**
+ * 返回所有超时仍未确认的挂单（孤儿订单）
+ */
+export function getTimedOutOrders(account: PaperAccount): PendingOrder[] {
+  if (!account.openOrders) return [];
+  const now = Date.now();
+  return Object.values(account.openOrders).filter(
+    (o) => o.status === "pending" && now - o.placedAt > o.timeoutMs
+  );
+}
+
+/**
+ * 清理已完成/已取消订单（保留 pending 和 partial）
+ */
+export function cleanupOrders(account: PaperAccount): void {
+  if (!account.openOrders) return;
+  for (const [id, order] of Object.entries(account.openOrders)) {
+    if (order.status === "filled" || order.status === "cancelled") {
+      Reflect.deleteProperty(account.openOrders, id);
+    }
+  }
 }

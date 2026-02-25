@@ -26,6 +26,7 @@ import { loadAccount, saveAccount } from "../paper/account.js";
 import { logSignal, closeSignal } from "../signals/history.js";
 import { readEmergencyHalt } from "../news/emergency-monitor.js";
 import { CvdManager } from "../exchange/order-flow.js";
+import { classifyRegime } from "../strategy/regime.js";
 import type { RuntimeConfig } from "../types.js";
 
 const POLL_INTERVAL_MS = 60 * 1000; // 1 分钟轮询
@@ -42,7 +43,6 @@ function log(msg: string): void {
 // ─────────────────────────────────────────────────────
 
 async function processSymbol(symbol: string, cfg: RuntimeConfig): Promise<void> {
-  const executor = createLiveExecutor(cfg);
   const label = cfg.exchange.testnet ? "[TESTNET]" : "[LIVE]";
 
   // 情绪门控（用占位信号评估当前情绪）
@@ -94,6 +94,30 @@ async function processSymbol(symbol: string, cfg: RuntimeConfig): Promise<void> 
     `→ ${signal.type.toUpperCase()}`
   );
 
+  // ── P5.2 Regime 感知 + 自适应参数覆盖 ──────────────────────
+  let effectiveCfg = cfg;
+  if (signal.type === "buy" || signal.type === "short") {
+    const regime = classifyRegime(klines);
+    if (regime.confidence >= 60) {
+      if (regime.signalFilter === "breakout_watch") {
+        log(`${label} ${symbol}: 🚫 Regime 过滤 [${regime.label}] → 跳过开仓`);
+        return;
+      }
+      const override = cfg.regime_overrides?.[regime.signalFilter];
+      if (override) {
+        effectiveCfg = { ...cfg, risk: { ...cfg.risk, ...override } };
+        log(`${label} ${symbol}: 🔄 Regime 参数覆盖 [${regime.label}]: ${Object.keys(override).join(", ")}`);
+      } else if (regime.signalFilter === "reduced_size") {
+        const reducedRatio = cfg.risk.position_ratio * 0.5;
+        effectiveCfg = { ...cfg, risk: { ...cfg.risk, position_ratio: reducedRatio } };
+        log(`${label} ${symbol}: ⚠️ Regime 缩减 [${regime.label}] → 仓位 ${(reducedRatio * 100).toFixed(0)}%`);
+      }
+    }
+  }
+
+  // 创建使用 regime 调整后参数的执行器（单次创建，所有信号分支复用）
+  const liveExecutor = createLiveExecutor(effectiveCfg);
+
   if (signal.type === "buy") {
     // 紧急暂停检查
     const emergency = readEmergencyHalt();
@@ -101,8 +125,8 @@ async function processSymbol(symbol: string, cfg: RuntimeConfig): Promise<void> 
       log(`${label} ${symbol}: ⛔ 紧急暂停 — ${emergency.reason ?? "突发高危新闻"}`);
       return;
     }
-    if (cfg.notify.on_signal) notifySignal(signal);
-    const result = await executor.handleBuy(signal);
+    if (effectiveCfg.notify.on_signal) notifySignal(signal);
+    const result = await liveExecutor.handleBuy(signal);
     if (result.skipped) {
       log(`${label} ${symbol}: 跳过 — ${result.skipped}`);
     } else if (result.trade) {
@@ -138,8 +162,8 @@ async function processSymbol(symbol: string, cfg: RuntimeConfig): Promise<void> 
       log(`${label} ${symbol}: ⛔ 紧急暂停 — ${emergency.reason ?? "突发高危新闻"}`);
       return;
     }
-    if (cfg.notify.on_signal) notifySignal(signal);
-    const result = await executor.handleShort(signal);
+    if (effectiveCfg.notify.on_signal) notifySignal(signal);
+    const result = await liveExecutor.handleShort(signal);
     if (result.skipped) {
       log(`${label} ${symbol}: 跳过开空 — ${result.skipped}`);
     } else if (result.trade) {
@@ -170,7 +194,7 @@ async function processSymbol(symbol: string, cfg: RuntimeConfig): Promise<void> 
     const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
     const sigHistId = account.positions[symbol]?.signalHistoryId;
     if (account.positions[symbol]) {
-      const result = await executor.handleSell(symbol, signal.price, signal.reason.join(", "));
+      const result = await liveExecutor.handleSell(symbol, signal.price, signal.reason.join(", "));
       if (result.trade) {
         log(`${label} ${symbol}: 卖出成功，orderId=${result.orderId ?? "N/A"}`);
         if (sigHistId) {
@@ -183,7 +207,7 @@ async function processSymbol(symbol: string, cfg: RuntimeConfig): Promise<void> 
     const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
     const sigHistId = account.positions[symbol]?.signalHistoryId;
     if (account.positions[symbol]) {
-      const result = await executor.handleCover(symbol, signal.price, signal.reason.join(", "));
+      const result = await liveExecutor.handleCover(symbol, signal.price, signal.reason.join(", "));
       if (result.trade) {
         log(`${label} ${symbol}: 平空成功，orderId=${result.orderId ?? "N/A"}`);
         if (sigHistId) {
@@ -307,6 +331,16 @@ async function main(): Promise<void> {
       }
     } catch (err: unknown) {
       log(`⚠️ 对账跳过：${String(err)}`);
+    }
+
+    // ── F2/F5: 孤儿订单扫描（启动时清理上次进程遗留的未完成挂单）──
+    try {
+      const cancelled = await executor.scanOpenOrders();
+      if (cancelled > 0) {
+        log(`🧹 ${scenario.id}: 已取消 ${cancelled} 个孤儿挂单`);
+      }
+    } catch (err: unknown) {
+      log(`⚠️ 孤儿订单扫描跳过：${String(err)}`);
     }
   }
 

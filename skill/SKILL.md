@@ -5,7 +5,7 @@ description: Operate and maintain the openclaw-trader crypto trading bot. Use wh
 
 # openclaw-trader
 
-AI-powered crypto trading bot with paper trading, backtesting engine, technical indicators (EMA + RSI Wilder + MACD + ATR), news sentiment gating, **full short/bearish engine (Futures/Margin)**, Binance Testnet verification, and automated health monitoring.
+AI-powered crypto trading bot with paper trading, backtesting engine, technical indicators (EMA + RSI Wilder + MACD + ATR + VWAP + CVD), news sentiment gating, **full short/bearish engine (Futures/Margin)**, Binance Testnet verification, automated health monitoring, and Freqtrade-inspired execution reliability (ROI Table, order state machine, entry slippage guard, regime-adaptive parameters).
 
 ## Project Layout
 
