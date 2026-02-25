@@ -23,6 +23,7 @@ import { loadNewsReport, evaluateSentimentGate } from "./news/sentiment-gate.js"
 import { readSentimentCache } from "./news/sentiment-cache.js";
 import { checkCorrelation } from "./strategy/correlation.js";
 import { calcCorrelationAdjustedSize } from "./strategy/portfolio-risk.js";
+import { classifyRegime } from "./strategy/regime.js";
 import { loadAccount, calcTotalEquity } from "./paper/account.js";
 import { ping } from "./health/heartbeat.js";
 import { loadRuntimeConfigs } from "./config/loader.js";
@@ -161,6 +162,24 @@ async function scanSymbol(
 
     // portfolioRatioOverride：相关性调整后的仓位比例（覆盖 cfg.risk.position_ratio）
     let portfolioRatioOverride: number | undefined;
+
+    // ── Regime 感知：震荡市过滤 ───────────────────────────────
+    // breakout_watch → 等待突破确认，暂不开仓
+    // reduced_size   → 信号可用但仓位减半（高波动震荡）
+    if (signal.type === "buy" || signal.type === "short") {
+      const regime = classifyRegime(klines);
+      if (regime.confidence >= 60) {
+        if (regime.signalFilter === "breakout_watch") {
+          log(`${scenarioPrefix}${symbol}: 🚫 Regime 过滤 [${regime.label}] ${regime.detail}`);
+          return;
+        } else if (regime.signalFilter === "reduced_size") {
+          portfolioRatioOverride = cfg.risk.position_ratio * 0.5;
+          log(
+            `${scenarioPrefix}${symbol}: ⚠️ Regime 缩减 [${regime.label}] → 仓位缩至 ${(portfolioRatioOverride * 100).toFixed(0)}%`
+          );
+        }
+      }
+    }
 
     // ── 相关性过滤 + 组合暴露度调整（仅对开仓信号）────────────
     if ((signal.type === "buy" || signal.type === "short") && cfg.risk.correlation_filter?.enabled) {

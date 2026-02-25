@@ -10,6 +10,7 @@
 
 import { calculateIndicators } from "../strategy/indicators.js";
 import { detectSignal } from "../strategy/signals.js";
+import { classifyRegime } from "../strategy/regime.js";
 import type { Kline, StrategyConfig } from "../types.js";
 import {
   calculateMetrics,
@@ -618,11 +619,29 @@ export function runBacktest(
       const posSide = currentPos?.side;
       const signal = detectSignal(sym, indicators, cfg, posSide);
 
+      // ── Regime 感知：震荡市过滤（仅对开仓信号）──────────────
+      // breakout_watch → 等待突破确认，跳过开仓
+      // reduced_size   → 震荡市仓位减半
+      let regimeCfg = cfg;
+      if (signal.type === "buy" || signal.type === "short") {
+        const regime = classifyRegime(window);
+        if (regime.confidence >= 60) {
+          if (regime.signalFilter === "breakout_watch") {
+            continue; // 等待突破确认，不开仓
+          } else if (regime.signalFilter === "reduced_size") {
+            regimeCfg = {
+              ...cfg,
+              risk: { ...cfg.risk, position_ratio: cfg.risk.position_ratio * 0.5 },
+            };
+          }
+        }
+      }
+
       if (signal.type === "buy") {
         // MTF 过滤：多头信号需高级别 MA 也是多头
         const trendBull = getTrendBull(sym, time);
         if (trendBull === false) continue;
-        doBuy(account, sym, kline.close, time, cfg, legacyOpts);
+        doBuy(account, sym, kline.close, time, regimeCfg, legacyOpts);
       } else if (signal.type === "sell") {
         // 平多（detectSignal 已确保只在持多时返回 sell）
         doSell(account, sym, kline.close, time, "signal", legacyOpts);
@@ -630,7 +649,7 @@ export function runBacktest(
         // MTF 过滤：空头信号需高级别 MA 也是空头（反向过滤）
         const trendBull = getTrendBull(sym, time);
         if (trendBull === true) continue; // 大趋势多头，不开空
-        doOpenShort(account, sym, kline.close, time, cfg, legacyOpts);
+        doOpenShort(account, sym, kline.close, time, regimeCfg, legacyOpts);
       } else if (signal.type === "cover") {
         // 平空（detectSignal 已确保只在持空时返回 cover）
         doCoverShort(account, sym, kline.close, time, "signal", legacyOpts);
