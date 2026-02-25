@@ -94,6 +94,55 @@ const SIGNAL_CHECKERS: Record<string, SignalChecker> = {
     return ind.rsi > threshold;
   },
 
+  // ── VWAP 成交量加权均价 ───────────────────────────
+  /**
+   * 价格在 VWAP 上方 = 多头主导
+   * 机构当日平均成本以上，做多胜率更高
+   */
+  price_above_vwap: (ind) =>
+    ind.vwap !== undefined && ind.price > ind.vwap,
+
+  /**
+   * 价格在 VWAP 下方 = 空头主导
+   * 机构当日平均成本以下，做空胜率更高
+   */
+  price_below_vwap: (ind) =>
+    ind.vwap !== undefined && ind.price < ind.vwap,
+
+  /**
+   * VWAP 反弹（多头）：前一根 K 线在 VWAP 下方，当前 K 线收回 VWAP 以上
+   * 典型机构接盘信号：跌至 VWAP 然后反弹
+   */
+  vwap_bounce: (ind) =>
+    ind.vwap !== undefined &&
+    ind.prevPrice !== undefined &&
+    ind.prevPrice < ind.vwap &&
+    ind.price >= ind.vwap,
+
+  /**
+   * VWAP 跌破（空头）：前一根 K 线在 VWAP 以上，当前 K 线跌破 VWAP
+   * 多头失守成本线 = 空头入场信号
+   */
+  vwap_breakdown: (ind) =>
+    ind.vwap !== undefined &&
+    ind.prevPrice !== undefined &&
+    ind.prevPrice >= ind.vwap &&
+    ind.price < ind.vwap,
+
+  /**
+   * 价格超买（VWAP + 2σ 以上）
+   * 统计上价格偏离均值过大，可作为止盈或反向入场过滤
+   */
+  price_above_vwap_upper2: (ind) =>
+    ind.vwapUpper2 !== undefined && ind.price > ind.vwapUpper2,
+
+  /**
+   * 价格超卖（VWAP - 2σ 以下）
+   * 统计上过度抛售，可作为抄底或反向入场参考
+   */
+  price_below_vwap_lower2: (ind) =>
+    ind.vwapLower2 !== undefined && ind.price < ind.vwapLower2,
+
   // ── 资金费率逆向 ─────────────────────────────────
   /**
    * 多头极度拥挤（资金费率超高）→ 逆向做空辅助条件

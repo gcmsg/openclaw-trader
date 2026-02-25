@@ -48,6 +48,13 @@ export interface Indicators {
   atr?: number;  // ATR（平均真实波幅），用于动态仓位和止损距离计算
   cvd?: number;         // 累计成交量差值（K 线近似：收>开=买盘，收<开=卖盘；正=净买压）
   fundingRate?: number; // 当前资金费率百分比（如 +0.03 = +0.03%/8h，仅期货市场有效）
+  // VWAP 成交量加权均价（日内，按自然日重置）
+  vwap?: number;        // VWAP 主线
+  vwapUpper1?: number;  // VWAP + 1σ（一阶偏差带上沿）
+  vwapLower1?: number;  // VWAP - 1σ
+  vwapUpper2?: number;  // VWAP + 2σ（二阶偏差带上沿）
+  vwapLower2?: number;  // VWAP - 2σ
+  prevPrice?: number;   // 前一根 K 线收盘价（用于 vwap_bounce 等跨 K 信号）
 }
 
 export interface Signal {

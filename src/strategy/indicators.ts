@@ -222,6 +222,76 @@ export function volumeRatio(volumes: number[], period = 20): number {
 }
 
 /** 从 K 线计算所有指标 */
+// ─── VWAP ────────────────────────────────────────────────────────────────────
+
+/**
+ * 计算日内 VWAP（成交量加权均价）及偏差带（±1σ / ±2σ）
+ *
+ * 逻辑：
+ * - 按 openTime 自然日分割 K 线，仅使用当日 K 线
+ * - typical_price = (high + low + close) / 3
+ * - VWAP = Σ(tp × vol) / Σ(vol)
+ * - σ² = Σ(vol × (tp - VWAP)²) / Σ(vol)
+ * - Band = VWAP ± n × σ
+ *
+ * 机构意义：
+ * - VWAP 以上 = 多头占优（机构平均成本在此）
+ * - 价格跌至 VWAP 又反弹 = 机构接盘点
+ * - 价格持续在 Upper2 之上 = 超买，短期回调风险
+ */
+export function calcVwap(klines: Kline[]): {
+  vwap: number;
+  upper1: number;
+  lower1: number;
+  upper2: number;
+  lower2: number;
+} | null {
+  if (klines.length === 0) return null;
+
+  // 取最后一根 K 线所属的自然日
+  const lastOpenTime = klines[klines.length - 1]?.openTime ?? 0;
+  const lastDate = new Date(lastOpenTime);
+  const dayStart = Date.UTC(
+    lastDate.getUTCFullYear(),
+    lastDate.getUTCMonth(),
+    lastDate.getUTCDate()
+  );
+
+  // 仅保留当日 K 线
+  const todayKlines = klines.filter((k) => k.openTime >= dayStart);
+  if (todayKlines.length === 0) return null;
+
+  let sumTpVol = 0;
+  let sumVol = 0;
+
+  for (const k of todayKlines) {
+    const tp = (k.high + k.low + k.close) / 3;
+    sumTpVol += tp * k.volume;
+    sumVol += k.volume;
+  }
+
+  if (sumVol === 0) return null;
+
+  const vwapVal = sumTpVol / sumVol;
+
+  // 方差（成交量加权）
+  let sumVarVol = 0;
+  for (const k of todayKlines) {
+    const tp = (k.high + k.low + k.close) / 3;
+    sumVarVol += k.volume * (tp - vwapVal) ** 2;
+  }
+  const variance = sumVarVol / sumVol;
+  const sigma = Math.sqrt(variance);
+
+  return {
+    vwap: vwapVal,
+    upper1: vwapVal + sigma,
+    lower1: vwapVal - sigma,
+    upper2: vwapVal + 2 * sigma,
+    lower2: vwapVal - 2 * sigma,
+  };
+}
+
 export function calculateIndicators(
   klines: Kline[],
   maShortPeriod: number,
@@ -283,6 +353,20 @@ export function calculateIndicators(
   result.cvd = cvdWindow.reduce((sum, k) => {
     return sum + (k.close >= k.open ? k.volume : -k.volume);
   }, 0);
+
+  // VWAP（日内，按自然日重置）
+  const vwapResult = calcVwap(klines);
+  if (vwapResult) {
+    result.vwap = vwapResult.vwap;
+    result.vwapUpper1 = vwapResult.upper1;
+    result.vwapLower1 = vwapResult.lower1;
+    result.vwapUpper2 = vwapResult.upper2;
+    result.vwapLower2 = vwapResult.lower2;
+  }
+
+  // 前一根 K 线收盘价（跨 K 信号，如 vwap_bounce）
+  const prevClose = closes[closes.length - 2];
+  if (prevClose !== undefined) result.prevPrice = prevClose;
 
   return result;
 }
