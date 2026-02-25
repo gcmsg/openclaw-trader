@@ -124,23 +124,24 @@ risk:
 
 ## Available Signal Conditions
 
-| Condition | Description |
-|---|---|
-| `ma_bullish` | EMA short > EMA long |
-| `ma_bearish` | EMA short < EMA long |
-| `ma_golden_cross` | EMA short just crossed above EMA long |
-| `ma_death_cross` | EMA short just crossed below EMA long |
-| `rsi_oversold` | RSI < `oversold` threshold |
-| `rsi_overbought` | RSI > `overbought` threshold |
-| `rsi_not_overbought` | RSI ≤ `overbought` (room to run) |
-| `rsi_not_oversold` | RSI ≥ `oversold` (not at bottom) |
-| `rsi_bullish_zone` | RSI 40–60 (momentum zone) |
-| `macd_bullish` | MACD line > signal line |
-| `macd_bearish` | MACD line < signal line |
-| `macd_golden_cross` | MACD just crossed above signal |
-| `macd_death_cross` | MACD just crossed below signal |
-| `volume_surge` | Volume > `surge_ratio` × average |
-| `volume_low` | Volume < `low_ratio` × average |
+| Category | Condition | Description |
+|---|---|---|
+| MA | `ma_bullish` / `ma_bearish` | EMA short > / < EMA long |
+| MA | `ma_crossover` / `ma_crossunder` | EMA cross this bar (entry timing) |
+| RSI | `rsi_bullish` / `rsi_bearish` | RSI below oversold / above overbought |
+| RSI | `rsi_not_overbought` / `rsi_not_oversold` | RSI headroom filters |
+| RSI | `rsi_bullish_zone` | RSI 40–60 momentum zone |
+| RSI | `rsi_overbought_exit` | RSI > `overbought_exit` (default 75) — momentum fade |
+| MACD | `macd_bullish` / `macd_bearish` | MACD line vs signal line |
+| MACD | `macd_golden_cross` / `macd_death_cross` | MACD just crossed signal |
+| MACD | `macd_histogram_shrinking` | 3 consecutive bars shrinking — momentum fade exit |
+| Volume | `volume_surge` / `volume_low` | Volume vs 20-period average |
+| CVD | `cvd_bullish` / `cvd_bearish` | 20-bar cumulative volume delta |
+| VWAP | `price_above_vwap` / `price_below_vwap` | Price vs daily VWAP |
+| VWAP | `vwap_bounce` / `vwap_breakdown` | Cross through VWAP (institutional level) |
+| VWAP | `price_above_vwap_upper2` / `price_below_vwap_lower2` | ±2σ extreme zones |
+| Funding | `funding_rate_overlong` / `funding_rate_overshort` | Crowded position reversal signals |
+| Dominance | `btc_dominance_rising` / `btc_dominance_falling` | 7-day BTC dominance trend |
 
 ## config/strategy.yaml — Global + Schedule
 
@@ -154,17 +155,32 @@ risk: { … }
 schedule:
   price_monitor:
     enabled: true
-    cron: "* * * * *"          # Every minute
+    cron: "* * * * *"          # Every minute — signal detection
     timeout_minutes: 3
+  news_emergency:
+    enabled: true
+    cron: "*/10 * * * *"       # Every 10 min — critical keyword scan
+    timeout_minutes: 5
+  watchdog:
+    enabled: true
+    cron: "*/5 * * * *"        # Every 5 min — price_monitor liveness
+    timeout_minutes: 10
   news_collector:
     enabled: true
-    cron: "0 */4 * * *"        # Every 4 hours
-  weekly_report:
-    enabled: true
-    cron: "0 22 * * 0"         # Sunday 22:00
+    cron: "0 */4 * * *"        # Every 4 hours — full sentiment report
+    timeout_minutes: 260
   health_check:
     enabled: true
-    cron: "*/30 * * * *"       # Every 30 min
+    cron: "*/30 * * * *"       # Every 30 min — task health check
+    timeout_minutes: 35
+  weekly_report:
+    enabled: true
+    cron: "0 22 * * 0"         # Sunday 22:00 CST
+    timeout_minutes: 10
+  log_rotate:
+    enabled: true
+    cron: "0 0 * * *"          # Daily midnight — archive + cleanup
+    timeout_minutes: 10
 ```
 
 ## Sentiment Gate (hardcoded in sentiment-gate.ts)

@@ -8,11 +8,17 @@ All commands run from the project root.
 |---|---|
 | `npm run monitor` | Run one price scan cycle (polling mode) |
 | `npm run news` | Run one news fetch cycle |
-| `npm run live` | Start live/testnet monitor (paper.yaml testnet scenarios) |
+| `npm run live` | Start live/testnet monitor (reconciles positions on startup) |
 | `npm run ws-monitor` | Start WebSocket realtime monitor (< 1s signal latency) |
 | `npm run paper:status` | Print paper account summary to terminal |
 | `npm run report:weekly` | Generate + send weekly review report |
 | `npm run health:check` | Run health check (prints status, alerts if issues) |
+| `npm run watchdog` | Manual watchdog check (price_monitor liveness) |
+| `npm run log:rotate` | Manual log rotation + paper backup cleanup |
+| `npm run news:emergency` | Manual emergency news poll + keyword scan |
+| `npm run analysis` | On-demand full market analysis (indicators + macro + sentiment) |
+| `npm run analysis -- --quick` | Quick market scan (skip slow sources) |
+| `npm run attribution` | Signal attribution: win-rate/R:R by signal combination |
 
 ## Backtesting
 
@@ -25,6 +31,7 @@ All commands run from the project root.
 | `npm run backtest -- --initial-usdt 5000` | Custom starting capital |
 | `npm run backtest -- --no-save` | Print report only (no JSON file) |
 | `npm run backtest:compare -- --days 90` | Compare all strategies side-by-side |
+| `npm run backtest -- --slippage-sweep` | Test multiple slippage values (sensitivity analysis) |
 
 ## Futures Testnet
 
@@ -49,7 +56,7 @@ npx tsx src/scripts/test-futures.ts
 
 | Command | Description |
 |---|---|
-| `npm test` | Run all 269 unit tests |
+| `npm test` | Run all 479 unit tests |
 | `npm run typecheck` | TypeScript type check (0 errors target) |
 | `npm run lint` | ESLint check (0 errors target) |
 

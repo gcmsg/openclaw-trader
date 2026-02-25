@@ -8,42 +8,57 @@
 
 ### Features
 
-- 📊 **Technical Analysis** — EMA (20/60) + RSI Wilder (14) + MACD (12/26/9) indicator engine
+- 📊 **Technical Analysis** — EMA (20/60) + RSI Wilder (14) + MACD (12/26/9) + ATR + VWAP (daily, ±1σ/±2σ bands) + CVD
 - ⚙️ **Config-driven Strategy** — Edit `config/strategy.yaml`, no code changes needed
-- 🗞️ **News & Sentiment** — Fear & Greed Index + CryptoCompare headlines with sentiment gate
-- 🎭 **Paper Trading Mode** — Simulates trades using real market prices; tracks P&L, win rate, positions
-- 🔬 **Backtesting Engine** — Test any strategy against months of historical data; Sharpe ratio, max drawdown, profit factor
-- 📉 **Short / Bearish Engine** — Open short + cover signals for Futures/Margin markets; inverted SL/TP/trailing stop; shared position pool
-- 🏦 **Binance Testnet & Live** — Spot Testnet + Futures Testnet fully verified; one-way mode; `marketSell` = open short, `marketBuyByQty` = cover
+- 🗞️ **News & Sentiment** — Fear & Greed + LLM semantic scoring + keyword gate + 6h cache
+- 🚨 **Emergency Monitor** — Every 10 min: scan 30 critical keywords (hack/SEC/depeg); auto-halt open signals for 2h
+- 🎭 **Paper Trading Mode** — Simulates trades with real prices; tracks P&L, win rate, positions, Calmar ratio
+- 🔬 **Backtesting Engine** — Historical data; Sharpe / Sortino / Calmar / max drawdown / BTC benchmark alpha; `--slippage-sweep`
+- 📉 **Short / Bearish Engine** — Open short + cover; inverted SL/TP/trailing stop; ATR-based position sizing
+- 🏦 **Binance Testnet & Live** — Spot + Futures Testnet fully verified; one-way mode
 - 🔔 **AI-triggered Signals** — Zero token cost when idle; only wakes the AI agent on signal detection
-- 🛡️ **Risk Management** — Stop-loss, take-profit, trailing stop, daily loss limit, total drawdown auto-pause
-- 📐 **ATR Dynamic Sizing** — Position size calculated from ATR to normalize per-trade risk
-- 🎯 **Staged Take-Profit** — Close position in multiple tranches at configurable profit levels
-- ⏱️ **Time Stop** — Force-exit stagnant positions after configurable hours
-- 🔗 **Correlation Filter** — Skip correlated assets already in portfolio (Pearson > 0.7)
-- 📡 **WebSocket Monitor** — Real-time kline stream with < 1s signal latency
+- 🛡️ **Risk Management** — Stop-loss · take-profit · trailing stop · staged TP · time-stop · daily loss limit · total drawdown pause · R:R pre-filter
+- 🏁 **Regime Filter** — Classifies market as trending / sideways / breakout_watch / reduced_size; skips or halves position accordingly
+- 📐 **ATR Dynamic Sizing** — Normalize per-trade risk using ATR volatility
+- 🎯 **Kelly Position Sizing** — Dynamic position size from rolling win-rate and R:R; half-Kelly mode; fallback to fixed when sample < 10
+- 🔗 **Correlation Filter** — Portfolio heat map; Pearson > 0.75 → continuous position reduction (not binary block)
+- 💹 **Funding Rate Signals** — `funding_rate_overlong` / `funding_rate_overshort` reversal signals with 10-min cache
+- 📈 **BTC Dominance Tracker** — 30-day history; `btc_dominance_rising` / `btc_dominance_falling` signals
+- 📡 **WebSocket Monitor** — Real-time kline stream with < 1s signal latency; CVD WebSocket framework
 - 🪙 **Multi-symbol** — BTC, ETH, BNB, SOL, XRP, ADA, DOGE, AVAX
-- 🧪 **Multi-strategy Scenarios** — Run long-only / short-only / bidirectional strategies in parallel
-- ✅ **Tested** — 269 unit tests across indicators, signals, paper trading, backtest metrics, short engine
+- 🧪 **Multi-strategy Scenarios** — Long-only / short-only / bidirectional in parallel
+- 📊 **Signal Attribution** — `npm run attribution`: rank signal combinations by win-rate, R:R, avg hold time
+- 🩺 **Watchdog** — Every 5 min: alert if `price_monitor` hasn't run within 3 min; 30-min cooldown
+- 🗂️ **Log Rotation** — Daily: archive logs > 20 MB / 24h; keep 30 days; clean old paper backups
+- 🔄 **Position Reconciliation** — On live-monitor startup: diff local account vs exchange; halt if > 10% mismatch
+- ✅ **Tested** — 479 unit tests across indicators, signals, VWAP, CVD, Kelly, attribution, watchdog, reconcile
 
 ### Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│  Every 1 min  (system crontab)              │
-│  src/monitor.ts                             │
-│  → Fetch klines → Calc MA/RSI → Detect sig  │
-│  → paper mode: simulate trade + notify AI   │
-├─────────────────────────────────────────────┤
-│  Every 4 hrs  (system crontab)              │
-│  src/news/monitor.ts                        │
-│  → Fear & Greed + Market cap + News filter  │
-│  → Write to logs/news-report.json           │
-│                                             │
-│  Every 4 hrs +2 min  (OpenClaw cron)        │
-│  → Trigger AI agent to read & analyze       │
-│  → Push summary to Telegram                 │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  Every 1 min   src/monitor.ts                            │
+│  → Fetch klines → VWAP/CVD/Indicators → Detect signal   │
+│  → Regime filter → R:R check → Correlation → Kelly size  │
+│  → Emergency halt? → Sentiment gate → Execute / notify   │
+├──────────────────────────────────────────────────────────┤
+│  Every 5 min   src/health/watchdog.ts                    │
+│  → Check price_monitor last ping; alert if > 3 min      │
+├──────────────────────────────────────────────────────────┤
+│  Every 10 min  src/news/emergency-monitor.ts             │
+│  → Scan latest news for 30 critical keywords             │
+│  → Trigger: halt open signals 2h + Telegram alert       │
+├──────────────────────────────────────────────────────────┤
+│  Every 4 hrs   src/news/monitor.ts                       │
+│  → Fear & Greed + headlines + sentiment → report.json    │
+├──────────────────────────────────────────────────────────┤
+│  Every 30 min  src/health/checker.ts                     │
+│  → Health check all cron tasks; alert on failure         │
+├──────────────────────────────────────────────────────────┤
+│  Daily 00:00   src/health/log-rotate.ts                  │
+│  → Archive logs > 20 MB / 24h; delete > 30d archives    │
+│  → Delete paper backup files > 7 days                    │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### Quick Start
@@ -143,15 +158,26 @@ paper:
 
 ### Buy / Sell Logic
 
-| Signal | Conditions | Market |
+All signal conditions are defined in `config/strategy.yaml` under `signals.buy / sell / short / cover`. Mix and match freely.
+
+**Available signal checkers (signals.ts)**:
+
+| Category | Condition | Description |
 |---|---|---|
-| **Buy** | EMA20 > EMA60 (bullish) + MACD golden cross + RSI not overbought | Spot / Futures |
-| **Sell** | EMA20 < EMA60 (bearish) | Spot / Futures |
-| **Short** | EMA20 < EMA60 (bearish) + MACD death cross + RSI not oversold | **Futures / Margin only** |
-| **Cover** | EMA20 > EMA60 (trend reversal) | **Futures / Margin only** |
-| **Stop Loss** | Long: price ≤ entry × (1 - SL%) · Short: price ≥ entry × (1 + SL%) | — |
-| **Take Profit** | Long: price ≥ entry × (1 + TP%) · Short: price ≤ entry × (1 - TP%) | — |
-| **Trailing Stop** | Activates after activation_percent gain; triggers on callback_percent reversal | — |
+| **MA** | `ma_bullish` / `ma_bearish` | EMA short > / < long (trend direction) |
+| **MA cross** | `ma_crossover` / `ma_crossunder` | EMA cross this bar (entry timing) |
+| **RSI** | `rsi_bullish` / `rsi_bearish` | RSI below oversold / above overbought |
+| **RSI** | `rsi_bullish_zone` / `rsi_not_overbought` | Mid-range zone filters |
+| **RSI exit** | `rsi_overbought_exit` | RSI > `overbought_exit` (default 75) — momentum fade |
+| **MACD** | `macd_bullish` / `macd_bearish` | MACD line vs signal line |
+| **MACD exit** | `macd_histogram_shrinking` | 3 consecutive bars shrinking — momentum fade exit |
+| **Volume** | `volume_surge` / `volume_low` | Volume vs 20-period average |
+| **CVD** | `cvd_bullish` / `cvd_bearish` | 20-bar net buy/sell pressure (kline approximation) |
+| **VWAP** | `price_above_vwap` / `price_below_vwap` | Price vs daily VWAP |
+| **VWAP** | `vwap_bounce` / `vwap_breakdown` | Cross through VWAP (institutional level) |
+| **VWAP** | `price_above_vwap_upper2` / `price_below_vwap_lower2` | ±2σ overbought/oversold |
+| **Funding** | `funding_rate_overlong` / `funding_rate_overshort` | Crowded long/short reversal (default ±0.30% / ±0.15%) |
+| **Dominance** | `btc_dominance_rising` / `btc_dominance_falling` | 7-day BTC dominance trend (altcoin risk signal) |
 
 > **Short engine**: single-direction (no hedge mode). Longs and shorts share the `max_positions` pool.  
 > `marketSell` = open short · `marketBuyByQty` = cover short
@@ -160,58 +186,82 @@ paper:
 
 ```
 src/
-├── monitor.ts              Polling monitor (cron mode, 1-min intervals)
-├── types.ts                Global TypeScript types
+├── monitor.ts              Polling monitor (cron, 1-min); injects VWAP/CVD/funding/dominance
+├── types.ts                Global TypeScript types (Indicators, RiskConfig, StrategyConfig…)
 ├── exchange/
 │   ├── binance-client.ts   Binance REST (Spot + Futures, live + testnet)
-│   └── ws.ts               WebSocket kline stream manager
+│   ├── binance.ts          Public kline + price fetch (no auth)
+│   ├── ws.ts               WebSocket kline stream manager (closed-candle callbacks)
+│   ├── order-flow.ts       CVD: CvdManager (aggTrade stream) + file cache
+│   ├── futures-data.ts     Funding rate + OI (Binance public API)
+│   ├── macro-data.ts       DXY / SPX / VIX via FRED API
+│   ├── derivatives-data.ts Options skew, L/S ratio, basis
+│   └── onchain-data.ts     On-chain metrics (stablecoin flow, miner activity)
 ├── strategy/
-│   ├── indicators.ts       EMA / RSI Wilder / MACD / ATR calculation
-│   ├── signals.ts          Signal detection (buy/sell/short/cover)
-│   └── correlation.ts      Pearson correlation filter
+│   ├── indicators.ts       EMA / RSI Wilder / MACD / ATR / VWAP / CVD
+│   ├── signals.ts          All signal checkers (20+ conditions)
+│   ├── correlation.ts      Pearson correlation filter (portfolio heat)
+│   ├── regime.ts           Market regime classifier (trend/sideways/breakout)
+│   ├── rr-filter.ts        Risk:Reward pre-trade filter
+│   ├── kelly.ts            Kelly position sizing (half-Kelly, fallback)
+│   ├── portfolio-risk.ts   Portfolio exposure + correlation-adjusted sizing
+│   ├── market-context.ts   Multi-timeframe context (1h/4h/1d + pivot points)
+│   ├── btc-dominance.ts    BTC dominance 30-day history + trend signals
+│   └── funding-rate-signal.ts  Funding rate extreme signals + 10-min cache
 ├── paper/
-│   ├── account.ts          Virtual account (long + short, P&L, trailing stop)
-│   ├── engine.ts           Signal handler + exit conditions (SL/TP/trailing/time)
+│   ├── account.ts          Virtual account (long + short, P&L, DCA state)
+│   ├── engine.ts           Signal handler + all exit conditions
 │   └── status.ts           CLI account status viewer
 ├── backtest/
 │   ├── fetcher.ts          Historical K-line fetcher (paginated + cached)
-│   ├── metrics.ts          Performance metrics (Sharpe, Sortino, drawdown…)
-│   ├── runner.ts           Multi-symbol backtest engine (long + short)
-│   └── report.ts           Console output + JSON report saver
+│   ├── metrics.ts          Sharpe / Sortino / Calmar / drawdown / BTC alpha
+│   ├── runner.ts           Multi-symbol engine (regime + R:R + correlation)
+│   └── report.ts           Console output + JSON report
 ├── live/
-│   └── executor.ts         Live executor (Spot buy/sell + Futures short/cover)
+│   ├── executor.ts         Live/testnet order execution
+│   └── reconcile.ts        Startup position reconciliation (local vs exchange)
 ├── news/
 │   ├── fetcher.ts          Fear & Greed + CryptoCompare headlines
-│   ├── monitor.ts          News scan entry point
-│   └── sentiment-gate.ts   Keyword scoring gate (bull/bear word lists)
+│   ├── monitor.ts          Full news scan (4h cron)
+│   ├── emergency-monitor.ts  Critical keyword scan (10-min cron); halt open signals
+│   ├── sentiment-gate.ts   Keyword scoring gate + sentiment cache integration
+│   ├── sentiment-cache.ts  LLM sentiment persistence (6h TTL)
+│   ├── llm-sentiment.ts    OpenClaw Gateway LLM analysis
+│   └── digest.ts           News digest formatter
+├── health/
+│   ├── heartbeat.ts        Task ping/status tracking (logs/heartbeat.json)
+│   ├── checker.ts          Health check cron (30-min); alert on failure
+│   ├── watchdog.ts         Price-monitor liveness check (5-min); 30-min cooldown
+│   └── log-rotate.ts       Daily log archival + paper backup cleanup
 ├── config/
 │   └── loader.ts           Runtime config loader (merges strategy profiles)
 ├── notify/
-│   └── openclaw.ts         OpenClaw agent notifications
+│   └── openclaw.ts         OpenClaw agent notifications (system event)
 ├── report/
-│   └── weekly.ts           Weekly performance report (Sharpe, drawdown, win rate)
+│   ├── weekly.ts           Weekly performance report
+│   └── dashboard.ts        HTML dashboard with equity curve (npm run dashboard)
 └── scripts/
-    ├── backtest.ts         Backtest CLI  (npm run backtest)
-    ├── live-monitor.ts     Testnet live monitor (npm run live)
-    ├── ws-monitor.ts       WebSocket realtime monitor (npm run ws-monitor)
+    ├── backtest.ts         Backtest CLI (--slippage-sweep, --compare)
+    ├── market-analysis.ts  On-demand market analysis (npm run analysis)
+    ├── signal-attribution.ts  Signal attribution report (npm run attribution)
+    ├── live-monitor.ts     Testnet/live monitor (npm run live)
+    ├── ws-monitor.ts       WebSocket realtime monitor
     ├── sync-cron.ts        Cron sync utility (npm run cron:sync)
     └── test-futures.ts     Futures testnet connectivity test
 config/
-├── strategy.yaml           Global strategy + schedule config
+├── strategy.yaml           Global strategy + all schedule tasks
 ├── paper.yaml              Paper / testnet trading scenarios
-└── strategies/             Named strategy profiles
-    ├── default.yaml        Default balanced strategy
-    ├── aggressive.yaml     High-frequency signals
-    ├── conservative.yaml   Triple-confirmation (MA+RSI+MACD)
-    ├── trend.yaml          Long-period trend following
-    ├── rsi-pure.yaml       RSI-only signals
-    ├── short-trend.yaml    Short-only bearish strategy  ← NEW
-    └── long-short.yaml     Bidirectional (long + short)  ← NEW
+└── strategies/             Named strategy profiles (default/aggressive/trend/rsi…)
 logs/
-├── monitor.log
 ├── news-report.json        Latest market sentiment report
 ├── paper-{scenario}.json   Per-scenario paper trading accounts
+├── heartbeat.json          Task heartbeat timestamps
+├── btc-dominance-history.json  30-day BTC dominance records
+├── funding-rate-cache.json     Funding rate 10-min cache
+├── cvd-state.json              CVD WebSocket state
+├── news-emergency.json         Emergency halt state
 ├── backtest/               Backtest JSON reports
+├── archive/                Rotated log files (30-day retention)
 └── kline-cache/            Cached historical K-line data
 ```
 
@@ -224,18 +274,33 @@ After editing, run `npm run cron:sync` to apply changes to system crontab.
 schedule:
   price_monitor:
     enabled: true
-    cron: "* * * * *"      # Every minute
-    timeout_minutes: 3     # Alert if not run within 3 min
+    cron: "* * * * *"       # Every minute — signal detection
+    timeout_minutes: 3
+
+  news_emergency:
+    enabled: true
+    cron: "*/10 * * * *"    # Every 10 min — critical keyword scan
+    timeout_minutes: 5
+
+  watchdog:
+    enabled: true
+    cron: "*/5 * * * *"     # Every 5 min — monitor liveness check
+    timeout_minutes: 10
 
   news_collector:
     enabled: true
-    cron: "0 */4 * * *"    # Every 4 hours
+    cron: "0 */4 * * *"     # Every 4 hours — full sentiment report
     timeout_minutes: 260
 
   health_check:
     enabled: true
-    cron: "*/30 * * * *"   # Every 30 minutes
+    cron: "*/30 * * * *"    # Every 30 min — task health check
     timeout_minutes: 35
+
+  log_rotate:
+    enabled: true
+    cron: "0 0 * * *"       # Daily midnight — log archival + cleanup
+    timeout_minutes: 10
 ```
 
 ### Health Monitoring
@@ -261,18 +326,32 @@ Alerts are sent to Telegram only when issues are detected (silent when healthy).
 
 ### Roadmap
 
-- [x] Technical indicator engine (MA + RSI)
-- [x] Signal detection with pluggable conditions
-- [x] Paper trading mode with real prices
-- [x] News & sentiment analysis (every 4h)
-- [x] Risk management (stop-loss, max drawdown)
-- [x] MACD + volume indicators & signals
-- [x] News sentiment gate (position sizing by sentiment)
-- [x] Weekly review report (AI-powered, every Sunday 22:00)
-- [x] Health monitoring & heartbeat system
-- [x] Config-driven schedule management (`cron:sync`)
-- [x] 171 unit tests
-- [x] Backtesting engine (Sharpe / max drawdown / profit factor / multi-strategy compare)
+**Phase 0 — Critical Fixes** ✅
+- [x] Regime filter (breakout_watch / reduced_size) in monitor + backtest
+- [x] Momentum-fade exit: `macd_histogram_shrinking` + `rsi_overbought_exit`
+- [x] Backtest config fix: realistic slippage + `--slippage-sweep`
+- [x] BTC Benchmark + Calmar ratio + Alpha in backtest reports
+
+**Phase 1 — Core Alpha** ✅
+- [x] R:R pre-filter (`risk.min_rr`, opt-in)
+- [x] CVD (kline approximation + aggTrade WebSocket framework)
+- [x] Correlation filter enabled by default (threshold 0.75)
+- [x] Funding rate reversal signals (10-min cache)
+
+**Phase 2 — Risk & Attribution** ✅
+- [x] VWAP (daily, ±1σ/±2σ) + 6 signal conditions
+- [x] BTC dominance 30-day tracker + trend signals
+- [x] Signal attribution report (`npm run attribution`)
+- [x] Kelly position sizing (half-Kelly, fallback to fixed)
+
+**Phase 3 — Ops Hardening** ✅
+- [x] Watchdog: alert if `price_monitor` silent > 3 min
+- [x] Log rotation: daily archive, 30-day retention
+- [x] Position reconciliation on live-monitor startup
+- [x] Emergency news monitor: 30 critical keywords, auto-halt 2h
+
+**Phase 4 — Advanced** *(needs 50+ trades)*
+- [ ] Signal statistics analysis (`getSignalStats()`)
 - [ ] Live trading mode (`mode: auto`)
 - [ ] Web dashboard
 
@@ -286,39 +365,52 @@ MIT
 
 ### 功能特性
 
-- 📊 **技术分析** — MA（20/60）+ RSI（14）+ MACD（12/26/9）指标引擎
-- ⚙️ **配置驱动策略** — 编辑 `config/strategy.yaml` 即可调整，无需改代码
-- 🗞️ **新闻情绪分析** — 恐惧贪婪指数 + CryptoCompare 新闻 + 情绪门控仓位调整
-- 🎭 **模拟盘模式** — 使用真实价格模拟交易，完整记录盈亏、胜率、持仓
-- 🔬 **回测引擎** — 用历史 K 线验证任意策略；输出夏普/索提诺/最大回撤/利润因子
-- 📉 **空头引擎** — Futures/Margin 市场开空/平空；反向止损止盈/追踪止损；与多头共享仓位池
-- 🏦 **Binance Testnet & 实盘** — Spot Testnet + Futures Testnet 已验证；单向持仓模式
-- 🔔 **AI 信号触发** — 无信号时零 token 消耗，仅在发现信号时唤醒 AI Agent
-- 🛡️ **风险管理** — 止损/止盈/追踪止损/日亏限额/总亏上限/ATR 动态仓位/分批止盈/时间止损
-- 📡 **WebSocket 实时流** — 毫秒级 K 线推送，信号延迟 < 1 秒
-- 🔗 **相关性过滤** — Pearson 相关 > 0.7 自动跳过，避免仓位集中
-- 🧪 **多策略并行** — 纯多头 / 纯空头 / 双向等多套策略独立账户同时跑
-- 🪙 **多币种监控** — BTC、ETH、BNB、SOL、XRP、ADA、DOGE、AVAX
-- ✅ **完整测试** — 269 条单元测试，覆盖指标、信号、多空引擎、回测、Futures 验证
+- 📊 **技术分析** — EMA（20/60）+ RSI Wilder（14）+ MACD + ATR + VWAP 日内（±1σ/±2σ）+ CVD
+- ⚙️ **配置驱动策略** — 编辑 `config/strategy.yaml` 即可，无需改代码
+- 🗞️ **新闻情绪** — 恐惧贪婪 + LLM 语义评分 + 关键词门控 + 6 小时缓存
+- 🚨 **突发新闻监控** — 每 10 分钟扫 30 个高危词（hack/SEC/脱锚）；触发后暂停开仓 2 小时
+- 🎭 **模拟盘** — 使用真实价格，记录盈亏/胜率/Calmar 比率
+- 🔬 **回测引擎** — 夏普/索提诺/Calmar/BTC 基准 Alpha；`--slippage-sweep` 滑点敏感性
+- 📉 **空头引擎** — 开空/平空；反向止损/追踪；与多头共享仓位池
+- 🏦 **Binance Testnet & 实盘** — Spot + Futures Testnet 已验证
+- 🔔 **AI 信号触发** — 无信号时零 token 消耗
+- 🛡️ **风险管理** — 止损/止盈/追踪止损/R:R 预过滤/日亏限额/ATR 仓位/分批止盈/时间止损
+- 🏁 **市场状态过滤** — 趋势/横盘/突破等状态识别；横盘自动跳过或减半仓位
+- 🎯 **Kelly 动态仓位** — 基于近期胜率和盈亏比动态计算，样本不足退化固定比例
+- 🔗 **相关性过滤** — 组合热度加权（非二值），阈值 0.75，连续缩减仓位
+- 💹 **资金费率信号** — 极端多头/空头拥挤时触发逆向信号，10 分钟缓存
+- 📈 **BTC 主导率追踪** — 30 天历史 + 7 日趋势信号（山寨风险/山寨季节）
+- 📊 **信号归因分析** — `npm run attribution`：统计各信号组合的胜率/盈亏比/止损次数
+- 🩺 **Watchdog 自监控** — 每 5 分钟检查 price_monitor 是否活着；30 分钟冷却告警
+- 🗂️ **日志轮转** — 每日凌晨自动归档；保留 30 天；清理旧备份
+- 🔄 **持仓对账** — live-monitor 启动时比对本地 vs 交易所；差异 > 10% 暂停启动
+- ✅ **完整测试** — 479 条单元测试
 
 ### 运行架构
 
 ```
-┌─────────────────────────────────────────────┐
-│  每 1 分钟（系统 crontab）                    │
-│  src/monitor.ts                             │
-│  → 拉取 K 线 → 计算 MA/RSI → 检测信号       │
-│  → paper 模式：模拟下单 + 通知 AI            │
-├─────────────────────────────────────────────┤
-│  每 4 小时（系统 crontab）                    │
-│  src/news/monitor.ts                        │
-│  → 恐惧贪婪 + 市值 + 新闻过滤               │
-│  → 写入 logs/news-report.json               │
-│                                             │
-│  每 4 小时+2分钟（OpenClaw cron）             │
-│  → 触发 AI 读取报告并分析                   │
-│  → 推送到 Telegram                          │
-└─────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────┐
+│  每 1 分钟   src/monitor.ts                            │
+│  → K 线 → VWAP/CVD/指标 → 信号检测                    │
+│  → Regime 过滤 → R:R 检查 → 相关性 → Kelly 仓位       │
+│  → 紧急暂停? → 情绪门控 → 执行/通知                   │
+├────────────────────────────────────────────────────────┤
+│  每 5 分钟   src/health/watchdog.ts                    │
+│  → 检查 price_monitor 心跳；超时 → Telegram 告警      │
+├────────────────────────────────────────────────────────┤
+│  每 10 分钟  src/news/emergency-monitor.ts             │
+│  → 扫描最新新闻 30 个高危关键词                        │
+│  → 匹配 ≥ 2 → 暂停开仓 2h + 立即 Telegram 告警       │
+├────────────────────────────────────────────────────────┤
+│  每 4 小时   src/news/monitor.ts                       │
+│  → 恐惧贪婪 + 新闻 + 情绪 → news-report.json          │
+├────────────────────────────────────────────────────────┤
+│  每 30 分钟  src/health/checker.ts                     │
+│  → 检查所有 cron 任务状态；异常时告警                  │
+├────────────────────────────────────────────────────────┤
+│  每天 0 点   src/health/log-rotate.ts                  │
+│  → 归档日志 > 20MB/24h；删除 30 天+ 归档              │
+└────────────────────────────────────────────────────────┘
 ```
 
 ### 快速开始
@@ -368,21 +460,31 @@ npm test
 
 ### 进度
 
-- [x] 技术指标引擎（EMA + RSI Wilder + MACD + ATR）
-- [x] 可插拔信号检测（buy / sell / short / cover）
-- [x] 模拟盘（使用真实价格，多空均支持）
-- [x] 回测引擎（夏普/索提诺/最大回撤/利润因子，多空均支持）
-- [x] 新闻情绪分析（每 4 小时）+ 情绪门控仓位调整
-- [x] 风险管理（止损/止盈/追踪止损/日亏限额/ATR仓位/分批止盈/时间止损）
-- [x] MTF 多时间框架趋势确认 + 相关性过滤
-- [x] WebSocket 实时 K 线流（< 1s 延迟）
-- [x] **空头引擎全链路**（类型层→账户层→引擎层→信号层→回测层→实盘层）
-- [x] **Binance Testnet 验证**（Spot Testnet + Futures Testnet 开空/平空已验证）
-- [x] 策略文件（default / aggressive / conservative / trend / short-trend / long-short）
-- [x] 周报复盘功能 + 健康监控心跳
-- [x] 配置驱动的定时任务管理（`cron:sync` 一键同步）
-- [x] 171 条单元测试
-- [x] 回测引擎（夏普/最大回撤/利润因子/多策略对比）
+**Phase 0 — 修复致命问题** ✅
+- [x] Regime 市场状态感知（breakout_watch 跳过 / reduced_size 减仓）
+- [x] 动量衰竭出场：`macd_histogram_shrinking` + `rsi_overbought_exit`
+- [x] 回测参数修正：真实滑点 + `--slippage-sweep` 滑点敏感性
+- [x] BTC Benchmark + Calmar 比率 + Alpha 超额收益
+
+**Phase 1 — 核心 Alpha** ✅
+- [x] R:R 入场预过滤（`risk.min_rr`，可选开启）
+- [x] CVD 累计成交量差值（K 线近似 + aggTrade WebSocket 框架）
+- [x] 相关性过滤默认开启（阈值 0.75，连续缩减）
+- [x] 资金费率逆向信号（10 分钟缓存）
+
+**Phase 2 — 风险与归因** ✅
+- [x] VWAP 日内（±1σ/±2σ）+ 6 个信号条件
+- [x] BTC 主导率 30 天历史 + 趋势信号
+- [x] 信号归因报告（`npm run attribution`）
+- [x] Kelly 动态仓位（半 Kelly，样本不足退化固定）
+
+**Phase 3 — 运维加固** ✅
+- [x] Watchdog：price_monitor 超 3 分钟未运行 → Telegram 告警
+- [x] 日志轮转：每日归档，保留 30 天，清理 7 天+ 备份
+- [x] 启动持仓对账：本地 vs 交易所，差异 > 10% 暂停
+- [x] 突发新闻监控：30 个高危词，触发自动暂停开仓 2h
+
+**Phase 4 — 进阶** *(需 50+ 笔真实交易记录)*
 - [ ] 实盘自动交易（`mode: auto`）
 - [ ] Web 可视化面板
 
