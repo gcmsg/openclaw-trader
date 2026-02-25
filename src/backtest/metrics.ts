@@ -63,6 +63,13 @@ export interface BacktestMetrics {
   bestTradePct: number; // 最佳单笔 %
   worstTradePct: number; // 最差单笔 %
 
+  // ── 风险调整指标 ──
+  calmarRatio: number; // 年化收益 / 最大回撤（比夏普更适合加密高波动市场）
+
+  // ── Benchmark 对比（BTC Buy & Hold）──
+  benchmarkReturn?: number; // 同期 BTC 持有收益率 %（可选，需传入 BTC 数据）
+  alpha?: number; // 策略 alpha = 策略收益 - BTC 收益
+
   // ── 权益曲线 ──
   equityCurve: EquityPoint[];
 }
@@ -84,11 +91,13 @@ function stddev(arr: number[], avg?: number): number {
 
 /**
  * 根据已完成交易和权益曲线计算绩效指标
+ * @param btcBenchmarkReturn 同期 BTC Buy & Hold 收益率 %（可选，用于计算 alpha）
  */
 export function calculateMetrics(
   trades: BacktestTrade[],
   initialUsdt: number,
-  equityCurve: EquityPoint[]
+  equityCurve: EquityPoint[],
+  btcBenchmarkReturn?: number
 ): BacktestMetrics {
   // sell = 平多；cover = 平空（两者都是已实现交易，用于计算绩效）
   const sellTrades = trades.filter((t) => t.side === "sell" || t.side === "cover");
@@ -145,6 +154,21 @@ export function calculateMetrics(
       : 0;
 
   const finalEquity = equityCurve[equityCurve.length - 1]?.equity ?? initialUsdt;
+  const totalReturnPct = ((finalEquity - initialUsdt) / initialUsdt) * 100;
+
+  // ── Calmar Ratio = 年化收益 / 最大回撤 ──
+  // 年化收益 = totalReturn% × (365 / numDays)
+  const firstTime = equityCurve[0]?.time ?? 0;
+  const lastTime = equityCurve[equityCurve.length - 1]?.time ?? firstTime;
+  const numDays = firstTime > 0 && lastTime > firstTime
+    ? (lastTime - firstTime) / 86_400_000
+    : 365;
+  const annualizedReturn = totalReturnPct * (365 / numDays);
+  const calmarRatio = maxDrawdown > 0 ? annualizedReturn / (maxDrawdown * 100) : 0;
+
+  // ── Benchmark & Alpha ──
+  const alpha =
+    btcBenchmarkReturn !== undefined ? totalReturnPct - btcBenchmarkReturn : undefined;
 
   return {
     totalTrades: sellTrades.length,
@@ -153,7 +177,7 @@ export function calculateMetrics(
     winRate: sellTrades.length > 0 ? wins.length / sellTrades.length : 0,
 
     totalReturn: finalEquity - initialUsdt,
-    totalReturnPercent: ((finalEquity - initialUsdt) / initialUsdt) * 100,
+    totalReturnPercent: totalReturnPct,
 
     maxDrawdown: maxDrawdown * 100,
     maxDrawdownUsdt,
@@ -180,6 +204,10 @@ export function calculateMetrics(
       sellTrades.length > 0 ? Math.max(...sellTrades.map((t) => t.pnlPercent * 100)) : 0,
     worstTradePct:
       sellTrades.length > 0 ? Math.min(...sellTrades.map((t) => t.pnlPercent * 100)) : 0,
+
+    calmarRatio,
+    ...(btcBenchmarkReturn !== undefined ? { benchmarkReturn: btcBenchmarkReturn } : {}),
+    ...(alpha !== undefined ? { alpha } : {}),
 
     equityCurve,
   };

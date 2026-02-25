@@ -75,6 +75,20 @@ export function formatReport(result: BacktestResult): string {
   );
   lines.push(`   夏普比率        ${pad(fmtRatio(m.sharpeRatio), 12, true)}`);
   lines.push(`   索提诺比率      ${pad(fmtRatio(m.sortinoRatio), 12, true)}`);
+  lines.push(`   卡玛比率        ${pad(fmtRatio(m.calmarRatio), 12, true)}  (年化收益/最大回撤)`);
+  if (m.benchmarkReturn !== undefined) {
+    const bSign = m.benchmarkReturn >= 0 ? "+" : "";
+    lines.push(
+      `🏆 BTC持有收益    ${pad(bSign + fmt(m.benchmarkReturn) + "%", 12, true)}  (同期基准)`
+    );
+    if (m.alpha !== undefined) {
+      const aSign = m.alpha >= 0 ? "+" : "";
+      const alphaEmoji = m.alpha >= 0 ? "✅" : "⚠️";
+      lines.push(
+        `${alphaEmoji} Alpha超额收益   ${pad(aSign + fmt(m.alpha) + "%", 12, true)}  (策略 - BTC持有)`
+      );
+    }
+  }
   lines.push("");
 
   // ── 交易统计 ──

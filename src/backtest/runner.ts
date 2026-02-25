@@ -676,8 +676,19 @@ export function runBacktest(
     }
   }
 
+  // ── BTC Buy & Hold Benchmark ──
+  // 用回测期间 BTC 的首根/末根收盘价计算持有收益率
+  const btcKlines = klinesBySymbol["BTCUSDT"] ?? (symbols[0] !== undefined ? klinesBySymbol[symbols[0]] : undefined);
+  const btcBenchmarkReturn = (() => {
+    if (!btcKlines || btcKlines.length < 2) return undefined;
+    const firstClose = btcKlines[0]?.close;
+    const lastClose = btcKlines[btcKlines.length - 1]?.close;
+    if (!firstClose || !lastClose) return undefined;
+    return ((lastClose - firstClose) / firstClose) * 100;
+  })();
+
   // ── 计算绩效指标 ──
-  const metrics = calculateMetrics(account.trades, initialUsdt, account.equityCurve);
+  const metrics = calculateMetrics(account.trades, initialUsdt, account.equityCurve, btcBenchmarkReturn);
 
   // ── 各币种统计 ──
   // sell=平多，cover=平空（均为已实现交易）
