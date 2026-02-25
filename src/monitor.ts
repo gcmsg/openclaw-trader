@@ -207,7 +207,7 @@ async function scanSymbol(
     if (signal.type === "none") return;
 
     // portfolioRatioOverride：来自引擎（相关性/regime 调整后的仓位比例）
-    let portfolioRatioOverride: number | undefined = effectivePositionRatio;
+    const portfolioRatioOverride: number | undefined = effectivePositionRatio;
 
     // 突发新闻紧急暂停（仅限开仓信号；止损/止盈平仓不受影响）
     if (signal.type === "buy" || signal.type === "short") {

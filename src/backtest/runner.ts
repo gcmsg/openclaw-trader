@@ -676,8 +676,8 @@ export function runBacktest(
         const trendBull = getTrendBull(sym, time);
         if (trendBull === true) continue; // 大趋势多头，不开空
         doOpenShort(account, sym, kline.close, time, regimeCfg, legacyOpts);
-      } else if (signal.type === "cover") {
-        // 平空（detectSignal 已确保只在持空时返回 cover）
+      } else {
+        // cover — 平空（detectSignal 已确保只在持空时返回 cover）
         doCoverShort(account, sym, kline.close, time, "signal", legacyOpts);
       }
     }

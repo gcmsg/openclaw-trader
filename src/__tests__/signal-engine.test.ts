@@ -348,11 +348,11 @@ describe("processSignal — sell/cover 信号放行", () => {
 });
 
 describe("candleMs — 时间框架转换", () => {
-  it("1m = 60000ms", () => expect(candleMs("1m")).toBe(60_000));
-  it("5m = 300000ms", () => expect(candleMs("5m")).toBe(300_000));
-  it("15m = 900000ms", () => expect(candleMs("15m")).toBe(900_000));
-  it("1h = 3600000ms", () => expect(candleMs("1h")).toBe(3_600_000));
-  it("4h = 14400000ms", () => expect(candleMs("4h")).toBe(14_400_000));
-  it("1d = 86400000ms", () => expect(candleMs("1d")).toBe(86_400_000));
-  it("未知 timeframe 返回默认 1h", () => expect(candleMs("unknown")).toBe(3_600_000));
+  it("1m = 60000ms", () => { expect(candleMs("1m")).toBe(60_000); });
+  it("5m = 300000ms", () => { expect(candleMs("5m")).toBe(300_000); });
+  it("15m = 900000ms", () => { expect(candleMs("15m")).toBe(900_000); });
+  it("1h = 3600000ms", () => { expect(candleMs("1h")).toBe(3_600_000); });
+  it("4h = 14400000ms", () => { expect(candleMs("4h")).toBe(14_400_000); });
+  it("1d = 86400000ms", () => { expect(candleMs("1d")).toBe(86_400_000); });
+  it("未知 timeframe 返回默认 1h", () => { expect(candleMs("unknown")).toBe(3_600_000); });
 });
