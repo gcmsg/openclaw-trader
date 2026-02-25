@@ -64,7 +64,7 @@ export type GateDecision =
 export interface NewsReport {
   generatedAt: string;
   fearGreed: { value: number; label: string };
-  globalMarket: { marketCapChangePercent24h: number };
+  globalMarket: { marketCapChangePercent24h: number; btcDominance?: number; totalMarketCapUsd?: number };
   sentiment: "bullish" | "bearish" | "neutral";
   importantNews: { title: string }[];
   bigMovers: { symbol: string; priceChangePercent: number }[];

@@ -16,7 +16,8 @@ import { getDerivativesSnapshot, formatDerivativesReport } from "../exchange/der
 import { getOnChainContext, formatOnChainReport } from "../exchange/onchain-data.js";
 import { getNewsDigest, formatNewsDigest } from "../news/digest.js";
 import { loadNewsReport, scoreNewsTitles } from "../news/sentiment-gate.js";
-import { writeKeywordSentimentCache } from "../news/sentiment-cache.js";
+import { writeKeywordSentimentCache, writeSentimentCache } from "../news/sentiment-cache.js";
+import { analyzeSentimentWithLLM, llmResultToEntry, formatLLMSentimentReport } from "../news/llm-sentiment.js";
 import { loadStrategyConfig } from "../config/loader.js";
 import { getKlines } from "../exchange/binance.js";
 import type { Timeframe } from "../types.js";
@@ -60,26 +61,37 @@ async function main() {
   ]);
 
   // 先拿到价格，再并发拉其余数据
-  const [futuresData, multiTf, btcDeriv, ethDeriv, onchain, newsDigest] = await Promise.all([
+  // 读取本地新闻报告（供 LLM 分析用）
+  const localNewsReport = loadNewsReport();
+  const llmInputHeadlines = localNewsReport?.importantNews.map((n) => n.title) ?? [];
+  const llmFgValue = localNewsReport?.fearGreed.value ?? 50;
+  const llmBtcDom = localNewsReport?.globalMarket.btcDominance ?? 50;
+  const llmMktChange = localNewsReport?.globalMarket.marketCapChangePercent24h ?? 0;
+
+  // 并发拉取所有数据 + LLM 分析（同步进行，互不阻塞）
+  const [futuresData, multiTf, btcDeriv, ethDeriv, onchain, newsDigest, llmSentiment] = await Promise.all([
     getBatchFuturesData(FUTURES_SYMBOLS, prices),
     getBatchMultiTfContext(symbols, baseCfg, ["1h", "4h", "1d"] as Timeframe[]),
     getDerivativesSnapshot("BTCUSDT").catch(() => null),
     getDerivativesSnapshot("ETHUSDT").catch(() => null),
     getOnChainContext().catch(() => null),
     isQuick ? Promise.resolve(null) : getNewsDigest(12).catch(() => null),
+    llmInputHeadlines.length > 0
+      ? analyzeSentimentWithLLM({
+          headlines: llmInputHeadlines,
+          fearGreed: llmFgValue,
+          btcDominance: llmBtcDom,
+          marketCapChange: llmMktChange,
+        }).catch(() => null)
+      : Promise.resolve(null),
   ]);
 
-  // 读取情绪报告（本地缓存）
+  // 读取情绪报告（复用已加载的 localNewsReport）
   let fearGreed: string | null = null;
-  try {
-    const report = loadNewsReport();
-    if (report) {
-      const fgi = (report as { fearGreed?: { value?: number; classification?: string } }).fearGreed;
-      if (fgi) {
-        fearGreed = `${fgi.value ?? "?"}/100 ${fgi.classification ?? ""}`;
-      }
-    }
-  } catch { /* 忽略，不影响分析 */ }
+  if (localNewsReport?.fearGreed) {
+    const fgi = localNewsReport.fearGreed;
+    fearGreed = `${fgi.value}/100 `;
+  }
 
   // ── 组装报告 ──────────────────────────────────────────
 
@@ -122,6 +134,12 @@ async function main() {
     sections.push(formatNewsDigest(newsDigest));
   }
 
+  // 4.95 LLM 语义情绪分析
+  if (llmSentiment) {
+    sections.push(`\n${separator}`);
+    sections.push(formatLLMSentimentReport(llmSentiment));
+  }
+
   // 5. 多 TF 技术面扫描
   sections.push(`\n${separator}`);
   sections.push(formatMultiTfReport(multiTf, true));
@@ -133,13 +151,15 @@ async function main() {
   if (btcCtx || ethCtx) {
     const keyLines: string[] = ["📍 **关键价位**\n"];
     if (btcCtx) {
+      const ppNote = btcCtx.pivotPP ? `  PP $${btcCtx.pivotPP.toFixed(0)}` : "";
       keyLines.push(
-        `BTC $${prices["BTCUSDT"]?.toFixed(0) ?? "?"} | 支撑 $${btcCtx.supportLevel.toFixed(0)} | 阻力 $${btcCtx.resistanceLevel.toFixed(0)}`
+        `BTC $${prices["BTCUSDT"]?.toFixed(0) ?? "?"} | 支撑 $${btcCtx.supportLevel.toFixed(0)} | 阻力 $${btcCtx.resistanceLevel.toFixed(0)}${ppNote}`
       );
     }
     if (ethCtx) {
+      const ppNote = ethCtx.pivotPP ? `  PP $${ethCtx.pivotPP.toFixed(0)}` : "";
       keyLines.push(
-        `ETH $${prices["ETHUSDT"]?.toFixed(0) ?? "?"} | 支撑 $${ethCtx.supportLevel.toFixed(0)} | 阻力 $${ethCtx.resistanceLevel.toFixed(0)}`
+        `ETH $${prices["ETHUSDT"]?.toFixed(0) ?? "?"} | 支撑 $${ethCtx.supportLevel.toFixed(0)} | 阻力 $${ethCtx.resistanceLevel.toFixed(0)}${ppNote}`
       );
     }
     sections.push(keyLines.join("\n"));
@@ -175,16 +195,25 @@ async function main() {
 
   const fullReport = sections.join("\n");
 
-  // ── 自动更新情绪缓存（关键词版本，LLM 版本由 cron announce 回调写入）──
+  // ── 自动更新情绪缓存（优先 LLM，降级关键词）──
   try {
-    const newsReport = loadNewsReport();
-    if (newsReport?.importantNews) {
-      const kwScore = scoreNewsTitles(newsReport.importantNews.map((n) => n.title));
-      const fg = newsReport.fearGreed.value;
-      // 综合评分：关键词 + FGI 调整
-      const fgAdjust = fg < 20 ? -2 : fg > 75 ? 2 : 0; // 极恐偏空，极贪偏多（反向修正）
-      const combined = kwScore - fgAdjust; // 极恐时关键词可能过度偏空
-      writeKeywordSentimentCache(combined, newsReport.importantNews.length);
+    if (llmSentiment && llmInputHeadlines.length > 0) {
+      // LLM 分析成功 → 写入高质量缓存
+      const entry = llmResultToEntry(llmSentiment, llmInputHeadlines.length);
+      writeSentimentCache({
+        score: entry.score,
+        label: entry.label,
+        bullishReasons: entry.bullishReasons,
+        bearishReasons: entry.bearishReasons,
+        headlineCount: entry.headlineCount,
+        ...(entry.analyzedBy !== undefined ? { analyzedBy: entry.analyzedBy } : {}),
+      });
+    } else if (localNewsReport?.importantNews) {
+      // 降级：关键词匹配
+      const kwScore = scoreNewsTitles(localNewsReport.importantNews.map((n) => n.title));
+      const fg = localNewsReport.fearGreed.value;
+      const fgAdjust = fg < 20 ? -2 : fg > 75 ? 2 : 0;
+      writeKeywordSentimentCache(kwScore - fgAdjust, localNewsReport.importantNews.length);
     }
   } catch { /* 不影响主流程 */ }
 

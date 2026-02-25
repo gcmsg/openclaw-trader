@@ -13,6 +13,7 @@
 
 import { getKlines } from "../exchange/binance.js";
 import { calculateIndicators } from "./indicators.js";
+import { calcPivotPoints } from "./volume-profile.js";
 import { classifyRegime } from "./regime.js";
 import type { RegimeAnalysis } from "./regime.js";
 import type { StrategyConfig, Timeframe } from "../types.js";
@@ -50,9 +51,10 @@ export interface MultiTfContext {
   signalStrength: SignalStrength;
   confluence: number;          // TF 方向一致性（0-4，越高越可信）
 
-  // 关键价位（基于 1h 数据估算）
+  // 关键价位（Pivot Point + 近期高低点融合）
   supportLevel: number;
   resistanceLevel: number;
+  pivotPP?: number;    // 标准 Pivot Point（可选，日线数据不足时缺失）
 
   // 文字结论
   summary: string;             // 一句话结论
@@ -152,32 +154,69 @@ async function analyzeTf(
   }
 }
 
-/** 从 K 线数据估算支撑/阻力位（近期高低点） */
+/**
+ * 估算支撑/阻力位
+ *
+ * 双层算法：
+ *   1. Pivot Points（标准公式，基于上一根日线 H/L/C）→ 精确的市场共识价位
+ *   2. 近期 4h K 线高低点 → 短期压力/支撑
+ *
+ * 融合逻辑：
+ *   - 优先使用 Pivot Point S1/R1（机构广泛参考的价位）
+ *   - 若 PP S1/R1 与当前价太近（< 0.3%）或方向错误，则回退到近期高低点
+ *   - 返回更靠近价格的一层（更具操作意义）
+ */
 async function estimateKeyLevels(
   symbol: string,
   lookback = 50
-): Promise<{ support: number; resistance: number }> {
+): Promise<{ support: number; resistance: number; pivotPP?: number; pivotR1?: number; pivotS1?: number }> {
   try {
-    const klines = await getKlines(symbol, "4h", lookback);
-    const lows = klines.map((k) => k.low);
-    const highs = klines.map((k) => k.high);
-    const price = klines.at(-1)?.close ?? 0;
+    // 并发拉取 4h K 线（近期高低点）和日线 K 线（Pivot Point）
+    const [klines4h, klines1d] = await Promise.all([
+      getKlines(symbol, "4h", lookback),
+      getKlines(symbol, "1d", 5),   // 只需最近几根日线
+    ]);
 
-    // 找最近的支撑（低于当前价的近期低点）和阻力（高于当前价的近期高点）
-    const belowPriceHighs = highs.filter((h) => h < price * 1.005).sort((a, b) => b - a);
-    const abovePriceLows = lows.filter((l) => l > price * 0.995).sort((a, b) => a - b);
+    const price = klines4h.at(-1)?.close ?? 0;
+    if (price === 0) return { support: 0, resistance: 0 };
 
-    const support = lows.filter((l) => l < price).sort((a, b) => b - a)[0] ?? price * 0.95;
-    const resistance = highs.filter((h) => h > price).sort((a, b) => a - b)[0] ?? price * 1.05;
+    // ── Layer 1：Pivot Points（日线）──────────────────────
+    const pivot = calcPivotPoints(klines1d);
+    let pivotSupport = 0;
+    let pivotResistance = 0;
 
-    // 避免支撑/阻力太近（< 0.5%）
-    const validSupport = support < price * 0.995 ? support : price * 0.97;
-    const validResistance = resistance > price * 1.005 ? resistance : price * 1.03;
+    if (pivot) {
+      // 选择最靠近当前价的 PP 支撑/阻力层级
+      const candidates = [
+        { s: pivot.s1, r: pivot.r1 },
+        { s: pivot.s2, r: pivot.r2 },
+      ];
 
-    void belowPriceHighs;
-    void abovePriceLows;
+      for (const { s, r } of candidates) {
+        const sValid = s < price * 0.997;   // 支撑在价格 0.3% 以下
+        const rValid = r > price * 1.003;   // 阻力在价格 0.3% 以上
+        if (sValid && pivotSupport === 0) pivotSupport = s;
+        if (rValid && pivotResistance === 0) pivotResistance = r;
+        if (pivotSupport > 0 && pivotResistance > 0) break;
+      }
+    }
 
-    return { support: validSupport, resistance: validResistance };
+    // ── Layer 2：近期 4h K 线高低点 ───────────────────────
+    const lows = klines4h.map((k) => k.low);
+    const highs = klines4h.map((k) => k.high);
+
+    const nearestSupport = lows.filter((l) => l < price * 0.997).sort((a, b) => b - a)[0] ?? price * 0.95;
+    const nearestResistance = highs.filter((h) => h > price * 1.003).sort((a, b) => a - b)[0] ?? price * 1.05;
+
+    // ── 融合：优先 Pivot Point，回退近期高低点 ──────────────
+    const finalSupport = pivotSupport > 0 ? pivotSupport : nearestSupport;
+    const finalResistance = pivotResistance > 0 ? pivotResistance : nearestResistance;
+
+    return {
+      support: finalSupport,
+      resistance: finalResistance,
+      ...(pivot ? { pivotPP: pivot.pp, pivotR1: pivot.r1, pivotS1: pivot.s1 } : {}),
+    };
   } catch {
     return { support: 0, resistance: 0 };
   }
@@ -284,7 +323,8 @@ export async function getMultiTfContext(
   lines.push(`\n📊 综合: ${trendToLabel(overallTrend)}（${confLabel}）`);
 
   if (levels.support > 0) {
-    lines.push(`🛡️ 支撑: $${levels.support.toFixed(2)}  🚧 阻力: $${levels.resistance.toFixed(2)}`);
+    const ppNote = levels.pivotPP ? ` (PP $${levels.pivotPP.toFixed(0)})` : "";
+    lines.push(`🛡️ 支撑: $${levels.support.toFixed(2)}  🚧 阻力: $${levels.resistance.toFixed(2)}${ppNote}`);
   }
 
   const strengthLabel = signalStrength === "strong" ? "⭐⭐⭐ 强烈" :
@@ -326,6 +366,7 @@ export async function getMultiTfContext(
     confluence,
     supportLevel: levels.support,
     resistanceLevel: levels.resistance,
+    ...(levels.pivotPP !== undefined ? { pivotPP: levels.pivotPP } : {}),
     summary,
     detail: lines.join("\n"),
   };
