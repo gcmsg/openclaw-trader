@@ -67,3 +67,28 @@ risk:
     enabled: true
     threshold: 0.75
     lookback: 60
+
+# G1 Protection Manager（仿 Freqtrade）
+# 在开仓前检查近期交易记录，触发时暂停开仓一段时间
+# protections:
+#   cooldown:
+#     enabled: true
+#     stop_duration_candles: 5        # 止损后冷却 5 根 K 线
+#   stoploss_guard:
+#     enabled: true
+#     lookback_period_candles: 48     # 回看 48 根 K 线
+#     trade_limit: 3                  # 窗口内止损次数上限
+#     stop_duration_candles: 12       # 暂停 12 根 K 线
+#     only_per_pair: false            # false=全局止损计数
+#   max_drawdown:
+#     enabled: true
+#     lookback_period_candles: 48
+#     trade_limit: 3
+#     max_allowed_drawdown: 0.15      # 总亏损超过 15% 时暂停
+#     stop_duration_candles: 12
+#   low_profit_pairs:
+#     enabled: true
+#     lookback_period_candles: 48
+#     trade_limit: 3
+#     required_profit: 0.0            # 平均不亏损才允许
+#     stop_duration_candles: 12
