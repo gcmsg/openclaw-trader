@@ -131,6 +131,18 @@ export interface RiskConfig {
     /** DCA 最长持续时间（小时），超时停止追加（默认 48h） */
     max_hours: number;
   };
+
+  // ── Kelly 动态仓位（可选）──
+  /** 仓位计算模式：fixed（默认，使用 position_ratio） | kelly（Kelly 公式动态计算） */
+  position_sizing?: "fixed" | "kelly";
+  /** Kelly：参考最近 N 笔平仓（默认 30，样本 < 10 退化到 fixed） */
+  kelly_lookback?: number;
+  /** Kelly：是否使用半 Kelly（默认 true，降低方差） */
+  kelly_half?: boolean;
+  /** Kelly：仓位下限（默认 0.05 = 5%） */
+  kelly_min_ratio?: number;
+  /** Kelly：仓位上限（默认 0.40 = 40%） */
+  kelly_max_ratio?: number;
 }
 
 export interface ExecutionConfig {

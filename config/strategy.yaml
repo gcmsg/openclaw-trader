@@ -67,6 +67,13 @@ signals:
     # 可选出场条件（P0.2 动量衰竭出场）：
     # - macd_histogram_shrinking  # MACD 柱状图连续 3 根收缩（趋势减弱）
     # - rsi_overbought_exit       # RSI > 75 超买止盈（默认75，可设 rsi.overbought_exit）
+  # Kelly 动态仓位（P2.2，需积累 10+ 笔历史再启用）：
+  # position_sizing: "kelly"  # "fixed"（默认）| "kelly"
+  # kelly_lookback: 30        # 参考最近 30 笔平仓
+  # kelly_half: true          # 半 Kelly 降低方差
+  # kelly_min_ratio: 0.05     # 仓位下限 5%
+  # kelly_max_ratio: 0.40     # 仓位上限 40%
+
   # 可选开空辅助条件（P1.5 资金费率逆向）：
   # short:
   #   - funding_rate_overlong     # 资金费率 > +0.30%（多头极度拥挤）→ 逆向做空

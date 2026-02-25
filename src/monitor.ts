@@ -27,6 +27,7 @@ import { classifyRegime } from "./strategy/regime.js";
 import { checkRiskReward } from "./strategy/rr-filter.js";
 import { fetchFundingRatePct } from "./strategy/funding-rate-signal.js";
 import { getBtcDominanceTrend } from "./strategy/btc-dominance.js";
+import { calcKellyRatio } from "./strategy/kelly.js";
 import { loadAccount, calcTotalEquity } from "./paper/account.js";
 import { ping } from "./health/heartbeat.js";
 import { loadRuntimeConfigs } from "./config/loader.js";
@@ -288,7 +289,33 @@ async function scanSymbol(
     if (cfg.mode === "paper") {
       if (!shouldNotify(state, signal, cfg.notify.min_interval_minutes)) return;
 
-      const effectiveRatio = "positionRatio" in gate ? gate.positionRatio : baseForGate;
+      let effectiveRatio = "positionRatio" in gate ? gate.positionRatio : baseForGate;
+
+      // Kelly 动态仓位（仅开仓信号有效）
+      if (
+        cfg.risk.position_sizing === "kelly" &&
+        (signal.type === "buy" || signal.type === "short")
+      ) {
+        try {
+          const histPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../logs/signal-history.jsonl");
+          if (fs.existsSync(histPath)) {
+            const lines = fs.readFileSync(histPath, "utf-8").split("\n").filter(Boolean);
+            const closed = lines
+              .map((l) => { try { return JSON.parse(l) as { status: string; pnlPercent?: number }; } catch { return null; } })
+              .filter((r): r is { status: string; pnlPercent: number } => r?.status === "closed" && r.pnlPercent !== undefined);
+            const kellyResult = calcKellyRatio(closed, {
+              ...(cfg.risk.kelly_lookback !== undefined ? { lookback: cfg.risk.kelly_lookback } : {}),
+              ...(cfg.risk.kelly_half !== undefined ? { half: cfg.risk.kelly_half } : {}),
+              ...(cfg.risk.kelly_min_ratio !== undefined ? { minRatio: cfg.risk.kelly_min_ratio } : {}),
+              ...(cfg.risk.kelly_max_ratio !== undefined ? { maxRatio: cfg.risk.kelly_max_ratio } : {}),
+              fallback: cfg.risk.position_ratio,
+            });
+            log(`${scenarioPrefix}${symbol}: 🎯 Kelly → ${kellyResult.reason}`);
+            effectiveRatio = kellyResult.ratio;
+          }
+        } catch { /* Kelly 计算失败不影响主流程，沿用 effectiveRatio */ }
+      }
+
       const adjustedCfg = { ...cfg, risk: { ...cfg.risk, position_ratio: effectiveRatio } };
       const result = handleSignal(signal, adjustedCfg);
 
