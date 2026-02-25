@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-25T12:45:17.920Z",
+  "generatedAt": "2026-02-25T12:47:46.469Z",
   "stats": [
     {
       "key": "short:short",
@@ -7,22 +7,22 @@
         "short"
       ],
       "signalType": "short",
-      "total": 550,
-      "closed": 330,
-      "open": 220,
-      "wins": 220,
-      "losses": 110,
+      "total": 570,
+      "closed": 342,
+      "open": 228,
+      "wins": 228,
+      "losses": 114,
       "winRate": 0.6666666666666666,
       "avgPnlPct": 0.06666666666666657,
       "avgWinPct": 0.13999999999999976,
       "avgLossPct": 0.07999999999999985,
       "rrRatio": 1.7500000000000004,
-      "avgHoldHours": 6.717171717171717e-7,
-      "totalPnlPct": 21.999999999999968,
+      "avgHoldHours": 6.903833658219618e-7,
+      "totalPnlPct": 22.799999999999965,
       "symbols": [
         "BTCUSDT"
       ],
-      "stopLossCount": 110
+      "stopLossCount": 114
     },
     {
       "key": "buy:buy",
@@ -30,23 +30,23 @@
         "buy"
       ],
       "signalType": "buy",
-      "total": 220,
-      "closed": 110,
-      "open": 110,
-      "wins": 55,
-      "losses": 55,
+      "total": 228,
+      "closed": 114,
+      "open": 114,
+      "wins": 57,
+      "losses": 57,
       "winRate": 0.5,
-      "avgPnlPct": 0.050000000000000065,
+      "avgPnlPct": 0.05000000000000007,
       "avgWinPct": 0.1600000000000001,
       "avgLossPct": 0.060000000000000046,
       "rrRatio": 2.666666666666666,
-      "avgHoldHours": 6.237373737373737e-7,
-      "totalPnlPct": 5.500000000000007,
+      "avgHoldHours": 6.530214424951268e-7,
+      "totalPnlPct": 5.700000000000008,
       "symbols": [
         "ETHUSDT",
         "BTCUSDT"
       ],
-      "stopLossCount": 55
+      "stopLossCount": 57
     }
   ]
 }
