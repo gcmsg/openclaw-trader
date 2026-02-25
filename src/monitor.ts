@@ -25,6 +25,7 @@ import { checkCorrelation } from "./strategy/correlation.js";
 import { calcCorrelationAdjustedSize } from "./strategy/portfolio-risk.js";
 import { classifyRegime } from "./strategy/regime.js";
 import { checkRiskReward } from "./strategy/rr-filter.js";
+import { fetchFundingRatePct } from "./strategy/funding-rate-signal.js";
 import { loadAccount, calcTotalEquity } from "./paper/account.js";
 import { ping } from "./health/heartbeat.js";
 import { loadRuntimeConfigs } from "./config/loader.js";
@@ -129,6 +130,12 @@ async function scanSymbol(
         log(`${scenarioPrefix}${symbol}: MTF 获取失败，跳过趋势过滤 — ${String(err)}`);
       }
     }
+
+    // 资金费率注入（期货/永续合约，带10分钟缓存，失败静默跳过）
+    try {
+      const frPct = await fetchFundingRatePct(symbol);
+      if (frPct !== undefined) indicators.fundingRate = frPct;
+    } catch { /* 资金费率拉取失败不影响主流程 */ }
 
     // 获取当前持仓方向，让 detectSignal 使用正确优先级
     const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);

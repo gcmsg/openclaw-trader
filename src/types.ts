@@ -46,7 +46,8 @@ export interface Indicators {
   prevMaLong?: number;
   macd?: MacdResult;
   atr?: number;  // ATR（平均真实波幅），用于动态仓位和止损距离计算
-  cvd?: number;  // 累计成交量差值（K 线近似：收>开=买盘，收<开=卖盘；正=净买压）
+  cvd?: number;         // 累计成交量差值（K 线近似：收>开=买盘，收<开=卖盘；正=净买压）
+  fundingRate?: number; // 当前资金费率百分比（如 +0.03 = +0.03%/8h，仅期货市场有效）
 }
 
 export interface Signal {
@@ -154,6 +155,11 @@ export interface StrategyConfig {
     rsi: { period: number; oversold: number; overbought: number; overbought_exit?: number };
     macd: { enabled: boolean; fast: number; slow: number; signal: number };
     volume?: { surge_ratio: number; low_ratio: number };
+    /** 资金费率逆向信号阈值（可选，不配置则使用默认值） */
+    funding_rate?: {
+      long_threshold?: number;  // 多头极端阈值 %，默认 0.30
+      short_threshold?: number; // 空头极端阈值 % (绝对值)，默认 0.15
+    };
   };
   signals: {
     buy: string[];

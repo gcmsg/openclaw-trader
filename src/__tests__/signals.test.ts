@@ -563,3 +563,48 @@ describe("cvd_bullish / cvd_bearish", () => {
     expect(sig.type).toBe("none");
   });
 });
+
+// 资金费率逆向信号
+describe("funding_rate_overlong / funding_rate_overshort", () => {
+  it("资金费率 +0.35% > 0.30 时 funding_rate_overlong 触发（开空）", () => {
+    const ind = makeIndicators({ fundingRate: 0.35 });
+    const cfg = makeConfig([], []);
+    cfg.signals.short = ["funding_rate_overlong"];
+    const sig = detectSignal("BTCUSDT", ind, cfg); // 无持仓，触发 short
+    expect(sig.type).toBe("short");
+    expect(sig.reason).toContain("funding_rate_overlong");
+  });
+
+  it("资金费率 -0.20% < -0.15 时 funding_rate_overshort 触发（开多）", () => {
+    const ind = makeIndicators({ fundingRate: -0.20 });
+    const cfg = makeConfig(["funding_rate_overshort"], []);
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("buy");
+    expect(sig.reason).toContain("funding_rate_overshort");
+  });
+
+  it("资金费率在正常范围内时不触发", () => {
+    const ind = makeIndicators({ fundingRate: 0.01 });
+    const cfg = makeConfig(["funding_rate_overshort"], []);
+    cfg.signals.short = ["funding_rate_overlong"];
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("none");
+  });
+
+  it("自定义阈值生效：long_threshold=0.1，rate=0.15 时触发", () => {
+    const ind = makeIndicators({ fundingRate: 0.15 });
+    const cfg = makeConfig([], []);
+    cfg.strategy.funding_rate = { long_threshold: 0.10 };
+    cfg.signals.short = ["funding_rate_overlong"];
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("short");
+  });
+
+  it("fundingRate 未设置时不触发", () => {
+    const ind = makeIndicators();
+    const cfg = makeConfig(["funding_rate_overshort"], []);
+    cfg.signals.short = ["funding_rate_overlong"];
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("none");
+  });
+});

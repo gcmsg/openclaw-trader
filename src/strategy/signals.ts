@@ -94,6 +94,27 @@ const SIGNAL_CHECKERS: Record<string, SignalChecker> = {
     return ind.rsi > threshold;
   },
 
+  // ── 资金费率逆向 ─────────────────────────────────
+  /**
+   * 多头极度拥挤（资金费率超高）→ 逆向做空辅助条件
+   * 默认阈值 +0.30%/8h（可通过 strategy.funding_rate.long_threshold 配置）
+   */
+  funding_rate_overlong: (ind, cfg) => {
+    if (ind.fundingRate === undefined) return false;
+    const threshold = cfg.strategy.funding_rate?.long_threshold ?? 0.30;
+    return ind.fundingRate > threshold;
+  },
+
+  /**
+   * 空头极度拥挤（资金费率极低负值）→ 逆向做多辅助条件
+   * 默认阈值 -0.15%/8h（可通过 strategy.funding_rate.short_threshold 配置）
+   */
+  funding_rate_overshort: (ind, cfg) => {
+    if (ind.fundingRate === undefined) return false;
+    const threshold = cfg.strategy.funding_rate?.short_threshold ?? 0.15;
+    return ind.fundingRate < -threshold;
+  },
+
   // ── CVD 累计成交量差值 ──────────────────────────
   /**
    * CVD 偏多：最近 20 根 K 线净买压为正（买方主导）
