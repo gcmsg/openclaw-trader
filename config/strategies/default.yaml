@@ -33,7 +33,7 @@ signals:
     - ma_bearish           # EMA20 < EMA60（趋势反转，离场）
 
 risk:
-  stop_loss_percent: 5
+  stop_loss_percent: 2.5    # 1h 图快进快出用紧止损（原5% → 2.5%，减少震荡市回撤）
   take_profit_percent: 15
   trailing_stop:
     enabled: true

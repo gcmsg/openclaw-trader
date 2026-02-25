@@ -36,7 +36,7 @@ signals:
     - ma_death_cross       # EMA50 下穿 EMA200（大趋势翻空，离场）
 
 risk:
-  stop_loss_percent: 8    # 止损宽，趋势回调空间大
+  stop_loss_percent: 5    # 4h 图宽止损预设（趋势跟随，给回调空间）
   take_profit_percent: 30 # 目标更高，趋势行情吃大利
   trailing_stop:
     enabled: true

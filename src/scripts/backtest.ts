@@ -14,8 +14,9 @@
  *   --timeframe, -t  K 线周期（覆盖策略配置）
  *   --symbols, -S    监控币种，逗号分隔（覆盖策略配置）
  *   --initial-usdt   初始资金（默认 1000）
- *   --no-save        不保存 JSON 报告文件
- *   --compare        同时运行所有策略并对比结果
+ *   --no-save           不保存 JSON 报告文件
+ *   --compare           同时运行所有策略并对比结果
+ *   --slippage-sweep    滑点敏感性分析（0 / 0.05 / 0.1 / 0.2% 各跑一次对比）
  */
 
 import { fetchHistoricalKlines } from "../backtest/fetcher.js";
@@ -42,6 +43,7 @@ interface CliArgs {
   initialUsdt: number;
   save: boolean;
   compare: boolean;
+  slippageSweep: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -50,6 +52,7 @@ function parseArgs(argv: string[]): CliArgs {
     initialUsdt: 1000,
     save: true,
     compare: false,
+    slippageSweep: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -87,6 +90,9 @@ function parseArgs(argv: string[]): CliArgs {
         break;
       case "--compare":
         args.compare = true;
+        break;
+      case "--slippage-sweep":
+        args.slippageSweep = true;
         break;
       case undefined:
       default:
@@ -302,6 +308,112 @@ async function runCompare(args: CliArgs): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────
+// 滑点敏感性分析
+// ─────────────────────────────────────────────────────
+
+/**
+ * 对同一策略、同一历史数据，以 0 / 0.05 / 0.1 / 0.2% 四种滑点各跑一次回测，
+ * 展示滑点对最终收益、最大回撤、胜率的影响。
+ */
+async function runSlippageSweep(args: CliArgs): Promise<void> {
+  const SLIPPAGE_LEVELS = [0, 0.05, 0.1, 0.2]; // %
+
+  const cfg = buildBacktestConfig(args.strategy, {
+    timeframe: args.timeframe,
+    symbols: args.symbols,
+  });
+
+  const endMs = Date.now();
+  const startMs = endMs - args.days * 86_400_000;
+
+  console.log(`\n📥 获取历史 K 线 (${cfg.symbols.join(",")} × ${cfg.timeframe})...`);
+  const klinesBySymbol: Record<string, Kline[]> = {};
+  for (const symbol of cfg.symbols) {
+    klinesBySymbol[symbol] = await fetchHistoricalKlines(symbol, cfg.timeframe, startMs, endMs);
+  }
+
+  let trendKlines: Record<string, Kline[]> | undefined;
+  if (cfg.trend_timeframe) {
+    trendKlines = {};
+    for (const symbol of cfg.symbols) {
+      trendKlines[symbol] = await fetchHistoricalKlines(
+        symbol,
+        cfg.trend_timeframe,
+        startMs,
+        endMs
+      );
+    }
+  }
+
+  console.log(`\n🔬 滑点敏感性分析 — 策略：${cfg.strategy.name}  |  ${args.days}天`);
+  console.log(`   标准滑点（市价单）：0.05%  |  手续费：0.1%`);
+
+  const results: {
+    slippage: number;
+    returnPct: number;
+    maxDD: number;
+    trades: number;
+    winRate: number;
+    totalReturn: number;
+  }[] = [];
+
+  for (const slip of SLIPPAGE_LEVELS) {
+    const result = runBacktest(klinesBySymbol, cfg, {
+      initialUsdt: args.initialUsdt,
+      feeRate: 0.001,
+      slippagePercent: slip,
+    }, trendKlines);
+    results.push({
+      slippage: slip,
+      returnPct: result.metrics.totalReturnPercent,
+      maxDD: result.metrics.maxDrawdown,
+      trades: result.metrics.totalTrades,
+      winRate: result.metrics.winRate * 100,
+      totalReturn: result.metrics.totalReturn,
+    });
+  }
+
+  // 输出表格
+  console.log("\n");
+  console.log("━".repeat(72));
+  console.log("📉 滑点敏感性分析结果");
+  console.log("━".repeat(72));
+  console.log(
+    `${"滑点 %".padEnd(10)} ${"总收益率".padStart(10)} ${"净盈亏".padStart(11)} ${"最大回撤".padStart(10)} ${"笔数".padStart(6)} ${"胜率".padStart(7)}`
+  );
+  console.log("─".repeat(72));
+
+  for (const r of results) {
+    const isStd = r.slippage === 0.05;
+    const marker = isStd ? "  ← 标准" : "";
+    const sign = r.returnPct >= 0 ? "+" : "";
+    const emoji = r.returnPct > 5 ? "🟢" : r.returnPct > 0 ? "🟡" : "🔴";
+    const pnlSign = r.totalReturn >= 0 ? "+" : "";
+    console.log(
+      `${emoji} ${(r.slippage.toFixed(2) + "%").padEnd(10)} ` +
+      `${(sign + r.returnPct.toFixed(2) + "%").padStart(10)} ` +
+      `${(pnlSign + r.totalReturn.toFixed(2)).padStart(11)} ` +
+      `${("-" + r.maxDD.toFixed(2) + "%").padStart(10)} ` +
+      `${String(r.trades).padStart(6)} ` +
+      `${(r.winRate.toFixed(1) + "%").padStart(7)}${marker}`
+    );
+  }
+  console.log("━".repeat(72));
+
+  // 额外显示：滑点 0% vs 0.05% 的影响评估
+  const base = results[0];
+  const std = results.find((r) => r.slippage === 0.05);
+  if (base && std) {
+    const diff = std.returnPct - base.returnPct;
+    const trades = std.trades;
+    console.log(`\n💡 滑点 0% → 0.05%：收益率变化 ${diff.toFixed(2)}%（${trades} 笔交易）`);
+    console.log(
+      `   滑点影响：${Math.abs(diff) < 1 ? "较小（<1%），策略稳健" : Math.abs(diff) < 3 ? "中等（1-3%），可接受" : "显著（>3%），需减少交易频次"}`
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────
 // 主入口
 // ─────────────────────────────────────────────────────
 
@@ -311,7 +423,9 @@ async function main(): Promise<void> {
   console.log("🚀 openclaw-trader 回测引擎");
   console.log(`   初始资金: $${args.initialUsdt}  |  回测天数: ${args.days}d`);
 
-  if (args.compare) {
+  if (args.slippageSweep) {
+    await runSlippageSweep(args);
+  } else if (args.compare) {
     await runCompare(args);
   } else {
     await runOne(args.strategy, args);
