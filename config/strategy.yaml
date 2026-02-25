@@ -153,6 +153,10 @@ schedule:
     enabled: true
     cron: "*/30 * * * *"
     timeout_minutes: 35
+  watchdog:
+    enabled: true
+    cron: "*/5 * * * *"   # 每 5 分钟检查一次 price_monitor 是否还活着
+    timeout_minutes: 10
 
 # ───────────────────────────────────────
 # 运行模式
