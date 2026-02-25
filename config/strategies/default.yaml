@@ -92,3 +92,16 @@ risk:
 #     trade_limit: 3
 #     required_profit: 0.0            # 平均不亏损才允许
 #     stop_duration_candles: 12
+
+# G4 增强型 Trailing Stop（仿 Freqtrade trailing_stop_positive_offset）
+# trailing_stop 基础配置在上方 risk 节中已有
+# 以下为 positive trailing offset 扩展配置（可选）：
+#
+# risk:
+#   trailing_stop:
+#     enabled: true
+#     activation_percent: 2       # 盈利 2% 后激活追踪
+#     callback_percent: 5         # 基础回撤幅度 5%
+#   trailing_stop_positive: 0.02          # 激活后切换为 2% 更紧 trailing
+#   trailing_stop_positive_offset: 0.03  # 盈利超过 3% 时激活 positive trailing
+#   trailing_only_offset_is_reached: true # offset 达到前不激活 trailing（Freqtrade 默认行为）

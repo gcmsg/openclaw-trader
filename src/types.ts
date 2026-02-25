@@ -101,6 +101,23 @@ export interface RiskConfig {
     max_position_ratio: number;     // 仓位上限（防 ATR 极小时过重仓，如 0.3）
   };
 
+  // ── 增强型 Trailing Stop（Freqtrade-inspired，可选）──
+  /**
+   * trailing_stop_positive: 盈利激活后使用更紧的 trailing 幅度（如 0.02 = 2%）
+   * 替代 trailing_stop.callback_percent（仅当盈利超过 trailing_stop_positive_offset 后）
+   */
+  trailing_stop_positive?: number;
+  /**
+   * trailing_stop_positive_offset: 盈利超过此值后激活 positive trailing（如 0.02 = 2% 盈利）
+   * 默认不配置 = 不使用 positive trailing
+   */
+  trailing_stop_positive_offset?: number;
+  /**
+   * trailing_only_offset_is_reached: 仅在 offset 达到后才激活 trailing（true = Freqtrade 默认）
+   * false = 立即激活 trailing（不等待 offset）
+   */
+  trailing_only_offset_is_reached?: boolean;
+
   // ── 分批止盈（可选，配合 take_profit_percent 使用）──
   take_profit_stages?: TakeProfitStage[];
 

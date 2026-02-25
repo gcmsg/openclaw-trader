@@ -357,16 +357,46 @@ export function checkExitConditions(
       exitReason = "take_profit";
       exitLabel = `止盈触发：盈利 ${pnlPercent.toFixed(2)}%`;
     } else if (cfg.risk.trailing_stop.enabled) {
-      const shouldExit = updateTrailingStop(pos, currentPrice, {
-        activationPercent: cfg.risk.trailing_stop.activation_percent,
-        callbackPercent: cfg.risk.trailing_stop.callback_percent,
-      });
-      if (shouldExit) {
-        exitReason = "trailing_stop";
-        const dirLabel = isShort
-          ? `从最低价反弹 ${cfg.risk.trailing_stop.callback_percent}%`
-          : `从最高价回撤 ${cfg.risk.trailing_stop.callback_percent}%`;
-        exitLabel = `追踪止损触发：${dirLabel}`;
+      // ── G4 增强型 Trailing Stop（仿 Freqtrade）────────────────
+      // positive trailing：盈利达到 offset 后切换为更紧的 trailing 幅度
+      const positivePct = cfg.risk.trailing_stop_positive;
+      const positiveOffset = cfg.risk.trailing_stop_positive_offset;
+      const onlyOffset = cfg.risk.trailing_only_offset_is_reached;
+
+      // 检查是否应激活 positive trailing
+      if (positivePct !== undefined && positiveOffset !== undefined) {
+        const offsetPct = positiveOffset * 100; // 如 0.02 → 2%
+        if (!pos.trailingStopActivated && pnlPercent >= offsetPct) {
+          pos.trailingStopActivated = true;
+        }
+      }
+
+      // trailing_only_offset_is_reached=true + offset 未达到 → 跳过 trailing
+      const skipTrailing =
+        onlyOffset === true &&
+        positivePct !== undefined &&
+        positiveOffset !== undefined &&
+        !pos.trailingStopActivated;
+
+      if (!skipTrailing) {
+        // 使用 positive trailing 幅度（已激活）或原始 callback_percent
+        const callbackPct =
+          pos.trailingStopActivated && positivePct !== undefined
+            ? positivePct * 100
+            : cfg.risk.trailing_stop.callback_percent;
+
+        const shouldExit = updateTrailingStop(pos, currentPrice, {
+          activationPercent: cfg.risk.trailing_stop.activation_percent,
+          callbackPercent: callbackPct,
+        });
+        if (shouldExit) {
+          exitReason = "trailing_stop";
+          const dirLabel = isShort
+            ? `从最低价反弹 ${callbackPct.toFixed(1)}%`
+            : `从最高价回撤 ${callbackPct.toFixed(1)}%`;
+          const positiveLabel = pos.trailingStopActivated ? "（positive trailing）" : "";
+          exitLabel = `追踪止损触发${positiveLabel}：${dirLabel}`;
+        }
       }
     }
 

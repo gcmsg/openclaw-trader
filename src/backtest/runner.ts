@@ -43,6 +43,8 @@ interface BacktestPosition {
     lowestPrice?: number; // 空头：持仓最低价
     stopPrice: number;
   };
+  /** G4: positive trailing 是否已激活（仿 Freqtrade trailing_stop_positive_offset）*/
+  trailingStopActivated?: boolean;
   // 资金费率追踪（Futures 专用）
   lastFundingTs?: number;    // 上次资金费率结算时间（毫秒）
   totalFundingPaid?: number; // 累计已付资金费（正=付出，负=收入）
@@ -343,6 +345,39 @@ function updateTrailingStop(
   const ts = pos.trailingStop;
   const { activation_percent, callback_percent } = cfg.risk.trailing_stop;
 
+  // ── G4 增强型 Trailing Stop：positive trailing offset ──────────
+  const positivePct = cfg.risk.trailing_stop_positive;
+  const positiveOffset = cfg.risk.trailing_stop_positive_offset;
+  const onlyOffset = cfg.risk.trailing_only_offset_is_reached;
+
+  // 当前盈亏%（逐根 K 线用 high/low 模拟）
+  const pnlPct = pos.side === "short"
+    ? ((pos.entryPrice - low) / pos.entryPrice) * 100   // 空头：用最优价（最低价）
+    : ((high - pos.entryPrice) / pos.entryPrice) * 100; // 多头：用最优价（最高价）
+
+  // 检查是否应激活 positive trailing
+  if (positivePct !== undefined && positiveOffset !== undefined) {
+    const offsetPct = positiveOffset * 100;
+    if (!pos.trailingStopActivated && pnlPct >= offsetPct) {
+      pos.trailingStopActivated = true;
+    }
+  }
+
+  // trailing_only_offset_is_reached=true + offset 未达到 → 跳过 trailing
+  const skipTrailing =
+    onlyOffset === true &&
+    positivePct !== undefined &&
+    positiveOffset !== undefined &&
+    !pos.trailingStopActivated;
+
+  if (skipTrailing) return false;
+
+  // 使用 positive trailing 幅度（已激活）或原始 callback_percent
+  const activeCallbackPct =
+    pos.trailingStopActivated && positivePct !== undefined
+      ? positivePct * 100
+      : callback_percent;
+
   if (pos.side === "short") {
     // 空头：追踪最低价，从低点反弹时平仓
     ts.lowestPrice ??= pos.entryPrice;
@@ -351,7 +386,7 @@ function updateTrailingStop(
     const gainPct = ((pos.entryPrice - lowestPrice) / pos.entryPrice) * 100;
     if (!ts.active && gainPct >= activation_percent) ts.active = true;
     if (ts.active) {
-      ts.stopPrice = lowestPrice * (1 + callback_percent / 100);
+      ts.stopPrice = lowestPrice * (1 + activeCallbackPct / 100);
       return high >= ts.stopPrice; // 高价触碰止损价，平空
     }
   } else {
@@ -360,7 +395,7 @@ function updateTrailingStop(
     const gainPct = ((ts.highestPrice - pos.entryPrice) / pos.entryPrice) * 100;
     if (!ts.active && gainPct >= activation_percent) ts.active = true;
     if (ts.active) {
-      ts.stopPrice = ts.highestPrice * (1 - callback_percent / 100);
+      ts.stopPrice = ts.highestPrice * (1 - activeCallbackPct / 100);
       return low <= ts.stopPrice; // 低价触碰止损价，平多
     }
   }
