@@ -19,6 +19,7 @@ import { calculateIndicators } from "../strategy/indicators.js";
 import { detectSignal } from "../strategy/signals.js";
 import { loadStrategyConfig, loadPaperConfig, buildPaperRuntime } from "../config/loader.js";
 import { createLiveExecutor } from "../live/executor.js";
+import { reconcilePositions, formatReconcileReport } from "../live/reconcile.js";
 import { loadNewsReport, evaluateSentimentGate } from "../news/sentiment-gate.js";
 import { notifySignal, notifyError } from "../notify/openclaw.js";
 import { loadAccount } from "../paper/account.js";
@@ -177,6 +178,22 @@ async function main(): Promise<void> {
     }
     const balance = await executor.syncBalance();
     log(`✅ ${scenario.id} [${label}]: 连接正常，USDT 余额 = $${balance.toFixed(2)}`);
+
+    // ── 启动对账（P3.3）──────────────────────────────
+    // 比对本地 paper 账户与交易所实际持仓，差异超 5% 告警
+    // Testnet/paper 模式下交易所无真实持仓，预期结果为 ok
+    try {
+      const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+      const reconcile = reconcilePositions(account, []); // exchangePositions = [] (API 集成待扩展)
+      const report = formatReconcileReport(reconcile);
+      log(report.replace(/\*\*/g, "")); // 去除 markdown，在终端更易读
+      if (reconcile.status === "critical") {
+        console.error(`\n⛔ 对账发现严重差异，暂停启动，请人工确认后重启！`);
+        process.exit(1);
+      }
+    } catch (err: unknown) {
+      log(`⚠️ 对账跳过：${String(err)}`);
+    }
   }
 
   // 轮询循环
