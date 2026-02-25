@@ -45,7 +45,8 @@ export interface Indicators {
   prevMaShort?: number;
   prevMaLong?: number;
   macd?: MacdResult;
-  atr?: number; // ATR（平均真实波幅），用于动态仓位和止损距离计算
+  atr?: number;  // ATR（平均真实波幅），用于动态仓位和止损距离计算
+  cvd?: number;  // 累计成交量差值（K 线近似：收>开=买盘，收<开=卖盘；正=净买压）
 }
 
 export interface Signal {

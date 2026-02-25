@@ -190,3 +190,72 @@ describe("rsi() — Wilder 平滑特性", () => {
     expect(rsi(closes, 14)).toBe(0);
   });
 });
+
+// ─────────────────────────────────────────────────────
+// CVD 累计成交量差值
+// ─────────────────────────────────────────────────────
+
+describe("calculateIndicators — CVD", () => {
+  function makeKlinesOhlcv(
+    bars: { open: number; close: number; volume: number }[]
+  ): Kline[] {
+    return bars.map((b, i) => ({
+      openTime: i * 3600_000,
+      open: b.open,
+      high: Math.max(b.open, b.close) * 1.002,
+      low: Math.min(b.open, b.close) * 0.998,
+      close: b.close,
+      volume: b.volume,
+      closeTime: (i + 1) * 3600_000,
+    }));
+  }
+
+  it("全为涨 K 线时 CVD 为正", () => {
+    // 70 根全涨（满足 maLongPeriod=60）
+    const bars = Array.from({ length: 70 }, (_, i) => ({
+      open: 100 + i,
+      close: 101 + i,   // close > open → +volume
+      volume: 1000,
+    }));
+    const ind = calculateIndicators(makeKlinesOhlcv(bars), 20, 60, 14);
+    expect(ind?.cvd).toBeGreaterThan(0);
+  });
+
+  it("全为跌 K 线时 CVD 为负", () => {
+    const bars = Array.from({ length: 70 }, (_, i) => ({
+      open: 200 - i,
+      close: 199 - i,   // close < open → -volume
+      volume: 1000,
+    }));
+    const ind = calculateIndicators(makeKlinesOhlcv(bars), 20, 60, 14);
+    expect(ind?.cvd).toBeLessThan(0);
+  });
+
+  it("买盘多于卖盘时 CVD 为正", () => {
+    // 15 根涨（+1500）+ 5 根跌（-500）= +1000
+    const bars = [
+      ...Array.from({ length: 15 }, () => ({ open: 100, close: 101, volume: 100 })),
+      ...Array.from({ length: 5 }, () => ({ open: 101, close: 100, volume: 100 })),
+    ];
+    // 需要 70 根（maLongPeriod=60），用定值填充前面
+    const warmup = Array.from({ length: 50 }, () => ({ open: 100, close: 101, volume: 0 }));
+    const ind = calculateIndicators(makeKlinesOhlcv([...warmup, ...bars]), 20, 60, 14);
+    expect(ind?.cvd).toBeGreaterThan(0);
+  });
+
+  it("cvd 字段始终存在于 calculateIndicators 结果", () => {
+    const closes = Array.from({ length: 70 }, (_, i) => 100 + i);
+    const klines = closes.map((c, i) => ({
+      openTime: i * 3600_000,
+      open: c,
+      high: c * 1.01,
+      low: c * 0.99,
+      close: c,
+      volume: 1000,
+      closeTime: (i + 1) * 3600_000,
+    }));
+    const ind = calculateIndicators(klines, 20, 60, 14);
+    expect(ind).not.toBeNull();
+    expect(ind?.cvd).toBeDefined();
+  });
+});

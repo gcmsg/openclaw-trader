@@ -94,6 +94,19 @@ const SIGNAL_CHECKERS: Record<string, SignalChecker> = {
     return ind.rsi > threshold;
   },
 
+  // ── CVD 累计成交量差值 ──────────────────────────
+  /**
+   * CVD 偏多：最近 20 根 K 线净买压为正（买方主导）
+   * 用于过滤假突破：价格上涨 + CVD 上升 = 真实买盘支撑
+   */
+  cvd_bullish: (ind) => (ind.cvd ?? 0) > 0,
+
+  /**
+   * CVD 偏空：最近 20 根 K 线净卖压为负（卖方主导）
+   * 用于过滤假跌：价格下跌 + CVD 下降 = 真实卖压存在
+   */
+  cvd_bearish: (ind) => (ind.cvd ?? 0) < 0,
+
   // ── 成交量 ──────────────────────────────────────
   /** 成交量放量（当前 > 均量 1.5 倍） */
   volume_surge: (ind, cfg) => {

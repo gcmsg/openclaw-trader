@@ -275,5 +275,14 @@ export function calculateIndicators(
   const atrValue = atr(klines, 14);
   if (!isNaN(atrValue)) result.atr = atrValue;
 
+  // 累计成交量差值 CVD（K 线近似）
+  // 收盘 > 开盘 → 买盘主导（+volume）；收盘 < 开盘 → 卖盘主导（-volume）
+  // 累加最近 20 根 K 线，正数 = 净买压，负数 = 净卖压
+  const cvdLookback = 20;
+  const cvdWindow = klines.slice(-cvdLookback);
+  result.cvd = cvdWindow.reduce((sum, k) => {
+    return sum + (k.close >= k.open ? k.volume : -k.volume);
+  }, 0);
+
   return result;
 }

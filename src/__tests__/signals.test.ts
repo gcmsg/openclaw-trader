@@ -521,3 +521,45 @@ describe("rsi_overbought_exit", () => {
     expect(sig.type).toBe("none");
   });
 });
+
+// CVD 信号条件
+describe("cvd_bullish / cvd_bearish", () => {
+  it("cvd > 0 时 cvd_bullish 单独作为 buy 条件，无持仓触发 buy", () => {
+    const ind = makeIndicators({ cvd: 5000 });
+    const cfg = makeConfig(["cvd_bullish"], []);
+    // cvd_bullish=true → buy 信号触发
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    // cvd > 0 → cvd_bullish = true → buy
+    expect(sig.type).toBe("buy");
+  });
+
+  it("cvd_bullish 作为买入辅助条件（和 ma_bullish 组合）", () => {
+    const ind = makeIndicators({ maShort: 110, maLong: 100, cvd: 5000, rsi: 50 });
+    const cfg = makeConfig(["ma_bullish", "cvd_bullish"], []);
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("buy");
+    expect(sig.reason).toContain("cvd_bullish");
+  });
+
+  it("cvd < 0 时 cvd_bearish 作为卖出条件（持多头）", () => {
+    const ind = makeIndicators({ cvd: -3000 });
+    const cfg = makeConfig([], ["cvd_bearish"]);
+    const sig = detectSignal("BTCUSDT", ind, cfg, "long");
+    expect(sig.type).toBe("sell");
+    expect(sig.reason).toContain("cvd_bearish");
+  });
+
+  it("cvd = 0 时 cvd_bullish 不触发", () => {
+    const ind = makeIndicators({ cvd: 0 });
+    const cfg = makeConfig(["cvd_bullish"], []);
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("none");
+  });
+
+  it("cvd 未定义时 cvd_bullish 不触发（默认 0）", () => {
+    const ind = makeIndicators(); // 无 cvd 字段
+    const cfg = makeConfig(["cvd_bullish"], []);
+    const sig = detectSignal("BTCUSDT", ind, cfg);
+    expect(sig.type).toBe("none");
+  });
+});
