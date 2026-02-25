@@ -19,8 +19,15 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOG_FILE = path.resolve(__dirname, "../../logs/signal-history.jsonl");
-const INDEX_FILE = path.resolve(__dirname, "../../logs/signal-index.json");
+
+// 测试环境使用隔离路径，避免污染生产数据
+const IS_TEST = process.env["VITEST"] === "true" || process.env["NODE_ENV"] === "test";
+const LOG_FILE = IS_TEST
+  ? path.resolve(__dirname, "../../logs/signal-history-test.jsonl")
+  : path.resolve(__dirname, "../../logs/signal-history.jsonl");
+const INDEX_FILE = IS_TEST
+  ? path.resolve(__dirname, "../../logs/signal-index-test.json")
+  : path.resolve(__dirname, "../../logs/signal-index.json");
 
 // ─────────────────────────────────────────────────────
 // Types

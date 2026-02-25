@@ -22,7 +22,9 @@ import { createLiveExecutor } from "../live/executor.js";
 import { reconcilePositions, formatReconcileReport } from "../live/reconcile.js";
 import { loadNewsReport, evaluateSentimentGate } from "../news/sentiment-gate.js";
 import { notifySignal, notifyError } from "../notify/openclaw.js";
-import { loadAccount } from "../paper/account.js";
+import { loadAccount, saveAccount } from "../paper/account.js";
+import { logSignal, closeSignal } from "../signals/history.js";
+import { readEmergencyHalt } from "../news/emergency-monitor.js";
 import type { RuntimeConfig } from "../types.js";
 
 const POLL_INTERVAL_MS = 60 * 1000; // 1 分钟轮询
@@ -89,18 +91,53 @@ async function processSymbol(symbol: string, cfg: RuntimeConfig): Promise<void> 
   );
 
   if (signal.type === "buy") {
+    // 紧急暂停检查
+    const emergency = readEmergencyHalt();
+    if (emergency.halt) {
+      log(`${label} ${symbol}: ⛔ 紧急暂停 — ${emergency.reason ?? "突发高危新闻"}`);
+      return;
+    }
     if (cfg.notify.on_signal) notifySignal(signal);
     const result = await executor.handleBuy(signal);
     if (result.skipped) {
       log(`${label} ${symbol}: 跳过 — ${result.skipped}`);
     } else if (result.trade) {
       log(`${label} ${symbol}: 买入成功，orderId=${result.orderId ?? "N/A"}`);
+      // 记录信号历史
+      try {
+        const sigId = logSignal({
+          symbol,
+          type: "buy",
+          entryPrice: result.trade.price,
+          conditions: {
+            maShort: indicators.maShort,
+            maLong: indicators.maLong,
+            rsi: indicators.rsi,
+            ...(indicators.atr !== undefined && { atr: indicators.atr }),
+            triggeredRules: signal.reason,
+          },
+          scenarioId: cfg.paper.scenarioId,
+          source: "live",
+        });
+        // 把 signalHistoryId 写回 paper 账户持仓
+        const acc = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+        if (acc.positions[symbol]) {
+          acc.positions[symbol].signalHistoryId = sigId;
+          saveAccount(acc, cfg.paper.scenarioId);
+        }
+      } catch { /* 不影响主流程 */ }
     }
   } else if (signal.type === "sell") {
     const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+    const sigHistId = account.positions[symbol]?.signalHistoryId;
     if (account.positions[symbol]) {
       const result = await executor.handleSell(symbol, signal.price, signal.reason.join(", "));
-      if (result.trade) log(`${label} ${symbol}: 卖出成功，orderId=${result.orderId ?? "N/A"}`);
+      if (result.trade) {
+        log(`${label} ${symbol}: 卖出成功，orderId=${result.orderId ?? "N/A"}`);
+        if (sigHistId) {
+          try { closeSignal(sigHistId, result.trade.price, "signal", result.trade.pnl); } catch { /* skip */ }
+        }
+      }
     }
   }
 }
@@ -122,9 +159,22 @@ async function checkExits(cfg: RuntimeConfig): Promise<void> {
     } catch (_e: unknown) { /* 忽略单个 symbol 的价格获取失败 */ }
   }
 
+  const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
   const exits = await executor.checkExitConditions(prices);
   for (const e of exits) {
     log(`${label} ${e.symbol}: 触发出场 — ${e.reason} (${e.pnlPercent.toFixed(2)}%)`);
+    // 关闭信号历史记录
+    const sigHistId = account.positions[e.symbol]?.signalHistoryId;
+    if (sigHistId) {
+      try {
+        const exitReason = e.reason.includes("止损") ? "stop_loss"
+          : e.reason.includes("止盈") || e.reason.includes("take_profit") ? "take_profit"
+          : e.reason.includes("trailing") || e.reason.includes("追踪") ? "trailing_stop"
+          : e.reason.includes("time") || e.reason.includes("时间") ? "time_stop"
+          : "signal";
+        closeSignal(sigHistId, e.trade.price, exitReason, e.trade.pnl);
+      } catch { /* skip */ }
+    }
     if (cfg.notify.on_stop_loss || cfg.notify.on_take_profit) {
       notifySignal({
         symbol: e.symbol,
