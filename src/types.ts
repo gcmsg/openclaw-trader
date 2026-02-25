@@ -143,6 +143,15 @@ export interface RiskConfig {
   kelly_min_ratio?: number;
   /** Kelly：仓位上限（默认 0.40 = 40%） */
   kelly_max_ratio?: number;
+
+  // ── ROI Table 时间衰减止盈（可选，优先于固定 take_profit_percent）──
+  /**
+   * 持仓时间（分钟）→ 最低盈利比率（0.05 = 5%）的映射表。
+   * 规则：找到 key ≤ 当前持仓分钟的最大 key，对应的 value 即为当前止盈目标。
+   * 示例：{ "0": 0.08, "60": 0.04, "120": 0.02, "480": 0 }
+   * 若不配置则回退到固定 take_profit_percent。
+   */
+  minimal_roi?: Record<string, number>;
 }
 
 export interface ExecutionConfig {

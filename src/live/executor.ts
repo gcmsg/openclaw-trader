@@ -25,6 +25,7 @@ import {
   type PaperAccount,
 } from "../paper/account.js";
 import { calcAtrPositionSize } from "../strategy/indicators.js";
+import { checkMinimalRoi } from "../strategy/roi-table.js";
 import type { ExitReason } from "../paper/engine.js";
 import type { ExchangePosition } from "./reconcile.js";
 
@@ -577,12 +578,29 @@ export class LiveExecutor {
       const hitStopLoss = isShort ? currentPrice >= pos.stopLoss : currentPrice <= pos.stopLoss;
       const hitTakeProfit = isShort ? currentPrice <= pos.takeProfit : currentPrice >= pos.takeProfit;
 
+      // ── ROI Table 时间衰减止盈（本地轮询兜底）──
+      const roiTable = this.cfg.risk.minimal_roi;
+      const hitRoiTable =
+        roiTable !== undefined &&
+        Object.keys(roiTable).length > 0 &&
+        (() => {
+          const holdMs = Date.now() - pos.entryTime;
+          const profitRatio = isShort
+            ? (pos.entryPrice - currentPrice) / pos.entryPrice
+            : (currentPrice - pos.entryPrice) / pos.entryPrice;
+          return checkMinimalRoi(roiTable, holdMs, profitRatio);
+        })();
+
       let exitReason: ExitReason | null = null;
       let exitLabel = "";
 
       if (hitStopLoss) {
         exitReason = "stop_loss";
         exitLabel = `[本地轮询] 止损触发：亏损 ${Math.abs(pnlPercent).toFixed(2)}%（止损价 $${pos.stopLoss.toFixed(4)}）`;
+      } else if (hitRoiTable) {
+        exitReason = "take_profit";
+        const holdMin = Math.round((Date.now() - pos.entryTime) / 60_000);
+        exitLabel = `[本地轮询] ROI Table 止盈：持仓 ${holdMin}min，盈利 ${pnlPercent.toFixed(2)}%`;
       } else if (hitTakeProfit) {
         exitReason = "take_profit";
         exitLabel = `[本地轮询] 止盈触发：盈利 ${pnlPercent.toFixed(2)}%（止盈价 $${pos.takeProfit.toFixed(4)}）`;

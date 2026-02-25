@@ -13,6 +13,7 @@ import { detectSignal } from "../strategy/signals.js";
 import { classifyRegime } from "../strategy/regime.js";
 import { checkRiskReward } from "../strategy/rr-filter.js";
 import { checkCorrelation } from "../strategy/correlation.js";
+import { getMinimalRoiThreshold } from "../strategy/roi-table.js";
 import type { Kline, StrategyConfig } from "../types.js";
 import {
   calculateMetrics,
@@ -578,10 +579,27 @@ export function runBacktest(
 
       const trailingTriggered = updateTrailingStop(pos, kline.high, kline.low, cfg);
 
+      // ── ROI Table 检查（回测：按 K 线开收盘价估算是否触发）──
+      const roiTable = cfg.risk.minimal_roi;
+      const roiThreshold =
+        roiTable !== undefined && Object.keys(roiTable).length > 0
+          ? getMinimalRoiThreshold(roiTable, time - pos.entryTime)
+          : null;
+
       if (pos.side === "short") {
         // ── 空头出场（止损=涨破，止盈=跌破）──
         if (kline.high >= pos.stopLoss) {
           doCoverShort(account, sym, pos.stopLoss, time, "stop_loss", legacyOpts);
+        } else if (
+          roiThreshold !== null &&
+          (() => {
+            const roiPrice = pos.entryPrice * (1 - roiThreshold);
+            return kline.low <= roiPrice;
+          })()
+        ) {
+          // ROI Table 触发：用 ROI 目标价或当前收盘价（取保守值）
+          const roiPrice = pos.entryPrice * (1 - roiThreshold);
+          doCoverShort(account, sym, Math.max(roiPrice, kline.close), time, "take_profit", legacyOpts);
         } else if (kline.low <= pos.takeProfit) {
           doCoverShort(account, sym, pos.takeProfit, time, "take_profit", legacyOpts);
         } else if (trailingTriggered && pos.trailingStop?.stopPrice) {
@@ -591,6 +609,16 @@ export function runBacktest(
         // ── 多头出场（止损=跌破，止盈=涨破）──
         if (kline.low <= pos.stopLoss) {
           doSell(account, sym, pos.stopLoss, time, "stop_loss", legacyOpts);
+        } else if (
+          roiThreshold !== null &&
+          (() => {
+            const roiPrice = pos.entryPrice * (1 + roiThreshold);
+            return kline.high >= roiPrice;
+          })()
+        ) {
+          // ROI Table 触发：用 ROI 目标价（保守取较低值）
+          const roiPrice = pos.entryPrice * (1 + roiThreshold);
+          doSell(account, sym, Math.min(roiPrice, kline.close), time, "take_profit", legacyOpts);
         } else if (kline.high >= pos.takeProfit) {
           doSell(account, sym, pos.takeProfit, time, "take_profit", legacyOpts);
         } else if (trailingTriggered && pos.trailingStop?.stopPrice) {

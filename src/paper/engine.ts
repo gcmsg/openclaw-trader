@@ -6,6 +6,7 @@
 
 import type { Signal, RuntimeConfig } from "../types.js";
 import { calcAtrPositionSize } from "../strategy/indicators.js";
+import { checkMinimalRoi } from "../strategy/roi-table.js";
 import { logSignal, closeSignal } from "../signals/history.js";
 import {
   loadAccount,
@@ -332,9 +333,26 @@ export function checkExitConditions(
       ? currentPrice <= pos.takeProfit  // 空头：价格下跌到止盈线
       : currentPrice >= pos.takeProfit; // 多头：价格上涨到止盈线
 
+    // ── ROI Table：时间衰减止盈（优先于固定止盈，依赖持仓时长）──
+    const roiTable = cfg.risk.minimal_roi;
+    const hitRoiTable =
+      roiTable !== undefined &&
+      Object.keys(roiTable).length > 0 &&
+      (() => {
+        const holdMs = Date.now() - pos.entryTime;
+        const profitRatio = isShort
+          ? (pos.entryPrice - currentPrice) / pos.entryPrice
+          : (currentPrice - pos.entryPrice) / pos.entryPrice;
+        return checkMinimalRoi(roiTable, holdMs, profitRatio);
+      })();
+
     if (hitStopLoss) {
       exitReason = "stop_loss";
       exitLabel = `止损触发：亏损 ${Math.abs(pnlPercent).toFixed(2)}%`;
+    } else if (hitRoiTable) {
+      exitReason = "take_profit";
+      const holdMin = Math.round((Date.now() - pos.entryTime) / 60_000);
+      exitLabel = `ROI Table 止盈：持仓 ${holdMin}min，盈利 ${pnlPercent.toFixed(2)}%`;
     } else if (hitTakeProfit) {
       exitReason = "take_profit";
       exitLabel = `止盈触发：盈利 ${pnlPercent.toFixed(2)}%`;

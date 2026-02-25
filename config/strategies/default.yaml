@@ -36,6 +36,13 @@ risk:
   min_rr: 1.5               # R:R ≥ 1.5 才开仓（盈利空间 ≥ 1.5× 止损空间）
   stop_loss_percent: 2.5    # 1h 图快进快出用紧止损（原5% → 2.5%，减少震荡市回撤）
   take_profit_percent: 15
+  # ROI Table 时间衰减止盈（启用后优先于 take_profit_percent）
+  # 持仓越久目标越低，避免"涨了又跌回来"。参考 Freqtrade minimal_roi 设计。
+  # minimal_roi:
+  #   "0":   0.08   # 0min：等 8% 再走
+  #   "60":  0.04   # 1h：4% 就走
+  #   "120": 0.02   # 2h：2% 就走
+  #   "480": 0.00   # 8h：保本就走（0 = 任意正盈利即出场）
   trailing_stop:
     enabled: true
     activation_percent: 8
