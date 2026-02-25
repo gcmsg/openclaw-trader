@@ -35,11 +35,13 @@
   },
   "dependencies": {
     "axios": "^1.7.0",
+    "better-sqlite3": "^12.6.2",
     "technicalindicators": "^3.1.0",
     "yaml": "^2.4.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "eslint": "^9.39.3",
     "eslint-config-prettier": "^10.1.8",

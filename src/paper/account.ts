@@ -44,6 +44,11 @@ export interface PaperPosition {
   // 信号历史数据库 ID（用于平仓时回写结果）
   signalHistoryId?: string;
   /**
+   * SQLite 数据库中的 trade ID（G5）
+   * 开仓时由 db.insertTrade() 返回，平仓时用于 db.closeTrade() 关联
+   */
+  dbId?: number;
+  /**
    * Positive Trailing Stop 是否已激活（G4：仿 Freqtrade trailing_stop_positive_offset）
    * 当持仓盈利超过 trailing_stop_positive_offset 后设为 true，
    * 此后使用 trailing_stop_positive 作为 trailing 幅度（更紧）

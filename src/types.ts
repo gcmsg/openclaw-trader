@@ -358,6 +358,8 @@ export interface RuntimeConfig extends StrategyConfig {
     fee_rate: number;
     slippage_percent: number;
     report_interval_hours: number;
+    /** G5: 启用 SQLite 持久化（更换 better-sqlite3 记录开/平仓，config.paper.use_sqlite: true）*/
+    use_sqlite?: boolean;
   };
 }
 

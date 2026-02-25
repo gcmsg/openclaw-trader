@@ -8,6 +8,18 @@ import type { Signal, RuntimeConfig } from "../types.js";
 import { calcAtrPositionSize } from "../strategy/indicators.js";
 import { checkMinimalRoi } from "../strategy/roi-table.js";
 import { logSignal, closeSignal } from "../signals/history.js";
+import { TradeDB } from "../persistence/db.js";
+
+// ── G5: SQLite 懒加载单例（每个 scenarioId 一个 DB）──────────
+const _dbMap = new Map<string, TradeDB>();
+
+function getDb(scenarioId: string): TradeDB {
+  const existing = _dbMap.get(scenarioId);
+  if (existing) return existing;
+  const db = new TradeDB(`logs/trades-${scenarioId}.db`);
+  _dbMap.set(scenarioId, db);
+  return db;
+}
 import {
   loadAccount,
   saveAccount,
@@ -130,6 +142,23 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
           newPos.signalHistoryId = sigId;
         } catch { /* 不影响主流程 */ }
 
+        // ── G5: SQLite 持久化（可选）──
+        if (cfg.paper.use_sqlite === true && trade) {
+          try {
+            const db = getDb(cfg.paper.scenarioId);
+            newPos.dbId = db.insertTrade(
+              cfg.paper.scenarioId,
+              signal.symbol,
+              "buy",
+              newPos.quantity,
+              trade.price,
+              newPos.stopLoss,
+              newPos.takeProfit,
+              trade.timestamp
+            );
+          } catch { /* SQLite 失败不影响主流程 */ }
+        }
+
         // ── 初始化 DCA 状态（如已配置）──
         const dcaCfg = cfg.risk.dca;
         if (dcaCfg?.enabled && dcaCfg.tranches > 1) {
@@ -225,6 +254,23 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
           });
           newShortPos.signalHistoryId = sigId;
         } catch { /* 不影响主流程 */ }
+
+        // ── G5: SQLite 持久化（可选）──
+        if (cfg.paper.use_sqlite === true && trade) {
+          try {
+            const db = getDb(cfg.paper.scenarioId);
+            newShortPos.dbId = db.insertTrade(
+              cfg.paper.scenarioId,
+              signal.symbol,
+              "short",
+              newShortPos.quantity,
+              trade.price,
+              newShortPos.stopLoss,
+              newShortPos.takeProfit,
+              trade.timestamp
+            );
+          } catch { /* SQLite 失败不影响主流程 */ }
+        }
       }
     }
   } else if (signal.type === "cover") {
@@ -411,6 +457,7 @@ export function checkExitConditions(
 
     if (exitReason) {
       const sigHistId = pos.signalHistoryId;
+      const posDbId = pos.dbId; // G5
       // 多头用 paperSell，空头用 paperCoverShort
       const trade = isShort
         ? paperCoverShort(account, symbol, currentPrice, exitLabel, paperOpts(cfg))
@@ -420,6 +467,21 @@ export function checkExitConditions(
         // 回写信号历史
         if (sigHistId) {
           try { closeSignal(sigHistId, currentPrice, exitReason, trade.pnl); } catch { /* skip */ }
+        }
+        // ── G5: SQLite 持久化（可选）──
+        if (cfg.paper.use_sqlite === true && posDbId !== undefined) {
+          try {
+            const db = getDb(cfg.paper.scenarioId);
+            db.closeTrade(
+              posDbId,
+              currentPrice,
+              trade.pnl ?? 0,
+              pnlPercent / 100,
+              exitReason === "stop_loss" || exitReason === "trailing_stop",
+              exitReason === "take_profit",
+              Date.now()
+            );
+          } catch { /* SQLite 失败不影响主流程 */ }
         }
       }
       continue;
