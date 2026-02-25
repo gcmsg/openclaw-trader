@@ -237,6 +237,9 @@ async function checkExits(cfg: RuntimeConfig): Promise<void> {
 
   const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
   const exits = await executor.checkExitConditions(prices);
+
+  // G3: 每轮检查超时订单（孤儿入场单取消，孤儿出场单取消后下轮重触发）
+  await executor.checkOrderTimeouts(account);
   for (const e of exits) {
     log(`${label} ${e.symbol}: 触发出场 — ${e.reason} (${e.pnlPercent.toFixed(2)}%)`);
     // 关闭信号历史记录

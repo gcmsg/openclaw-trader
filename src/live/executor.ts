@@ -751,6 +751,72 @@ export class LiveExecutor {
     saveAccount(account, this.scenarioId);
     return cancelledCount;
   }
+
+  /**
+   * G3: 每轮主循环调用——检查所有超时订单状态，处理孤儿入场/出场单
+   *
+   * 流程：
+   *   1. 调用 getTimedOutOrders(account) 获取超时挂单
+   *   2. 查询 Binance 实际状态
+   *      - FILLED / PARTIALLY_FILLED → confirmOrder（同步本地状态）
+   *      - NEW（入场超时） → cancel + 通知
+   *      - NEW（出场超时） → cancel + 通知（下一轮会重新触发 checkExitConditions）
+   *   3. 保存更新后的账户状态
+   *
+   * @param account 当前账户（已 loadAccount，外部传入复用）
+   */
+  async checkOrderTimeouts(account: PaperAccount): Promise<void> {
+    const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+    const timedOut = getTimedOutOrders(account);
+    if (timedOut.length === 0) return;
+
+    console.log(`${label} checkOrderTimeouts: 发现 ${timedOut.length} 个超时订单`);
+
+    for (const pending of timedOut) {
+      try {
+        const orderStatus = await this.client.getOrder(pending.symbol, pending.orderId);
+        const status = orderStatus.status;
+
+        if (status === "FILLED") {
+          // 已成交但本地未确认 → 同步
+          confirmOrder(account, pending.orderId, parseFloat(orderStatus.executedQty), pending.requestedQty);
+          console.log(
+            `${label} 超时订单 #${pending.orderId} (${pending.symbol}) 已成交，本地状态已同步 qty=${orderStatus.executedQty}`
+          );
+        } else if (status === "PARTIALLY_FILLED") {
+          // 部分成交 → 记录实际成交量
+          confirmOrder(account, pending.orderId, parseFloat(orderStatus.executedQty), pending.requestedQty);
+          console.log(
+            `${label} 超时订单 #${pending.orderId} (${pending.symbol}) 部分成交 ${orderStatus.executedQty}/${pending.requestedQty.toFixed(6)}`
+          );
+        } else if (status === "NEW") {
+          // 仍在挂单但已超时 → 取消
+          const isEntry = pending.side === "buy" || pending.side === "short";
+          const typeLabel = isEntry ? "入场" : "出场";
+          await this.client.cancelOrder(pending.symbol, pending.orderId);
+          cancelOrder(account, pending.orderId);
+          console.log(
+            `${label} 超时${typeLabel}订单 #${pending.orderId} (${pending.symbol}) 已取消。` +
+            (isEntry ? "本轮跳过入场。" : "等待下轮 checkExitConditions 重新触发。")
+          );
+        } else {
+          // CANCELLED / EXPIRED / REJECTED 等 → 清理本地记录
+          cancelOrder(account, pending.orderId);
+          console.log(
+            `${label} 订单 #${pending.orderId} (${pending.symbol}) 状态=${status}，清理本地记录`
+          );
+        }
+      } catch (err) {
+        console.warn(
+          `${label} checkOrderTimeouts: 处理订单 #${pending.orderId} (${pending.symbol}) 失败:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
+    cleanupOrders(account);
+    saveAccount(account, this.scenarioId);
+  }
 }
 
 // ─────────────────────────────────────────────────────
