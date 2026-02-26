@@ -13,7 +13,7 @@ scenarios:
 
   - id: "conservative-spot"
     name: "保守 × 现货"
-    enabled: true
+    enabled: false              # 无历史数据，暂停
     strategy_id: "conservative"
     # F4 Strategy Plugin 示例（在策略 YAML 中设置，不在 scenario 级别设置）：
     # 在 config/strategies/conservative.yaml 中添加：
@@ -32,7 +32,7 @@ scenarios:
 
   - id: "conservative-futures-3x"
     name: "保守 × 合约 3x"
-    enabled: true
+    enabled: false              # 无历史数据，暂停
     strategy_id: "conservative"
     initial_usdt: 10000
     fee_rate: 0.0004
@@ -113,7 +113,7 @@ scenarios:
 
   - id: "trend-spot"
     name: "趋势 × 现货"
-    enabled: true
+    enabled: false              # 无历史数据，暂停
     strategy_id: "trend"
     initial_usdt: 10000
     fee_rate: 0.001
