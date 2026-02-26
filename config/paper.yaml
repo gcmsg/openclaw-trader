@@ -246,6 +246,9 @@ scenarios:
           close_ratio: 0.5         # 再平掉剩余 50%
       # 时间止损
       time_stop_hours: 72          # 持仓超过 72h 且无盈利则强制出场
+      # 保本止损（P8.1）
+      break_even_profit: 0.03     # 盈利 ≥ 3% 后激活保本止损
+      break_even_stop: 0.001      # 止损线移至入场价 +0.1%
 
   # ─── Futures Testnet 空头场景 ────────────────────────────────
   - id: futures-short-test
