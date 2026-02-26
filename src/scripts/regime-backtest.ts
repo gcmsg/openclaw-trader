@@ -11,14 +11,17 @@
 
 import { fetchHistoricalKlines } from "../backtest/fetcher.js";
 import { runBacktest } from "../backtest/runner.js";
-import { loadStrategyConfig } from "../config/loader.js";
+import { loadStrategyConfig, loadStrategyProfile } from "../config/loader.js";
 import { classifyRegime } from "../strategy/regime.js";
 import { applyRegimeParams, describeRegimeParams } from "../strategy/regime-params.js";
-import type { Kline } from "../types.js";
+import type { Kline, StrategyConfig } from "../types.js";
 
-const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "BNBUSDT", "DOGEUSDT"];
 const DAYS = 1000;
 const REGIME_WINDOW = 100; // 用最近 100 根 K 线检测 regime
+
+// 支持 --strategy <id> 参数
+const strategyArg = process.argv.indexOf("--strategy");
+const strategyId = strategyArg >= 0 ? process.argv[strategyArg + 1] : undefined;
 
 function formatPct(n: number): string {
   return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
@@ -29,7 +32,18 @@ async function main() {
   console.log("║       Regime 自适应回测验证                       ║");
   console.log("╚══════════════════════════════════════════════════╝\n");
 
-  const baseCfg = loadStrategyConfig();
+  let baseCfg = loadStrategyConfig();
+  if (strategyId) {
+    const profile = loadStrategyProfile(strategyId);
+    baseCfg = {
+      ...baseCfg,
+      strategy: { ...baseCfg.strategy, ...profile.strategy } as StrategyConfig["strategy"],
+      signals: { ...baseCfg.signals, ...profile.signals },
+      risk: { ...baseCfg.risk, ...profile.risk } as StrategyConfig["risk"],
+    };
+    console.log(`📋 使用策略: ${strategyId} (${profile.name ?? strategyId})\n`);
+  }
+  const SYMBOLS = baseCfg.symbols;
   const endMs = Date.now();
   const startMs = endMs - DAYS * 86_400_000;
 
