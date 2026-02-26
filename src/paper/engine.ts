@@ -608,11 +608,18 @@ export function checkDailyLossLimit(prices: Record<string, number>, cfg: Runtime
  * 2. 当前价格比上次追加价下跌了 ≥ dropPct%
  * 3. DCA 开始至今未超过 maxMs（防止无限套牢）
  *
- * @returns 本次追加的交易列表（可能为空）
+ * 若传入策略插件且策略实现了 adjustPosition，则优先调用策略逻辑：
+ *   > 0 → 加仓（策略指定金额）
+ *   < 0 → 减仓（减掉对应 USDT 价值的仓位）
+ *   0 / null → 回退到内置 dropPct DCA 逻辑
+ *
+ * @returns 本次追加/减仓的交易列表（可能为空）
  */
 export function checkDcaTranches(
   prices: Record<string, number>,
-  cfg: RuntimeConfig
+  cfg: RuntimeConfig,
+  strategy?: Strategy,
+  ctx?: StrategyContext
 ): { symbol: string; trade: PaperTrade; tranche: number; totalTranches: number }[] {
   const sid = scenarioId(cfg);
   const account = loadAccount(cfg.paper.initial_usdt, sid);
@@ -625,14 +632,88 @@ export function checkDcaTranches(
     if (!pos.dcaState) continue;
     const dca = pos.dcaState;
 
+    const currentPrice = prices[symbol];
+    if (!currentPrice) continue;
+
+    const side = (pos.side ?? "long") as "long" | "short";
+    const costBasis = pos.quantity * pos.entryPrice;
+    const profitRatio = side === "short"
+      ? (pos.entryPrice - currentPrice) / pos.entryPrice
+      : (currentPrice - pos.entryPrice) / pos.entryPrice;
+    const holdMs = Date.now() - pos.entryTime;
+    const dcaCount = dca.completedTranches - 1; // completedTranches includes first entry
+
+    // ── 优先：策略 adjustPosition 钩子 ──────────────────────────
+    if (strategy?.adjustPosition !== undefined && ctx !== undefined) {
+      const adjustAmount = strategy.adjustPosition(
+        {
+          symbol,
+          side,
+          entryPrice: pos.entryPrice,
+          currentPrice,
+          quantity: pos.quantity,
+          costBasis,
+          profitRatio,
+          holdMs,
+          dcaCount,
+        },
+        ctx
+      );
+
+      if (adjustAmount !== null && adjustAmount !== 0) {
+        if (adjustAmount > 0) {
+          // 加仓：检查余额是否充足
+          if (account.usdt >= adjustAmount) {
+            const trade = paperDcaAdd(
+              account,
+              symbol,
+              currentPrice,
+              `adjustPosition 加仓 $${adjustAmount.toFixed(2)}`,
+              { addUsdt: adjustAmount, feeRate: 0.001 }
+            );
+            if (trade) {
+              executed.push({
+                symbol,
+                trade,
+                tranche: dca.completedTranches,
+                totalTranches: dca.totalTranches,
+              });
+            }
+          }
+        } else {
+          // 减仓：卖出对应 USDT 价值的仓位
+          const reduceUsdt = Math.abs(adjustAmount);
+          const reduceQty = reduceUsdt / currentPrice;
+          if (reduceQty > 0 && reduceQty <= pos.quantity) {
+            const trade = paperSell(
+              account,
+              symbol,
+              currentPrice,
+              `adjustPosition 减仓 $${reduceUsdt.toFixed(2)}`,
+              { ...paperOpts(cfg), overrideQty: reduceQty }
+            );
+            if (trade) {
+              executed.push({
+                symbol,
+                trade,
+                tranche: dca.completedTranches,
+                totalTranches: dca.totalTranches,
+              });
+            }
+          }
+        }
+        // 策略已处理（加仓或减仓），不再走默认 DCA 逻辑
+        continue;
+      }
+      // adjustAmount === 0 or null → fall through to default DCA logic
+    }
+
+    // ── 默认 DCA 逻辑 ────────────────────────────────────────────
     // 已完成所有批次 → 跳过
     if (dca.completedTranches >= dca.totalTranches) continue;
 
     // 超时 → 跳过（不再追加）
     if (Date.now() - dca.startedAt > dca.maxMs) continue;
-
-    const currentPrice = prices[symbol];
-    if (!currentPrice) continue;
 
     // 价格下跌足够 → 触发追加
     const dropPct = ((dca.lastTranchePrice - currentPrice) / dca.lastTranchePrice) * 100;

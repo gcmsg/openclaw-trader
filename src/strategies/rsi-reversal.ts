@@ -21,6 +21,7 @@ import type { Strategy, StrategyContext, TradeResult } from "./types.js";
 import type { SignalType } from "../types.js";
 import { registerStrategy } from "./registry.js";
 
+
 const rsiReversalStrategy: Strategy = {
   id: "rsi-reversal",
   name: "RSI 均值回归",
@@ -64,6 +65,37 @@ const rsiReversalStrategy: Strategy = {
     } else {
       stateStore.set("consecutiveLosses", 0); // 盈利时重置
     }
+  },
+
+  /**
+   * 策略级加仓逻辑（P9: adjustPosition）
+   * 条件：RSI < 20 且亏损 > 3% 且已加仓次数 < 2 → 加仓 50%
+   */
+  adjustPosition(
+    position: {
+      symbol: string;
+      side: "long" | "short";
+      entryPrice: number;
+      currentPrice: number;
+      quantity: number;
+      costBasis: number;
+      profitRatio: number;
+      holdMs: number;
+      dcaCount: number;
+    },
+    ctx: StrategyContext
+  ): number | null {
+    const { indicators } = ctx;
+
+    if (
+      indicators.rsi < 20 &&
+      position.profitRatio < -0.03 &&
+      position.dcaCount < 2
+    ) {
+      return position.costBasis * 0.5; // 加仓 50%
+    }
+
+    return null;
   },
 };
 

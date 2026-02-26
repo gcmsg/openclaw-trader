@@ -34,7 +34,7 @@ import { calcAtrPositionSize } from "../strategy/indicators.js";
 import { checkMinimalRoi } from "../strategy/roi-table.js";
 import { resolveNewStopLoss } from "../strategy/break-even.js";
 import { shouldConfirmExit, isExitRejectionCoolingDown } from "../strategy/confirm-exit.js";
-import type { Strategy } from "../strategies/types.js";
+import type { Strategy, StrategyContext } from "../strategies/types.js";
 import type { ExitReason } from "../paper/engine.js";
 import type { ExchangePosition } from "./reconcile.js";
 import { sendTelegramMessage } from "../notify/openclaw.js";
@@ -1010,6 +1010,134 @@ export class LiveExecutor {
     }
 
     saveAccount(account, scenarioId);
+  }
+
+  // ─────────────────────────────────────────────────────
+  // 策略化 DCA（adjustPosition 钩子）
+  // ─────────────────────────────────────────────────────
+
+  /**
+   * 检查所有持仓的策略化加仓/减仓（adjustPosition 钩子）。
+   *
+   * 若策略实现了 adjustPosition：
+   *   > 0 → 加仓（向交易所买入对应 USDT 金额）
+   *   < 0 → 减仓（卖出对应 USDT 价值的仓位）
+   *   0 / null → 不操作
+   *
+   * 若策略无 adjustPosition 方法，则走内置 DCA dropPct 逻辑。
+   */
+  async checkDcaTranches(
+    prices: Record<string, number>,
+    ctx?: StrategyContext
+  ): Promise<{ symbol: string; side: "add" | "reduce"; usdtAmount: number }[]> {
+    const dcaCfg = this.cfg.risk.dca;
+    if (!dcaCfg?.enabled) return [];
+
+    const account = loadAccount(this.cfg.paper.initial_usdt, this.scenarioId);
+    const results: { symbol: string; side: "add" | "reduce"; usdtAmount: number }[] = [];
+    const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+
+    for (const [symbol, pos] of Object.entries(account.positions)) {
+      if (!pos.dcaState) continue;
+      const dca = pos.dcaState;
+
+      const currentPrice = prices[symbol];
+      if (!currentPrice) continue;
+
+      const side = (pos.side ?? "long") as "long" | "short";
+      const costBasis = pos.quantity * pos.entryPrice;
+      const profitRatio = side === "short"
+        ? (pos.entryPrice - currentPrice) / pos.entryPrice
+        : (currentPrice - pos.entryPrice) / pos.entryPrice;
+      const holdMs = Date.now() - pos.entryTime;
+      const dcaCount = dca.completedTranches - 1;
+
+      // ── 优先：策略 adjustPosition 钩子 ──────────────────────────
+      if (this.strategy?.adjustPosition !== undefined && ctx !== undefined) {
+        const adjustAmount = this.strategy.adjustPosition(
+          { symbol, side, entryPrice: pos.entryPrice, currentPrice, quantity: pos.quantity, costBasis, profitRatio, holdMs, dcaCount },
+          ctx
+        );
+
+        if (adjustAmount !== null && adjustAmount !== 0) {
+          if (adjustAmount > 0) {
+            // 加仓
+            try {
+              const order = await this.client.marketBuy(symbol, adjustAmount);
+              const execQty = parseFloat(order.executedQty);
+              const avgPrice = order.fills && order.fills.length > 0
+                ? order.fills.reduce((s, f) => s + parseFloat(f.price) * parseFloat(f.qty), 0) / execQty
+                : currentPrice;
+              dca.completedTranches += 1;
+              dca.lastTranchePrice = avgPrice;
+              pos.quantity += execQty;
+              pos.entryPrice = (costBasis + adjustAmount) / pos.quantity;
+              account.usdt -= adjustAmount;
+              saveAccount(account, this.scenarioId);
+              results.push({ symbol, side: "add", usdtAmount: adjustAmount });
+              console.log(`${label} [adjustPosition] ${symbol} 加仓 $${adjustAmount.toFixed(2)}`);
+            } catch (err) {
+              console.warn(`${label} [adjustPosition] ${symbol} 加仓失败:`, err instanceof Error ? err.message : err);
+            }
+          } else {
+            // 减仓
+            const reduceUsdt = Math.abs(adjustAmount);
+            const reduceQty = reduceUsdt / currentPrice;
+            if (reduceQty > 0 && reduceQty <= pos.quantity) {
+              try {
+                const order = await this.client.marketSell(symbol, reduceQty);
+                const execQty = parseFloat(order.executedQty);
+                pos.quantity -= execQty;
+                if (pos.quantity <= 0) {
+                  Reflect.deleteProperty(account.positions, symbol);
+                }
+                account.usdt += reduceUsdt;
+                saveAccount(account, this.scenarioId);
+                results.push({ symbol, side: "reduce", usdtAmount: reduceUsdt });
+                console.log(`${label} [adjustPosition] ${symbol} 减仓 $${reduceUsdt.toFixed(2)}`);
+              } catch (err) {
+                console.warn(`${label} [adjustPosition] ${symbol} 减仓失败:`, err instanceof Error ? err.message : err);
+              }
+            }
+          }
+          continue; // 策略已处理，不走默认 DCA
+        }
+        // adjustAmount === null/0 → fall through to default DCA logic
+      }
+
+      // ── 默认 DCA 逻辑 ────────────────────────────────────────────
+      if (dca.completedTranches >= dca.totalTranches) continue;
+      if (Date.now() - dca.startedAt > dca.maxMs) continue;
+
+      const dropPct = ((dca.lastTranchePrice - currentPrice) / dca.lastTranchePrice) * 100;
+      if (dropPct < dca.dropPct) continue;
+
+      const realBalance = await this.client.getUsdtBalance();
+      const equity = Math.min(realBalance, calcTotalEquity(account, prices));
+      const addUsdt = equity * this.cfg.risk.position_ratio;
+
+      if (addUsdt < this.cfg.execution.min_order_usdt) continue;
+
+      try {
+        const order = await this.client.marketBuy(symbol, addUsdt);
+        const execQty = parseFloat(order.executedQty);
+        const avgPrice = order.fills && order.fills.length > 0
+          ? order.fills.reduce((s, f) => s + parseFloat(f.price) * parseFloat(f.qty), 0) / execQty
+          : currentPrice;
+        dca.completedTranches += 1;
+        dca.lastTranchePrice = avgPrice;
+        pos.quantity += execQty;
+        pos.entryPrice = (costBasis + addUsdt) / pos.quantity;
+        account.usdt -= addUsdt;
+        saveAccount(account, this.scenarioId);
+        results.push({ symbol, side: "add", usdtAmount: addUsdt });
+        console.log(`${label} [DCA] ${symbol} 默认加仓 $${addUsdt.toFixed(2)} (跌幅 ${dropPct.toFixed(1)}%)`);
+      } catch (err) {
+        console.warn(`${label} [DCA] ${symbol} 加仓失败:`, err instanceof Error ? err.message : err);
+      }
+    }
+
+    return results;
   }
 
   // ─────────────────────────────────────────────────────

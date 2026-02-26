@@ -101,6 +101,30 @@ export interface Strategy {
   onTradeClosed?(result: TradeResult, ctx: StrategyContext): void;
 
   /**
+   * 可选：策略级加仓/减仓逻辑（参考 Freqtrade adjust_trade_position）。
+   * 在每轮持仓检查时调用。返回值含义：
+   *   > 0：加仓金额（USDT）
+   *   < 0：减仓金额（USDT，绝对值）
+   *   0 或 null：不调整
+   *
+   * 当前的 checkDcaTranches() 硬编码逻辑作为默认回退。
+   */
+  adjustPosition?(
+    position: {
+      symbol: string;
+      side: "long" | "short";
+      entryPrice: number;
+      currentPrice: number;
+      quantity: number;
+      costBasis: number;        // 当前总成本（USDT）
+      profitRatio: number;      // 当前盈亏比
+      holdMs: number;
+      dcaCount: number;         // 已加仓次数
+    },
+    ctx: StrategyContext
+  ): number | null;
+
+  /**
    * 可选：自定义动态止损逻辑（参考 Freqtrade custom_stoploss）。
    * 返回新的止损价格，返回 null 则使用默认止损逻辑（含 break_even_stop）。
    * 仅在持仓期间每轮调用一次。
