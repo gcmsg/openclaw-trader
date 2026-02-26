@@ -1030,7 +1030,7 @@ tmux send-keys -t trader-live "npm run live" Enter
 
 ---
 
-### A-001 ⚠️ MTF 趋势过滤代码重复，非统一管线
+### A-001 ✅ [已修复 47f6366] MTF 趋势过滤代码重复，非统一管线
 
 **类型**：代码重复 / 维护风险
 
@@ -1108,7 +1108,7 @@ const histPath = path.resolve(
 
 ---
 
-### A-005 ⚠️ Protection Manager 的 recentTrades 在 monitor.ts 中未传入
+### A-005 ✅ [已修复 47f6366] Protection Manager 的 recentTrades 在 monitor.ts 中未传入
 
 **类型**：功能未激活
 
@@ -1145,7 +1145,7 @@ if (regime.confidence >= 60) {
 
 ---
 
-### A-007 ℹ️ 分批止盈（staged_TP）仅支持多头，空头持仓无 tpStages 初始化
+### A-007 ✅ [已修复 47f6366] 分批止盈（staged_TP）仅支持多头，空头持仓无 tpStages 初始化
 
 **类型**：功能缺口
 
