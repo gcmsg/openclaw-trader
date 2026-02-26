@@ -41,7 +41,8 @@
     "weekly": "tsx src/scripts/weekly-report.ts",
     "signal-stats": "tsx src/scripts/signal-stats.ts",
     "drift": "tsx src/scripts/drift-monitor.ts",
-    "cycle-analysis": "tsx src/scripts/cycle-analysis.ts"
+    "cycle-analysis": "tsx src/scripts/cycle-analysis.ts",
+    "regime-backtest": "tsx src/scripts/regime-backtest.ts"
   },
   "dependencies": {
     "asciichart": "^1.5.25",
