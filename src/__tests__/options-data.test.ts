@@ -177,11 +177,12 @@ describe("formatOptionsReport", () => {
 describe("fetchOptionsSummary (mocked network)", () => {
   beforeEach(() => {
     vi.spyOn(https, "request").mockImplementation((_opts, callback) => {
-      // 构造一个模拟的 ClientRequest
-      const req = new EventEmitter() as NodeJS.ReadWriteStream & { end: () => void; destroy: () => void; setTimeout: (ms: number, cb: () => void) => void };
-      req.end = () => { /* noop */ };
-      req.destroy = () => { /* noop */ };
-      req.setTimeout = (_ms: number, _cb: () => void) => { /* noop */ };
+      // 构造简单的 mock ClientRequest（使用 any 避免复杂类型签名）
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const req: any = new EventEmitter();
+      req.end = vi.fn();
+      req.destroy = vi.fn();
+      req.setTimeout = vi.fn();
 
       // 模拟响应
       const mockItems = [
@@ -199,7 +200,8 @@ describe("fetchOptionsSummary (mocked network)", () => {
 
       // 异步触发回调
       setImmediate(() => {
-        const res = new EventEmitter() as NodeJS.ReadableStream & { statusCode?: number };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const res: any = new EventEmitter();
         res.statusCode = 200;
         if (typeof callback === "function") {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any

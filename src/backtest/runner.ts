@@ -72,6 +72,12 @@ export interface BacktestOptions {
    */
   avgFundingRatePer8h?: number;                             // 全币种平均值（如 -0.0001）
   fundingHistory?: Record<string, FundingRateRecord[]>;    // 各币种历史费率（精确）
+  /**
+   * P6.3 蜡烛内模拟（Intra-candle Simulation）
+   * true（默认）：用 K 线 high/low 检测止损/止盈，止损优先于止盈（保守模型）
+   * false：向后兼容，所有出场用 close 价格判断（旧行为）
+   */
+  intracandle?: boolean;
 }
 
 export interface BacktestResult {
@@ -404,6 +410,141 @@ function updateTrailingStop(
 }
 
 // ─────────────────────────────────────────────────────
+// P6.3 — 蜡烛内模拟出场检查
+// ─────────────────────────────────────────────────────
+
+/**
+ * 在单根 K 线内模拟止损/止盈出场（比只用收盘价更真实）
+ *
+ * 优先级（保守假设：不利方向先发生）：
+ *   多头：止损（low） > ROI > 止盈（high） > 分批止盈 > 追踪止损 > 时间止损
+ *   空头：止损（high） > ROI > 止盈（low） > 分批止盈 > 追踪止损 > 时间止损
+ *
+ * @param pos               当前持仓
+ * @param kline             当前 K 线 OHLC
+ * @param cfg               策略配置
+ * @param time              当前 K 线时间戳（openTime，毫秒）
+ * @param trailingTriggered updateTrailingStop() 的返回值（追踪止损是否触发）
+ * @param useIntracandle    true: 用 high/low 判断（新行为）；false: 用 close（旧行为）
+ * @returns 触发出场时返回 { exitPrice, reason }，否则返回 null
+ */
+function checkIntracandleExit(
+  pos: BacktestPosition,
+  kline: { open: number; high: number; low: number; close: number },
+  cfg: StrategyConfig,
+  time: number,
+  trailingTriggered: boolean,
+  useIntracandle: boolean
+): { exitPrice: number; reason: BacktestTrade["exitReason"] } | null {
+  // 根据 intracandle 模式选择检查价格
+  const checkHigh = useIntracandle ? kline.high : kline.close;
+  const checkLow  = useIntracandle ? kline.low  : kline.close;
+
+  // ROI Table 阈值（仅计算一次）
+  const roiTable = cfg.risk.minimal_roi;
+  const roiThreshold =
+    roiTable !== undefined && Object.keys(roiTable).length > 0
+      ? getMinimalRoiThreshold(roiTable, time - pos.entryTime)
+      : null;
+
+  if (pos.side === "short") {
+    // ── 空头出场：止损=涨破，止盈=跌破 ──────────────
+
+    // 1. 止损（高价触及止损线）
+    if (checkHigh >= pos.stopLoss) {
+      return { exitPrice: pos.stopLoss, reason: "stop_loss" };
+    }
+
+    // 2. ROI Table
+    if (roiThreshold !== null) {
+      const roiPrice = pos.entryPrice * (1 - roiThreshold);
+      if (checkLow <= roiPrice) {
+        return { exitPrice: Math.max(roiPrice, kline.close), reason: "take_profit" };
+      }
+    }
+
+    // 3. 固定止盈（低价触及止盈线）
+    if (checkLow <= pos.takeProfit) {
+      return { exitPrice: pos.takeProfit, reason: "take_profit" };
+    }
+
+    // 4. 分批止盈（空头：低价触及目标价）
+    if (cfg.risk.take_profit_stages && cfg.risk.take_profit_stages.length > 0) {
+      for (const stage of cfg.risk.take_profit_stages) {
+        const stagePrice = pos.entryPrice * (1 - stage.at_percent / 100);
+        if (checkLow <= stagePrice) {
+          return { exitPrice: stagePrice, reason: "take_profit" };
+        }
+      }
+    }
+
+    // 5. 追踪止损
+    if (trailingTriggered && pos.trailingStop?.stopPrice) {
+      return { exitPrice: pos.trailingStop.stopPrice, reason: "trailing_stop" };
+    }
+
+    // 6. 时间止损（持仓过久且无盈利则出场）
+    if (cfg.risk.time_stop_hours) {
+      const holdMs = time - pos.entryTime;
+      if (holdMs >= cfg.risk.time_stop_hours * 3_600_000) {
+        const pnlPct = ((pos.entryPrice - kline.close) / pos.entryPrice) * 100;
+        if (pnlPct <= 0) {
+          return { exitPrice: kline.close, reason: "time_stop" };
+        }
+      }
+    }
+  } else {
+    // ── 多头出场：止损=跌破，止盈=涨破 ──────────────
+
+    // 1. 止损（低价触及止损线）
+    if (checkLow <= pos.stopLoss) {
+      return { exitPrice: pos.stopLoss, reason: "stop_loss" };
+    }
+
+    // 2. ROI Table
+    if (roiThreshold !== null) {
+      const roiPrice = pos.entryPrice * (1 + roiThreshold);
+      if (checkHigh >= roiPrice) {
+        return { exitPrice: Math.min(roiPrice, kline.close), reason: "take_profit" };
+      }
+    }
+
+    // 3. 固定止盈（高价触及止盈线）
+    if (checkHigh >= pos.takeProfit) {
+      return { exitPrice: pos.takeProfit, reason: "take_profit" };
+    }
+
+    // 4. 分批止盈（多头：高价触及目标价）
+    if (cfg.risk.take_profit_stages && cfg.risk.take_profit_stages.length > 0) {
+      for (const stage of cfg.risk.take_profit_stages) {
+        const stagePrice = pos.entryPrice * (1 + stage.at_percent / 100);
+        if (checkHigh >= stagePrice) {
+          return { exitPrice: stagePrice, reason: "take_profit" };
+        }
+      }
+    }
+
+    // 5. 追踪止损
+    if (trailingTriggered && pos.trailingStop?.stopPrice) {
+      return { exitPrice: pos.trailingStop.stopPrice, reason: "trailing_stop" };
+    }
+
+    // 6. 时间止损（持仓过久且无盈利则出场）
+    if (cfg.risk.time_stop_hours) {
+      const holdMs = time - pos.entryTime;
+      if (holdMs >= cfg.risk.time_stop_hours * 3_600_000) {
+        const pnlPct = ((kline.close - pos.entryPrice) / pos.entryPrice) * 100;
+        if (pnlPct <= 0) {
+          return { exitPrice: kline.close, reason: "time_stop" };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+// ─────────────────────────────────────────────────────
 // 主回测函数
 // ─────────────────────────────────────────────────────
 
@@ -456,7 +597,7 @@ export function runBacktest(
   trendKlinesBySymbol?: Record<string, Kline[]>
 ): BacktestResult {
   const { initialUsdt = 1000, feeRate = 0.001, slippagePercent = 0.05,
-          avgFundingRatePer8h, fundingHistory } = opts;
+          avgFundingRatePer8h, fundingHistory, intracandle = true } = opts;
   const fundingEnabled = avgFundingRatePer8h !== undefined || fundingHistory !== undefined;
   // ExecOpts：仅供交易函数使用（手续费 + 滑点）
   const legacyOpts: ExecOpts = { feeRate, slippagePercent };
@@ -603,58 +744,26 @@ export function runBacktest(
     }
 
     // Step 2b：检查已有持仓的止损/止盈（优先于新信号）
+    // P6.3: 使用 checkIntracandleExit() 进行蜡烛内模拟（intracandle=true 时用 high/low）
     for (const sym of symbols) {
       const pos = account.positions[sym];
       if (!pos) continue;
       const kline = klineIndex[sym]?.[time];
       if (!kline) continue;
 
+      // 追踪止损状态更新（始终用 high/low，与 intracandle 无关）
       const trailingTriggered = updateTrailingStop(pos, kline.high, kline.low, cfg);
 
-      // ── ROI Table 检查（回测：按 K 线开收盘价估算是否触发）──
-      const roiTable = cfg.risk.minimal_roi;
-      const roiThreshold =
-        roiTable !== undefined && Object.keys(roiTable).length > 0
-          ? getMinimalRoiThreshold(roiTable, time - pos.entryTime)
-          : null;
+      // 蜡烛内出场检查
+      const exitResult = checkIntracandleExit(
+        pos, kline, cfg, time, trailingTriggered, intracandle
+      );
 
-      if (pos.side === "short") {
-        // ── 空头出场（止损=涨破，止盈=跌破）──
-        if (kline.high >= pos.stopLoss) {
-          doCoverShort(account, sym, pos.stopLoss, time, "stop_loss", legacyOpts);
-        } else if (
-          roiThreshold !== null &&
-          (() => {
-            const roiPrice = pos.entryPrice * (1 - roiThreshold);
-            return kline.low <= roiPrice;
-          })()
-        ) {
-          // ROI Table 触发：用 ROI 目标价或当前收盘价（取保守值）
-          const roiPrice = pos.entryPrice * (1 - roiThreshold);
-          doCoverShort(account, sym, Math.max(roiPrice, kline.close), time, "take_profit", legacyOpts);
-        } else if (kline.low <= pos.takeProfit) {
-          doCoverShort(account, sym, pos.takeProfit, time, "take_profit", legacyOpts);
-        } else if (trailingTriggered && pos.trailingStop?.stopPrice) {
-          doCoverShort(account, sym, pos.trailingStop.stopPrice, time, "trailing_stop", legacyOpts);
-        }
-      } else {
-        // ── 多头出场（止损=跌破，止盈=涨破）──
-        if (kline.low <= pos.stopLoss) {
-          doSell(account, sym, pos.stopLoss, time, "stop_loss", legacyOpts);
-        } else if (
-          roiThreshold !== null &&
-          (() => {
-            const roiPrice = pos.entryPrice * (1 + roiThreshold);
-            return kline.high >= roiPrice;
-          })()
-        ) {
-          // ROI Table 触发：用 ROI 目标价（保守取较低值）
-          const roiPrice = pos.entryPrice * (1 + roiThreshold);
-          doSell(account, sym, Math.min(roiPrice, kline.close), time, "take_profit", legacyOpts);
-        } else if (kline.high >= pos.takeProfit) {
-          doSell(account, sym, pos.takeProfit, time, "take_profit", legacyOpts);
-        } else if (trailingTriggered && pos.trailingStop?.stopPrice) {
-          doSell(account, sym, pos.trailingStop.stopPrice, time, "trailing_stop", legacyOpts);
+      if (exitResult) {
+        if (pos.side === "short") {
+          doCoverShort(account, sym, exitResult.exitPrice, time, exitResult.reason, legacyOpts);
+        } else {
+          doSell(account, sym, exitResult.exitPrice, time, exitResult.reason, legacyOpts);
         }
       }
     }

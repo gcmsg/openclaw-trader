@@ -238,6 +238,23 @@ async function scanSymbol(
       }
     }
 
+    // P6.5 宏观事件日历风险控制（仅限开仓信号）
+    if (signal.type === "buy" || signal.type === "short") {
+      try {
+        const eventRisk = checkEventRisk(loadCalendar());
+        if (eventRisk.phase === "during") {
+          log(`${scenarioPrefix}${symbol}: ⏸ 事件窗口期（${eventRisk.eventName}），暂停开仓`);
+          return;
+        }
+        // pre / post 阶段：仅日志提示，sentiment gate 会在此基础上进一步调整
+        if ((eventRisk.phase === "pre" || eventRisk.phase === "post") && eventRisk.positionRatioMultiplier < 1.0) {
+          const baseRatio = portfolioRatioOverride ?? regimeEffectiveRisk.position_ratio;
+          const approxRatio = baseRatio * eventRisk.positionRatioMultiplier;
+          log(`${scenarioPrefix}${symbol}: ⚠️ 事件风险期（${eventRisk.eventName}），建议仓位 ≈ ${(approxRatio * 100).toFixed(0)}%（×${eventRisk.positionRatioMultiplier}）`);
+        }
+      } catch { /* 日历加载失败静默跳过 */ }
+    }
+
     // MTF 过滤：买入信号且大趋势为空头 → 跳过
     if (signal.type === "buy" && mtfTrendBull === false) {
       log(`${scenarioPrefix}${symbol}: 🚫 MTF 趋势过滤：${cfg.trend_timeframe} 空头，忽略 1h 买入信号`);
