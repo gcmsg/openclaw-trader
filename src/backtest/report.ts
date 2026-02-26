@@ -60,6 +60,9 @@ export function formatReport(result: BacktestResult): string {
   lines.push(`⏱️  时间框架  ${c.timeframe}`);
   lines.push(`🪙  监控币种  ${c.symbols.join("  ")}`);
   lines.push(`💵  初始资金  $${c.initialUsdt.toFixed(2)}`);
+  if ((c.spreadBps ?? 0) > 0) {
+    lines.push(`📏  Spread    ${c.spreadBps} bps（${((c.spreadBps ?? 0) / 100).toFixed(3)}%，模拟 bid/ask 价差）`);
+  }
   lines.push("");
 
   // ── 收益 ──

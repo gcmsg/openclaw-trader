@@ -24,8 +24,8 @@ import type { FundingRateRecord } from "./fetcher.js";
 // Types
 // ─────────────────────────────────────────────────────
 
-/** 交易执行函数仅需要手续费 + 滑点两个参数 */
-interface ExecOpts { feeRate: number; slippagePercent: number; }
+/** 交易执行函数仅需要手续费 + 滑点 + spread 三个参数 */
+interface ExecOpts { feeRate: number; slippagePercent: number; spreadBps: number; }
 
 interface BacktestPosition {
   symbol: string;
@@ -66,6 +66,13 @@ export interface BacktestOptions {
   feeRate?: number;           // 默认 0.001 (0.1%)
   slippagePercent?: number;   // 默认 0.05%
   /**
+   * 回测模拟 bid/ask spread（基点 bps）。如 5 = 0.05%。默认 0（不模拟）
+   * 买入时：实际入场价 = close × (1 + spreadBps / 20000)（买在 ask）
+   * 卖出时：实际出场价 = close × (1 - spreadBps / 20000)（卖在 bid）
+   * 空头方向相反。spread 成本叠加在已有的 slippage 之上。
+   */
+  spreadBps?: number;
+  /**
    * Futures 资金费率（每 8h 一次结算）
    * 传入后对 long/short 仓位均自动扣除/计入
    * ── 两种方式二选一 ──
@@ -104,6 +111,8 @@ export interface BacktestResult {
     days: number;
     initialUsdt: number;
     fundingEnabled: boolean;
+    /** 回测使用的 spread（基点），默认 0 */
+    spreadBps?: number;
   };
 }
 
@@ -158,9 +167,10 @@ function doBuy(
   if (usdtToSpend < cfg.execution.min_order_usdt) return;
   if (usdtToSpend > account.usdt) return;
 
-  // 买入时价格上滑（略高于报价），仅通过提高 execPrice 模拟滑点
+  // 买入时价格上滑（略高于报价）：滑点 + spread（买在 ask）
   // 不额外扣除 slippageUsdt，避免与 execPrice 双重计算
-  const execPrice = price * (1 + opts.slippagePercent / 100);
+  const spreadAdj = opts.spreadBps / 20000; // spreadBps/10000/2 → 半边 spread
+  const execPrice = price * (1 + opts.slippagePercent / 100 + spreadAdj);
   const fee = usdtToSpend * opts.feeRate;
   const netUsdt = usdtToSpend - fee; // execPrice 已含滑点成本
   const quantity = netUsdt / execPrice;
@@ -224,8 +234,9 @@ function doOpenShort(
   const marginToLock = equity * cfg.risk.position_ratio;
   if (marginToLock < cfg.execution.min_order_usdt || marginToLock > account.usdt) return;
 
-  // 开空时成交价略低（对做空方不利）
-  const execPrice = price * (1 - opts.slippagePercent / 100);
+  // 开空时：卖在 bid（略低于报价），滑点 + spread 叠加
+  const spreadAdjShortOpen = opts.spreadBps / 20000;
+  const execPrice = price * (1 - opts.slippagePercent / 100 - spreadAdjShortOpen);
   const fee = marginToLock * opts.feeRate;
   const actualMargin = marginToLock - fee;
   const quantity = actualMargin / execPrice;
@@ -262,8 +273,9 @@ function doCoverShort(
   const pos = account.positions[symbol];
   if (pos?.side !== "short") return;
 
-  // 平空时买入：成交价略高（对买入方不利）
-  const execPrice = exitPrice * (1 + opts.slippagePercent / 100);
+  // 平空时买入：买在 ask（成交价略高），滑点 + spread 叠加
+  const spreadAdjCover = opts.spreadBps / 20000;
+  const execPrice = exitPrice * (1 + opts.slippagePercent / 100 + spreadAdjCover);
   const grossUsdt = pos.quantity * execPrice; // 买回所需花费
   const fee = grossUsdt * opts.feeRate;
   const margin = pos.marginUsdt ?? pos.quantity * pos.entryPrice;
@@ -306,8 +318,9 @@ function doSell(
   const pos = account.positions[symbol];
   if (!pos) return;
 
-  // 卖出时价格下滑（略低于报价）
-  const execPrice = exitPrice * (1 - opts.slippagePercent / 100);
+  // 卖出时：卖在 bid（略低于报价），滑点 + spread 叠加
+  const spreadAdjSell = opts.spreadBps / 20000;
+  const execPrice = exitPrice * (1 - opts.slippagePercent / 100 - spreadAdjSell);
   const grossUsdt = pos.quantity * execPrice;
   const fee = grossUsdt * opts.feeRate;
   const proceeds = grossUsdt - fee;
@@ -598,9 +611,11 @@ export function runBacktest(
 ): BacktestResult {
   const { initialUsdt = 1000, feeRate = 0.001, slippagePercent = 0.05,
           avgFundingRatePer8h, fundingHistory, intracandle = true } = opts;
+  // spread_bps：opts 优先，其次 cfg.risk.spread_bps，默认 0
+  const spreadBps = opts.spreadBps ?? cfg.risk.spread_bps ?? 0;
   const fundingEnabled = avgFundingRatePer8h !== undefined || fundingHistory !== undefined;
-  // ExecOpts：仅供交易函数使用（手续费 + 滑点）
-  const legacyOpts: ExecOpts = { feeRate, slippagePercent };
+  // ExecOpts：仅供交易函数使用（手续费 + 滑点 + spread）
+  const legacyOpts: ExecOpts = { feeRate, slippagePercent, spreadBps };
 
   const symbols = Object.keys(klinesBySymbol);
   if (symbols.length === 0) {
@@ -902,6 +917,7 @@ export function runBacktest(
       days,
       initialUsdt,
       fundingEnabled,
+      spreadBps,
     },
   };
 }

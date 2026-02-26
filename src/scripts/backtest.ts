@@ -44,15 +44,17 @@ interface CliArgs {
   save: boolean;
   compare: boolean;
   slippageSweep: boolean;
+  spreadBps: number;
 }
 
-function parseArgs(argv: string[]): CliArgs {
+export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     days: 90,
     initialUsdt: 1000,
     save: true,
     compare: false,
     slippageSweep: false,
+    spreadBps: 0,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -93,6 +95,9 @@ function parseArgs(argv: string[]): CliArgs {
         break;
       case "--slippage-sweep":
         args.slippageSweep = true;
+        break;
+      case "--spread":
+        args.spreadBps = parseFloat(nextArg());
         break;
       case undefined:
       default:
@@ -205,11 +210,13 @@ async function runOne(strategyId: string | undefined, args: CliArgs): Promise<vo
   }
 
   // 运行回测
-  console.log(`\n🔄 运行回测${cfg.trend_timeframe ? `（含 ${cfg.trend_timeframe} MTF 过滤）` : ""}...`);
+  const spreadInfo = args.spreadBps > 0 ? `  |  spread: ${args.spreadBps} bps` : "";
+  console.log(`\n🔄 运行回测${cfg.trend_timeframe ? `（含 ${cfg.trend_timeframe} MTF 过滤）` : ""}${spreadInfo}...`);
   const result = runBacktest(klinesBySymbol, cfg, {
     initialUsdt: args.initialUsdt,
     feeRate: 0.001,
     slippagePercent: 0.05,
+    spreadBps: args.spreadBps,
   }, trendKlinesBySymbol);
 
   // 输出报告
@@ -421,7 +428,8 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
   console.log("🚀 openclaw-trader 回测引擎");
-  console.log(`   初始资金: $${args.initialUsdt}  |  回测天数: ${args.days}d`);
+  const spreadMsg = args.spreadBps > 0 ? `  |  spread: ${args.spreadBps} bps` : "";
+  console.log(`   初始资金: $${args.initialUsdt}  |  回测天数: ${args.days}d${spreadMsg}`);
 
   if (args.slippageSweep) {
     await runSlippageSweep(args);

@@ -196,6 +196,10 @@ export interface RiskConfig {
   break_even_profit?: number;
   /** 保本止损线相对于入场价的偏移（正数=高于入场价）。默认 0.001 = 入场价 +0.1% */
   break_even_stop?: number;
+
+  // ── Bid/Ask Spread 建模（回测专用，可选）──
+  /** 回测模拟 bid/ask spread（基点 bps）。如 5 = 0.05%。默认 0（不模拟） */
+  spread_bps?: number;
 }
 
 export interface ExecutionConfig {
