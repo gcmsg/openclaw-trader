@@ -71,6 +71,26 @@
 | Telegram Bot | telegram-bot.ts | 命令交互 | 未启动 |
 | Signal Attribution | signal-attribution.ts | 信号归因 | 未使用 |
 
+## 🟢 配置启用状态（testnet-default 场景）
+
+| 功能 | 配置项 | 值 | 状态 |
+|------|--------|-----|------|
+| 做空信号 | signals.short/cover | ✅ 配置 | ✅ |
+| MTF 4h 过滤 | trend_timeframe | "4h" | ✅ |
+| 相关性过滤 | correlation_filter.enabled | true, threshold=0.75 | ✅ |
+| ATR 动态仓位 | atr_position.enabled | true, risk=2% | ✅ |
+| 分批止盈 | take_profit_stages | 8%/50% + 12%/50% | ✅ |
+| 时间止损 | time_stop_hours | 72h | ✅ |
+| 追踪止损 | trailing_stop.enabled | true, 8%/2% | ✅ |
+| R:R 过滤 | min_rr | 1.5 | ✅ |
+| 保本止损 | break_even_profit/stop | 3% / 0.1% | ✅ |
+| 情绪门控 | news.enabled | true | ✅ |
+| 紧急暂停 | news_emergency cron | 每10分钟 | ✅ |
+| Kill Switch | kill-switch.ts | 自动触发 | ✅ |
+| 每日亏损限制 | daily_loss_limit_percent | 8% | ✅ |
+| Kelly 仓位 | position_sizing | "fixed" | ⏳ 待积累30+笔再启用 |
+| Regime 参数覆盖 | regime_overrides | 未配置 | ❌ 验证表明滞后，暂不启用 |
+
 ## 🔶 未接入但已开发的模块
 
 | 模块 | 文件 | 说明 | 优先级 |
