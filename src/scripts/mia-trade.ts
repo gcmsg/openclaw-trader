@@ -11,7 +11,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as https from "https";
 import { fileURLToPath } from "url";
-import { logSignal, closeSignal } from "../signals/history.js";
+import { logSignal, closeSignal } from "../strategy/signal-history.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOGS_DIR = path.resolve(__dirname, "../../logs");

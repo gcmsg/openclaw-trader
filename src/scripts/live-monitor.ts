@@ -23,7 +23,7 @@ import { reconcilePositions, formatReconcileReport } from "../live/reconcile.js"
 import { loadNewsReport, evaluateSentimentGate } from "../news/sentiment-gate.js";
 import { notifySignal, notifyError } from "../notify/openclaw.js";
 import { loadAccount, saveAccount } from "../paper/account.js";
-import { logSignal, closeSignal } from "../signals/history.js";
+import { logSignal, closeSignal } from "../strategy/signal-history.js";
 import { readEmergencyHalt } from "../news/emergency-monitor.js";
 import { CvdManager } from "../exchange/order-flow.js";
 import { classifyRegime } from "../strategy/regime.js";

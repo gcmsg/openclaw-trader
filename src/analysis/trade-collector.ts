@@ -47,7 +47,7 @@ interface RawBacktestResult {
 }
 
 // ─────────────────────────────────────────────────────
-// SignalRecord（与 signals/history.ts 保持一致）
+// SignalRecord（与 strategy/signal-history.ts 保持一致）
 // ─────────────────────────────────────────────────────
 
 interface RawSignalConditions {

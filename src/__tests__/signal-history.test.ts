@@ -15,7 +15,7 @@ const TEST_INDEX = path.resolve(__dirname, "../../logs/test-signal-index.json");
 
 // 临时替换模块路径的方式：直接测试纯函数逻辑
 
-import type { SignalRecord, SignalStats } from "../signals/history.js";
+import type { SignalRecord, SignalStats } from "../strategy/signal-history.js";
 
 // ─── 纯函数测试：不依赖文件系统 ─────────────────────────
 

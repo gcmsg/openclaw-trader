@@ -108,7 +108,7 @@ vi.mock("../paper/engine.js", async (importOriginal) => {
   return actual as object;
 });
 
-vi.mock("../signals/history.js", () => ({
+vi.mock("../strategy/signal-history.js", () => ({
   logSignal: vi.fn().mockReturnValue("mock-signal-id"),
   closeSignal: vi.fn(),
 }));

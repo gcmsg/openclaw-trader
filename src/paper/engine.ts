@@ -10,7 +10,7 @@ import { checkMinimalRoi } from "../strategy/roi-table.js";
 import { resolveNewStopLoss } from "../strategy/break-even.js";
 import { shouldConfirmExit, isExitRejectionCoolingDown } from "../strategy/confirm-exit.js";
 import type { Strategy, StrategyContext } from "../strategies/types.js";
-import { logSignal, closeSignal } from "../signals/history.js";
+import { logSignal, closeSignal } from "../strategy/signal-history.js";
 import { TradeDB } from "../persistence/db.js";
 
 // ── G5: SQLite 懒加载单例（每个 scenarioId 一个 DB）──────────
