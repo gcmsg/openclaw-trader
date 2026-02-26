@@ -38,8 +38,8 @@ strategy:
     short: 20
     long: 60
   rsi:
-    period: 14
-    oversold: 35
+    period: 10      # hyperopt 建议 7-11，从 14 降到 10 更敏感
+    oversold: 30
     overbought: 65
   macd:
     enabled: true
@@ -147,8 +147,8 @@ schedule:
     timeout_minutes: 260
   weekly_report:
     enabled: true
-    cron: "0 22 * * 0"
-    timeout_minutes: 10100
+    cron: "0 14 * * 0"       # 周日 14:00 UTC = 22:00 CST
+    timeout_minutes: 10
   health_check:
     enabled: true
     cron: "*/30 * * * *"

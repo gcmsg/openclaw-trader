@@ -80,7 +80,7 @@ scenarios:
 
   - id: "aggressive-futures-3x"
     name: "激进 × 合约 3x"
-    enabled: true
+    enabled: false              # Phase A: 精简，只保留 3 核心场景
     strategy_id: "aggressive"
     initial_usdt: 10000
     fee_rate: 0.0004
@@ -174,7 +174,7 @@ scenarios:
 
   - id: "rsi-margin-2x"
     name: "RSI均值回归 × 杠杆2x"
-    enabled: true
+    enabled: false              # Phase A: 精简
     strategy_id: "rsi-pure"
     initial_usdt: 10000
     fee_rate: 0.001
@@ -250,7 +250,7 @@ scenarios:
   # ─── Futures Testnet 空头场景 ────────────────────────────────
   - id: futures-short-test
     name: "Futures Testnet 空头测试"
-    enabled: true
+    enabled: false              # Phase A: 精简
     strategy_id: "short-trend"   # config/strategies/short-trend.yaml
     initial_usdt: 5000
     fee_rate: 0.0004             # Futures maker fee 0.02%, taker 0.04%
