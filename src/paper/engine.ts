@@ -355,11 +355,28 @@ export function checkExitConditions(
     pnlPercent: number;
   }[] = [];
 
+  const EXIT_TIMEOUT_MAX_RETRIES = 3; // 与 executor.ts 保持一致
+
   for (const [symbol, pos] of Object.entries(account.positions)) {
     const currentPrice = prices[symbol];
     if (!currentPrice) continue;
 
     const isShort = pos.side === "short";
+
+    // ── 强制出场：连续超时后立即市价出场 ──
+    if ((pos.exitTimeoutCount ?? 0) >= EXIT_TIMEOUT_MAX_RETRIES) {
+      const forceLabel = `force_exit_timeout：出场超时 ${EXIT_TIMEOUT_MAX_RETRIES} 次，强制市价出场`;
+      const trade = isShort
+        ? paperCoverShort(account, symbol, currentPrice, forceLabel, paperOpts(cfg))
+        : paperSell(account, symbol, currentPrice, forceLabel, paperOpts(cfg));
+      if (trade) {
+        const pnlPct = isShort
+          ? ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100
+          : ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+        triggered.push({ symbol, trade, reason: "stop_loss", pnlPercent: pnlPct });
+      }
+      continue;
+    }
 
     // 盈亏百分比：多头=价格涨幅，空头=价格跌幅（下跌时空头盈利为正）
     const pnlPercent = isShort

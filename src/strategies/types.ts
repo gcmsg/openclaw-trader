@@ -8,6 +8,7 @@
 
 import type { Kline, StrategyConfig, SignalType } from "../types.js";
 import type { Indicators } from "../types.js";
+import type { StateStore } from "./state-store.js";
 
 // ─────────────────────────────────────────────────────
 // Extra Indicators (插件可计算的额外指标)
@@ -29,6 +30,23 @@ export interface StrategyContext {
   /** 当前持仓方向（undefined = 无持仓）。默认策略需要此字段来复现 detectSignal 的持仓感知逻辑 */
   currentPosSide?: "long" | "short";
   extra?: ExtraIndicators;
+  /** 可选：策略状态存储（跨 candle 持久化）。不传时表示无状态模式 */
+  stateStore?: StateStore;
+}
+
+// ─────────────────────────────────────────────────────
+// Trade Result（交易关闭结果，用于 onTradeClosed 回调）
+// ─────────────────────────────────────────────────────
+
+export interface TradeResult {
+  symbol: string;
+  side: "long" | "short";
+  entryPrice: number;
+  exitPrice: number;
+  pnl: number;        // USDT
+  pnlPercent: number; // -0.05 表示 -5%
+  holdMs: number;
+  exitReason: string;
 }
 
 // ─────────────────────────────────────────────────────
@@ -75,4 +93,10 @@ export interface Strategy {
     },
     ctx: StrategyContext
   ): ExitResult | null;
+
+  /**
+   * 可选：交易关闭后回调，策略可更新内部状态。
+   * 每次 paper/live 引擎关闭一笔交易后调用。
+   */
+  onTradeClosed?(result: TradeResult, ctx: StrategyContext): void;
 }
