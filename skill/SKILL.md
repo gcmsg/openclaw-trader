@@ -1,6 +1,6 @@
 ---
 name: openclaw-trader
-description: Operate and maintain the openclaw-trader crypto trading bot. Use when the user wants to set up, configure, monitor, backtest, or troubleshoot the automated trading system. Covers paper trading, backtesting, signal monitoring, news sentiment analysis, short/bearish engine, Futures testnet, health checks, strategy tuning, bug fixes, and weekly review reports. Also use when the user asks about trading signals, account status, cron jobs, backtesting results, or strategy parameters.
+description: Operate and maintain the openclaw-trader crypto trading bot. Use when the user wants to set up, configure, monitor, backtest, or troubleshoot the automated trading system. Covers paper trading, backtesting, Hyperopt parameter optimization, signal monitoring, news sentiment analysis, short/bearish engine, Futures testnet, health checks, strategy tuning, bug fixes, and weekly review reports. Also use when the user asks about trading signals, account status, cron jobs, backtesting results, strategy parameters, or Hyperopt/Bayesian optimization.
 ---
 
 # openclaw-trader
@@ -129,6 +129,16 @@ npm run backtest -- --strategy long-short --symbols BTCUSDT,ETHUSDT --days 60
 npm run backtest:compare -- --days 90
 npm run backtest -- --slippage-sweep        # Test multiple slippage values
 ```
+
+### Hyperopt — Bayesian Parameter Optimization (P6.1)
+```bash
+npm run hyperopt -- --symbol BTCUSDT --trials 100          # 100 trials, 60d data
+npm run hyperopt -- --symbol BTCUSDT --trials 200 --days 90  # longer history
+npm run hyperopt -- --symbol BTCUSDT --trials 100 --walk-forward  # 70/30 validation
+npm run hyperopt -- --symbol BTCUSDT --trials 100 --seed 42  # reproducible
+```
+Output: best params + YAML snippet + logs/hyperopt-results.json
+Objective: `score = sharpe - 0.5 × maxDrawdown%` | Constraint: `ma_short < ma_long`
 
 ### Signal attribution analysis
 ```bash

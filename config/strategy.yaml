@@ -165,6 +165,11 @@ schedule:
     enabled: true
     cron: "*/10 * * * *"  # 每 10 分钟检查突发高危新闻
     timeout_minutes: 5
+  pairlist_refresh:
+    script: "src/scripts/refresh-pairlist.ts"
+    enabled: true
+    cron: "0 0 * * *"    # 每天凌晨 0:00 刷新动态币种列表（P6.2）
+    timeout_minutes: 5
 
 # ───────────────────────────────────────
 # 运行模式

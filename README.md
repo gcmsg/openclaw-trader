@@ -138,6 +138,48 @@ npm run backtest:compare -- --days 90
 
 > ⚠️ Past performance does not guarantee future results. Always validate in paper mode before going live.
 
+### Hyperopt — Bayesian Parameter Optimization
+
+Automatically find the best strategy parameters using Bayesian optimization (TPE + Elite Evolution):
+
+```bash
+# Run 100 optimization trials on BTCUSDT (last 60 days)
+npm run hyperopt -- --symbol BTCUSDT --trials 100
+
+# Longer history for more robust results
+npm run hyperopt -- --symbol BTCUSDT --trials 200 --days 90
+
+# With walk-forward validation (70% train / 30% test)
+npm run hyperopt -- --symbol BTCUSDT --trials 100 --walk-forward
+
+# Reproducible run with fixed seed
+npm run hyperopt -- --symbol BTCUSDT --trials 100 --seed 42
+```
+
+**How it works:**
+1. **Warm-up phase** (first 20 trials): random sampling across the 8-dimensional parameter space
+2. **Optimization phase**: TPE with Gaussian KDE + elite perturbation selects candidates that maximize EI
+3. **Objective**: `score = sharpe_ratio - 0.5 × max_drawdown%` (higher is better)
+4. **Constraint**: `ma_short < ma_long` is always enforced (violated configs return score=-999)
+
+**Optimized parameters:**
+| Parameter | Range | Description |
+|-----------|-------|-------------|
+| `ma_short` | 5–50 | Short MA period |
+| `ma_long` | 20–200 | Long MA period |
+| `rsi_period` | 7–21 | RSI lookback |
+| `rsi_overbought` | 60–80 | RSI sell threshold |
+| `rsi_oversold` | 20–40 | RSI buy threshold |
+| `stop_loss_pct` | 2–10% | Stop loss |
+| `take_profit_pct` | 5–30% | Take profit |
+| `position_ratio` | 10–40% | Position size |
+
+**Output:**
+- Best parameters with copy-paste YAML snippet for `config/strategy.yaml`
+- Backtest metrics for best config (Sharpe, drawdown, win rate, etc.)
+- Walk-forward validation (degradation % between train/test)
+- Full trial history saved to `logs/hyperopt-results.json`
+
 ### Strategy Configuration
 
 Edit `config/strategy.yaml`:
@@ -604,3 +646,40 @@ npm run backtest:compare -- --days 90
 ```
 
 回测结果包括：总收益、最大回撤、夏普比率、胜率、利润因子、出场原因分布、各币种表现，JSON 报告保存在 `logs/backtest/`。
+
+### Hyperopt — 策略参数自动优化
+
+使用贝叶斯优化（TPE + 精英进化）自动搜索最优策略参数，替代手动调参：
+
+```bash
+# 对 BTCUSDT 运行 100 轮优化（最近 60 天数据）
+npm run hyperopt -- --symbol BTCUSDT --trials 100
+
+# 更长历史，结果更稳健
+npm run hyperopt -- --symbol BTCUSDT --trials 200 --days 90
+
+# 启用 Walk-Forward 验证（70% 训练 / 30% 测试）
+npm run hyperopt -- --symbol BTCUSDT --trials 100 --walk-forward
+
+# 固定随机种子（可复现）
+npm run hyperopt -- --symbol BTCUSDT --trials 100 --seed 42
+```
+
+**工作原理：**
+1. **预热阶段**（前 20 轮）：在 8 维参数空间随机采样
+2. **优化阶段**：TPE（高斯核密度估计）+ 精英扰动，选择期望改进（EI）最大的候选参数
+3. **目标函数**：`score = sharpe_ratio - 0.5 × 最大回撤%`（越高越好）
+4. **约束**：始终强制 `ma_short < ma_long`（违反约束返回 score=-999）
+
+**优化参数空间（8 维）：**
+- `ma_short`（5~50）、`ma_long`（20~200）：均线周期
+- `rsi_period`（7~21）、`rsi_overbought`（60~80）、`rsi_oversold`（20~40）：RSI 参数
+- `stop_loss_pct`（2%~10%）：止损比例
+- `take_profit_pct`（5%~30%）：止盈比例
+- `position_ratio`（10%~40%）：单笔仓位大小
+
+**输出结果：**
+- 最优参数 + 可直接粘贴的 `strategy.yaml` 配置片段
+- 最优参数的回测指标（夏普、最大回撤、胜率等）
+- Walk-Forward 验证（训练集/测试集性能退化率）
+- 完整试验历史保存至 `logs/hyperopt-results.json`

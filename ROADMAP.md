@@ -310,11 +310,36 @@ LunarCrush 免费注册 API Key 可用，建议主人提供
 
 ---
 
-## 当前项目状态（2026-02-25）
+---
+
+## Phase 6 — 智能优化
+
+### ✅ P6.1 Hyperopt 参数自动优化 — **已完成（2026-02-26）**
+
+**目标**：用贝叶斯优化自动搜索最优策略参数，替代手动调参。
+
+**实现：**
+- `src/optimization/param-space.ts`：8 维参数空间定义（MA/RSI/止损止盈/仓位）
+- `src/optimization/objective.ts`：目标函数（score = sharpe - 0.5 × maxDrawdown%）、约束验证
+- `src/optimization/bayesian.ts`：TPE 优化引擎（高斯 KDE + EI 选择 + 精英进化）、splitKlines 分割工具
+- `src/scripts/hyperopt.ts`：完整 CLI（--symbol/--trials/--days/--walk-forward/--seed）
+- `npm run hyperopt`：一键运行，结果保存 `logs/hyperopt-results.json`
+
+**测试**：36 个 hyperopt.test.ts（全部 mock，覆盖约束/score/optimizer/walk-forward）
+
+### 🔜 P6.2 ~ P6.x（规划中）
+
+- P6.2：多币种联合优化（共享风险参数）
+- P6.3：在线参数自适应（根据近期表现动态微调）
+- P6.4：组合优化（多策略权重分配）
+
+---
+
+## 当前项目状态（2026-02-26）
 
 | 指标 | 数值 |
 |------|------|
-| 测试覆盖 | **680 tests passing** |
+| 测试覆盖 | **830 tests passing** |
 | TypeScript errors | **0**（新增文件无错误） |
 | ESLint warnings | **0** |
 | Testnet 状态 | 🟢 运行中（tmux: trader-live） |
@@ -324,9 +349,11 @@ LunarCrush 免费注册 API Key 可用，建议主人提供
 | Phase 5 | ✅ P5.2 Regime 自适应参数 全链路完成 |
 | **Phase G** | ✅ **G1-G6 全部完成（Freqtrade 对齐）** |
 | **Phase F4** | ✅ **策略插件系统完成（3 内置策略 + 注册中心）** |
-| 总体评分 | **8.2/10** → v1.0 目标 **8.5/10** |
+| **Phase 6** | ✅ **P6.1 Hyperopt 贝叶斯优化 完成** |
+| 总体评分 | **8.5/10** → v1.0 目标达成 |
 
 ---
 
 *创建：2026-02-25 by Mia*  
-*基于全面代码审计和交易员视角评估*
+*基于全面代码审计和交易员视角评估*  
+*P6.1 完成：2026-02-26 by Mia*
