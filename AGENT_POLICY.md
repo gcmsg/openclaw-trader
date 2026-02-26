@@ -52,17 +52,46 @@
 
 ---
 
-## 📋 自动执行后的汇报格式
+## 🤖 Testnet 自主交易授权（2026-02-26 主人授权）
 
-每次自动修复或优化后，通过 Telegram 发送：
+**Testnet 账户可自主执行交易，无需每次授权。**
+
+规则：
+- 基于 Mia 的市场分析和技术信号自主决策入场/出场
+- 按时发送复盘报告（每日 09:00 + 21:00）
+- 每次开仓/平仓后 Telegram 通知主人
+- 单笔止损 5%，总亏损 20% 自动暂停
+- 不得超出 testnet 账户范围，不影响 paper 或实盘账户
+
+---
+
+## 📋 每次功能开发完成后的必做清单
+
+**顺序不可跳过：**
+
+1. **跑测试** — `npm test`，全部通过才继续
+2. **同步更新 README**（中英双语，对应章节）
+3. **按需更新 skill/SKILL.md**（新增模块/命令/配置时必须更新）
+4. **git commit**（清晰的 commit message）
+5. **git push origin master** — 推送到 GitHub
+
+```bash
+# 标准完成流程
+npm test && \
+git add -A && \
+git commit -m "feat/fix: ..." && \
+git push origin master
+```
+
+**自动执行后通过 Telegram 汇报：**
 
 ```
-🔧 [自动修复] 或 📈 [策略优化]
+🔧 [自动修复] 或 📈 [策略优化] 或 ✨ [新功能]
 
-问题：xxx
-修改：xxx
-验证：测试通过 / 已运行验证
+内容：xxx
+测试：638 passed (或新增数量)
 提交：git commit hash
+已推送：github.com/gcmsg/openclaw-trader
 ```
 
 ---
@@ -76,5 +105,5 @@
 
 ---
 
-*最后更新：2026-02-24 by Mia*
+*最后更新：2026-02-26 by Mia*
 *授权人：Terry Zhang（主人）*
