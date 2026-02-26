@@ -210,6 +210,6 @@ npx tsc --noEmit                # TypeScript 严格模式检查
 
 所有网络调用均已 mock，测试覆盖指标、信号、风险管理、订单执行、回测、优化、Telegram 指令等。
 
-## License
+## 许可证
 
-MIT
+[GPLv3](./LICENSE)

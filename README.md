@@ -220,4 +220,4 @@ All network calls are mocked. Tests cover indicators, signals, risk management, 
 
 ## License
 
-MIT
+[GPLv3](./LICENSE)
