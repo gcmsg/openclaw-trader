@@ -1,12 +1,12 @@
 # openclaw-trader
 
-> AI-powered crypto trading bot built on [OpenClaw](https://openclaw.ai) · 基于 OpenClaw 的 AI 驱动加密货币交易机器人
+> AI-powered crypto trading bot built on [OpenClaw](https://openclaw.ai)
+
+[🇨🇳 中文文档](./README_CN.md)
 
 ---
 
-## English
-
-### Features
+## Features
 
 - 📊 **Technical Analysis** — EMA (20/60) + RSI Wilder (14) + MACD (12/26/9) + ATR + VWAP (daily, ±1σ/±2σ bands) + CVD
 - ⚙️ **Config-driven Strategy** — Edit `config/strategy.yaml`, no code changes needed
@@ -37,9 +37,21 @@
 - 🩺 **Watchdog** — Every 5 min: alert if `price_monitor` hasn't run within 3 min; 30-min cooldown
 - 🗂️ **Log Rotation** — Daily: archive logs > 20 MB / 24h; keep 30 days; clean old paper backups
 - 🔄 **Position Reconciliation** — On live-monitor startup: diff local account vs exchange; halt if > 10% mismatch
-- ✅ **Tested** — 638 unit tests across indicators, signals, VWAP, CVD, ROI table, Kelly, attribution, watchdog, reconcile, liquidation heatmap, Reddit sentiment
+- 🔄 **Auto Walk-Forward** (P6.6) — Periodic re-optimization scheduler; `npm run auto-wf`
+- 🔌 **Strategy Plugin System** (F4) — Pluggable strategies: default (YAML), rsi-reversal, breakout; custom plugin in ~20 lines
+- 📊 **Strategy State Store** (P7.4) — Cross-candle persistence for strategy plugins; consecutive-loss protection in rsi-reversal
+- 🛡️ **Exchange-Native Stop Loss** (P7.1) — `STOP_LOSS_LIMIT` placed on Binance after fill; survives bot crash
+- ⚡ **Force Exit** (P7.2) — Market-order emergency close after 3 exit-order timeouts
+- 💬 **Telegram Commands** (P7.3) — `/profit`, `/positions`, `/balance`, `/status`, `/forcesell BTCUSDT`, `/help`
+- 🏠 **Break-Even Stop** (P8.1) — Auto-move SL to entry+offset after profit threshold; `customStoploss()` strategy hook
+- ✅ **Exit Confirmation** (P8.2) — Flash-crash protection: reject abnormal exits; `confirmExit()` strategy hook
+- 🛡️ **Protection Manager** (G1) — CooldownPeriod / MaxDrawdown / StoplossGuard / LowProfitPairs (Freqtrade design)
+- 📦 **DataProvider Cache** (G2) — Centralized kline cache with 30s TTL; pre-fetch all pairs per cycle
+- 🔄 **Enhanced Trailing Stop** (G4) — `trailing_stop_positive` / `trailing_stop_positive_offset` / `only_offset_is_reached`
+- 💾 **SQLite Persistence** (G5) — Optional `better-sqlite3` trade history; `paper.use_sqlite: true`
+- ✅ **Tested** — 1040 unit tests across indicators, signals, VWAP, CVD, ROI table, Kelly, attribution, watchdog, reconcile, liquidation heatmap, Reddit sentiment
 
-### Architecture
+## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -67,7 +79,7 @@
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Quick Start
+## Quick Start
 
 ```bash
 # Install dependencies
@@ -90,7 +102,7 @@ npm run paper:status
 npm test
 ```
 
-### Environment Variables
+## Environment Variables
 
 | Variable | Description |
 |---|---|
@@ -99,7 +111,7 @@ npm test
 | `OPENCLAW_GATEWAY_TOKEN` | OpenClaw gateway token for AI agent notifications |
 | `OPENCLAW_GATEWAY_PORT` | Gateway port (default: `18789`) |
 
-### Cron Setup
+## Cron Setup
 
 ```bash
 # Price monitor — every 1 minute
@@ -109,7 +121,7 @@ npm test
 0 */4 * * *  cd /path/to/openclaw-trader && source .env && npx tsx src/news/monitor.ts >> logs/news-monitor.log 2>&1
 ```
 
-### Backtesting
+## Backtesting
 
 Test any strategy against historical data before running it live:
 
@@ -138,7 +150,7 @@ npm run backtest:compare -- --days 90
 
 > ⚠️ Past performance does not guarantee future results. Always validate in paper mode before going live.
 
-### Hyperopt — Bayesian Parameter Optimization
+## Hyperopt — Bayesian Parameter Optimization
 
 Automatically find the best strategy parameters using Bayesian optimization (TPE + Elite Evolution):
 
@@ -180,7 +192,7 @@ npm run hyperopt -- --symbol BTCUSDT --trials 100 --seed 42
 - Walk-forward validation (degradation % between train/test)
 - Full trial history saved to `logs/hyperopt-results.json`
 
-### Strategy Configuration
+## Strategy Configuration
 
 Edit `config/strategy.yaml`:
 
@@ -204,7 +216,7 @@ paper:
   initial_usdt: 1000          # Simulated starting capital
 ```
 
-### Buy / Sell Logic
+## Buy / Sell Logic
 
 All signal conditions are defined in `config/strategy.yaml` under `signals.buy / sell / short / cover`. Mix and match freely.
 
@@ -230,7 +242,7 @@ All signal conditions are defined in `config/strategy.yaml` under `signals.buy /
 > **Short engine**: single-direction (no hedge mode). Longs and shorts share the `max_positions` pool.  
 > `marketSell` = open short · `marketBuyByQty` = cover short
 
-### Strategy Plugin System (F4)
+## Strategy Plugin System (F4)
 
 Beyond YAML condition matching, you can write **code-based strategy plugins** for complex or ML-driven logic.
 
@@ -286,37 +298,27 @@ import "./my-plugin.js";   // triggers registration
 npm run strategies
 ```
 
----
+## Telegram Commands (P7.3)
 
-### 策略插件系统 (F4)
-
-除 YAML 条件匹配外，可以编写**代码策略插件**实现复杂逻辑。
-
-**内置插件：**
-
-| ID | 名称 | 描述 |
-|---|---|---|
-| `default` | YAML 条件匹配 | 读取 YAML 的 `signals.buy/sell/short/cover`（现有行为，完全不变） |
-| `rsi-reversal` | RSI 均值回归 | RSI < 30 买入（超卖）；RSI > 70 卖出（超买）。适合横盘震荡市。 |
-| `breakout` | 趋势突破 | 收盘突破 N 根高点 + 量能放大 → 买入；跌破 N 根低点 → 卖出。适合趋势行情。 |
-
-**使用插件**：在策略 profile YAML 中设置 `strategy_id`：
-
-```yaml
-# config/strategies/my-strategy.yaml
-name: "RSI 均值回归策略"
-strategy_id: "rsi-reversal"   # ← 选择插件
-```
-
-**创建自定义插件**（TypeScript，约 20 行）— 见英文版示例。
+Interactive commands via Telegram or CLI:
 
 ```bash
-npm run strategies   # 列出所有已注册策略及描述
+# Run a command directly
+npm run cmd -- "/profit"
+npm run cmd -- "/positions"
+npm run cmd -- "/forcesell BTCUSDT testnet-default"
 ```
 
----
+| Command | Description |
+|---------|-------------|
+| `/profit` | Show P&L summary for all scenarios |
+| `/positions` | List all open positions |
+| `/balance` | Show USDT balance per scenario |
+| `/status` | System status (uptime, health) |
+| `/forcesell SYMBOL [scenario]` | Force-close a position |
+| `/help` | List available commands |
 
-### Project Structure
+## Project Structure
 
 ```
 src/
@@ -330,7 +332,9 @@ src/
 │   ├── futures-data.ts     Funding rate + OI (Binance public API)
 │   ├── macro-data.ts       DXY / SPX / VIX via FRED API
 │   ├── derivatives-data.ts Options skew, L/S ratio, basis
-│   └── onchain-data.ts     On-chain metrics (stablecoin flow, miner activity)
+│   ├── onchain-data.ts     On-chain metrics (stablecoin flow, miner activity)
+│   ├── pairlist.ts         Dynamic pairlist (volume/volatility filter)
+│   └── options-data.ts     Options OI + put/call ratio
 ├── strategy/
 │   ├── indicators.ts       EMA / RSI Wilder / MACD / ATR / VWAP / CVD
 │   ├── signals.ts          All signal checkers (20+ conditions)
@@ -341,7 +345,19 @@ src/
 │   ├── portfolio-risk.ts   Portfolio exposure + correlation-adjusted sizing
 │   ├── market-context.ts   Multi-timeframe context (1h/4h/1d + pivot points)
 │   ├── btc-dominance.ts    BTC dominance 30-day history + trend signals
-│   └── funding-rate-signal.ts  Funding rate extreme signals + 10-min cache
+│   ├── funding-rate-signal.ts  Funding rate extreme signals + 10-min cache
+│   ├── break-even.ts       Break-even stop + customStoploss resolver
+│   ├── confirm-exit.ts     Exit confirmation + flash-crash protection
+│   ├── roi-table.ts        ROI Table time-decayed take-profit
+│   ├── protection-manager.ts  4 Freqtrade protections
+│   └── events-calendar.ts  Economic event risk gate
+├── strategies/             Strategy plugin directory
+│   ├── types.ts            Strategy interface + hooks
+│   ├── registry.ts         Plugin registry
+│   ├── state-store.ts      Cross-candle state persistence
+│   ├── default.ts          YAML condition match (existing behavior)
+│   ├── rsi-reversal.ts     RSI mean reversion plugin
+│   └── breakout.ts         Trend breakout plugin
 ├── paper/
 │   ├── account.ts          Virtual account (long + short, P&L, DCA state)
 │   ├── engine.ts           Signal handler + all exit conditions
@@ -366,7 +382,15 @@ src/
 │   ├── heartbeat.ts        Task ping/status tracking (logs/heartbeat.json)
 │   ├── checker.ts          Health check cron (30-min); alert on failure
 │   ├── watchdog.ts         Price-monitor liveness check (5-min); 30-min cooldown
-│   └── log-rotate.ts       Daily log archival + paper backup cleanup
+│   ├── log-rotate.ts       Daily log archival + paper backup cleanup
+│   └── kill-switch.ts      Circuit breaker (halt trading on trigger)
+├── telegram/
+│   └── command-handler.ts  Telegram command parser + handler (/profit, /forcesell…)
+├── optimization/           Hyperopt + Walk-Forward optimization
+├── persistence/
+│   └── db.ts               SQLite persistence layer (better-sqlite3)
+├── web/
+│   └── dashboard-server.ts Web dashboard server (Node http, no extra deps)
 ├── config/
 │   └── loader.ts           Runtime config loader (merges strategy profiles)
 ├── notify/
@@ -399,7 +423,7 @@ logs/
 └── kline-cache/            Cached historical K-line data
 ```
 
-### Schedule Configuration
+## Schedule Configuration
 
 All scheduled tasks are defined in `config/strategy.yaml` under `schedule:`.
 After editing, run `npm run cron:sync` to apply changes to system crontab.
@@ -437,7 +461,7 @@ schedule:
     timeout_minutes: 10
 ```
 
-### Health Monitoring
+## Health Monitoring
 
 ```bash
 # Manual health check
@@ -458,7 +482,7 @@ Health status levels:
 
 Alerts are sent to Telegram only when issues are detected (silent when healthy).
 
-### Dynamic Pairlist (P6.2)
+## Dynamic Pairlist (P6.2)
 
 Automatically selects the best trading pairs from Binance daily, replacing the fixed 8-symbol list:
 
@@ -479,7 +503,7 @@ npm run cron:sync
 
 When changes are detected, a Telegram notification lists added/removed pairs and updates `logs/current-pairlist.json`.
 
-### Web Real-Time Dashboard (P6.8)
+## Web Real-Time Dashboard (P6.8)
 
 Lightweight web interface to monitor positions, equity curve, and signal history in real time:
 
@@ -503,7 +527,7 @@ DASHBOARD_PORT=3000 npm run dashboard
 - Recent 20 trades table
 - Recent 20 signal history records
 
-### Roadmap
+## Roadmap
 
 **Phase 0 — Critical Fixes** ✅
 - [x] Regime filter (breakout_watch / reduced_size) in monitor + backtest
@@ -533,259 +557,34 @@ DASHBOARD_PORT=3000 npm run dashboard
 - [ ] Signal statistics analysis (`getSignalStats()`)
 - [ ] Live trading mode (`mode: auto`)
 
-**Phase 6 — Intelligence & Ops** *(partial)*
+**Phase 6 — Intelligence & Ops** ✅
 - [x] P6.1 Hyperopt — Bayesian parameter optimization (`npm run hyperopt`)
 - [x] P6.2 Dynamic Pairlist — Daily auto-selection from Binance (`npm run pairlist:refresh`)
 - [x] P6.3 Intra-candle backtest simulation
 - [x] P6.4 Options market data signals
 - [x] P6.5 Economic calendar risk gate
+- [x] P6.6 Auto Walk-Forward — Periodic re-optimization (`npm run auto-wf`)
 - [x] P6.7 Kill switch circuit breaker
 - [x] P6.8 Web real-time dashboard (`npm run dashboard`)
 
-### License
+**Phase 7 — Reliability & Safety** ✅
+- [x] P7.1 Exchange-native stop loss (STOP_LOSS_LIMIT on Binance)
+- [x] P7.2 Force exit (market order after 3 timeout retries)
+- [x] P7.3 Telegram interactive commands (/profit, /positions, /forcesell…)
+- [x] P7.4 Strategy state store (cross-candle persistence)
+
+**Phase 8 — Freqtrade Parity** ✅
+- [x] P8.1 Break-even stop + customStoploss() strategy hook
+- [x] P8.2 Exit confirmation + confirmExit() strategy hook
+
+**Phase G — Freqtrade Alignment** ✅
+- [x] G1 Protection Manager (4 protections)
+- [x] G2 DataProvider centralized kline cache
+- [x] G3 Complete order timeout loop
+- [x] G4 Enhanced trailing stop (positive/offset)
+- [x] G5 SQLite optional persistence
+- [x] G6 P5.3/P5.4 research (Binance OI + Reddit)
+
+## License
 
 MIT
-
----
-
-## 中文
-
-### 功能特性
-
-- 📊 **技术分析** — EMA（20/60）+ RSI Wilder（14）+ MACD + ATR + VWAP 日内（±1σ/±2σ）+ CVD
-- ⚙️ **配置驱动策略** — 编辑 `config/strategy.yaml` 即可，无需改代码
-- 🗞️ **新闻情绪** — 恐惧贪婪 + LLM 语义评分 + 关键词门控 + 6 小时缓存
-- 🚨 **突发新闻监控** — 每 10 分钟扫 30 个高危词（hack/SEC/脱锚）；触发后暂停开仓 2 小时
-- 🎭 **模拟盘** — 使用真实价格，记录盈亏/胜率/Calmar 比率
-- 🔬 **回测引擎** — 夏普/索提诺/Calmar/BTC 基准 Alpha；`--slippage-sweep` 滑点敏感性
-- 📉 **空头引擎** — 开空/平空；反向止损/追踪；与多头共享仓位池
-- 🏦 **Binance Testnet & 实盘** — Spot + Futures Testnet 已验证
-- 🔔 **AI 信号触发** — 无信号时零 token 消耗
-- 🛡️ **风险管理** — 止损/止盈/追踪止损/R:R 预过滤/日亏限额/ATR 仓位/分批止盈/时间止损
-- 🏁 **市场状态过滤** — 趋势/横盘/突破等状态识别；横盘自动跳过或减半仓位
-- 🔄 **Regime 自适应参数** — 检测到震荡市时自动切换 TP/止损/ROI Table，`regime_overrides` 配置
-- 💥 **清算热力图** (P5.3) — Binance 合约公开接口（无需 Key），BTC + ETH 多/空爆仓统计，辅助判断市场风险
-- 🗣️ **Reddit 社区情绪** (P5.4) — Reddit 公开 JSON API（无需 Auth），r/CryptoCurrency + r/Bitcoin，关键词情绪分析 + 热帖排行
-- ⏱️ **ROI Table 时间衰减止盈** — 持仓越久止盈目标越低（仿 Freqtrade `minimal_roi`）；三引擎一致
-- 🛡️ **入场滑点防闪崩** — 下单前实时检查价格偏离，超 `max_entry_slippage` 自动取消
-- 📋 **订单状态机** — `PendingOrder` 追踪入场/止损/止盈订单；部分成交告警；启动时扫描孤儿订单
-- 🎯 **Kelly 动态仓位** — 基于近期胜率和盈亏比动态计算，样本不足退化固定比例
-- 🔗 **相关性过滤** — 组合热度加权（非二值），阈值 0.75，连续缩减仓位
-- 💹 **资金费率信号** — 极端多头/空头拥挤时触发逆向信号，10 分钟缓存
-- 📈 **BTC 主导率追踪** — 30 天历史 + 7 日趋势信号（山寨风险/山寨季节）
-- 📊 **信号归因分析** — `npm run attribution`：统计各信号组合的胜率/盈亏比/止损次数
-- 🩺 **Watchdog 自监控** — 每 5 分钟检查 price_monitor 是否活着；30 分钟冷却告警
-- 🗂️ **日志轮转** — 每日凌晨自动归档；保留 30 天；清理旧备份
-- 🔄 **持仓对账** — live-monitor 启动时比对本地 vs 交易所；差异 > 10% 暂停启动
-- ✅ **完整测试** — 638 条单元测试
-
-### 运行架构
-
-```
-┌────────────────────────────────────────────────────────┐
-│  每 1 分钟   src/monitor.ts                            │
-│  → K 线 → VWAP/CVD/指标 → 信号检测                    │
-│  → Regime 过滤 → R:R 检查 → 相关性 → Kelly 仓位       │
-│  → 紧急暂停? → 情绪门控 → 执行/通知                   │
-├────────────────────────────────────────────────────────┤
-│  每 5 分钟   src/health/watchdog.ts                    │
-│  → 检查 price_monitor 心跳；超时 → Telegram 告警      │
-├────────────────────────────────────────────────────────┤
-│  每 10 分钟  src/news/emergency-monitor.ts             │
-│  → 扫描最新新闻 30 个高危关键词                        │
-│  → 匹配 ≥ 2 → 暂停开仓 2h + 立即 Telegram 告警       │
-├────────────────────────────────────────────────────────┤
-│  每 4 小时   src/news/monitor.ts                       │
-│  → 恐惧贪婪 + 新闻 + 情绪 → news-report.json          │
-├────────────────────────────────────────────────────────┤
-│  每 30 分钟  src/health/checker.ts                     │
-│  → 检查所有 cron 任务状态；异常时告警                  │
-├────────────────────────────────────────────────────────┤
-│  每天 0 点   src/health/log-rotate.ts                  │
-│  → 归档日志 > 20MB/24h；删除 30 天+ 归档              │
-└────────────────────────────────────────────────────────┘
-```
-
-### 快速开始
-
-```bash
-# 安装依赖
-npm install
-
-# 配置环境变量
-cp .env.example .env
-# 填写 API Key
-
-# 编辑策略（实时生效，无需重启）
-vim config/strategy.yaml
-
-# 单次运行（测试）
-npm run monitor
-
-# 查看模拟盘账户
-npm run paper:status
-
-# 运行测试
-npm test
-```
-
-### 运行模式
-
-| 模式 | 说明 |
-|---|---|
-| `notify_only` | 只检测信号并通知，不下单 |
-| `paper` | 模拟盘：用真实价格模拟交易，追踪盈亏 |
-| `auto` | 自动实盘交易（谨慎开启）|
-
-### 买卖逻辑
-
-| 信号 | 触发条件 | 市场 |
-|---|---|---|
-| **买入** | EMA20 > EMA60（多头）+ MACD 金叉 + RSI 未超买 | Spot / Futures |
-| **卖出** | EMA20 < EMA60（趋势反转） | Spot / Futures |
-| **开空** | EMA20 < EMA60（空头）+ MACD 死叉 + RSI 未超卖 | **Futures / Margin** |
-| **平空** | EMA20 > EMA60（趋势反转） | **Futures / Margin** |
-| **止损** | 多头：价格 ≤ 入场价×(1-SL%) · 空头：价格 ≥ 入场价×(1+SL%) | — |
-| **止盈** | 多头：价格 ≥ 入场价×(1+TP%) · 空头：价格 ≤ 入场价×(1-TP%) | — |
-| **追踪止损** | 盈利达激活阈值后，从极值回撤 callback% 触发 | — |
-
-> 空头引擎采用单向模式（非对冲），多空仓位共享 `max_positions` 上限
-
-### 进度
-
-**Phase 0 — 修复致命问题** ✅
-- [x] Regime 市场状态感知（breakout_watch 跳过 / reduced_size 减仓）
-- [x] 动量衰竭出场：`macd_histogram_shrinking` + `rsi_overbought_exit`
-- [x] 回测参数修正：真实滑点 + `--slippage-sweep` 滑点敏感性
-- [x] BTC Benchmark + Calmar 比率 + Alpha 超额收益
-
-**Phase 1 — 核心 Alpha** ✅
-- [x] R:R 入场预过滤（`risk.min_rr`，可选开启）
-- [x] CVD 累计成交量差值（K 线近似 + aggTrade WebSocket 框架）
-- [x] 相关性过滤默认开启（阈值 0.75，连续缩减）
-- [x] 资金费率逆向信号（10 分钟缓存）
-
-**Phase 2 — 风险与归因** ✅
-- [x] VWAP 日内（±1σ/±2σ）+ 6 个信号条件
-- [x] BTC 主导率 30 天历史 + 趋势信号
-- [x] 信号归因报告（`npm run attribution`）
-- [x] Kelly 动态仓位（半 Kelly，样本不足退化固定）
-
-**Phase 3 — 运维加固** ✅
-- [x] Watchdog：price_monitor 超 3 分钟未运行 → Telegram 告警
-- [x] 日志轮转：每日归档，保留 30 天，清理 7 天+ 备份
-- [x] 启动持仓对账：本地 vs 交易所，差异 > 10% 暂停
-- [x] 突发新闻监控：30 个高危词，触发自动暂停开仓 2h
-
-**Phase 4 — 进阶** *(需 50+ 笔真实交易记录)*
-- [ ] 实盘自动交易（`mode: auto`）
-
-**Phase 6 — 智能与运维** *(部分完成)*
-- [x] P6.1 Hyperopt 贝叶斯参数优化（`npm run hyperopt`）
-- [x] P6.2 动态币种列表 — 每日从 Binance 自动选取（`npm run pairlist:refresh`）
-- [x] P6.3 K 线内回测仿真
-- [x] P6.4 期权市场数据信号
-- [x] P6.5 经济日历风险门控
-- [x] P6.7 熔断器（Kill Switch）
-- [x] P6.8 Web 实时仪表盘（`npm run dashboard`）
-
-### 回测使用
-
-```bash
-# 默认策略回测（90 天）
-npm run backtest
-
-# 指定策略和天数
-npm run backtest -- --strategy conservative --days 90
-npm run backtest -- --strategy aggressive --days 60
-
-# 自定义币种和时间框架
-npm run backtest -- --strategy trend --symbols BTCUSDT,ETHUSDT --timeframe 4h --days 180
-
-# 所有策略对比
-npm run backtest:compare -- --days 90
-```
-
-回测结果包括：总收益、最大回撤、夏普比率、胜率、利润因子、出场原因分布、各币种表现，JSON 报告保存在 `logs/backtest/`。
-
-### Hyperopt — 策略参数自动优化
-
-使用贝叶斯优化（TPE + 精英进化）自动搜索最优策略参数，替代手动调参：
-
-```bash
-# 对 BTCUSDT 运行 100 轮优化（最近 60 天数据）
-npm run hyperopt -- --symbol BTCUSDT --trials 100
-
-# 更长历史，结果更稳健
-npm run hyperopt -- --symbol BTCUSDT --trials 200 --days 90
-
-# 启用 Walk-Forward 验证（70% 训练 / 30% 测试）
-npm run hyperopt -- --symbol BTCUSDT --trials 100 --walk-forward
-
-# 固定随机种子（可复现）
-npm run hyperopt -- --symbol BTCUSDT --trials 100 --seed 42
-```
-
-**工作原理：**
-1. **预热阶段**（前 20 轮）：在 8 维参数空间随机采样
-2. **优化阶段**：TPE（高斯核密度估计）+ 精英扰动，选择期望改进（EI）最大的候选参数
-3. **目标函数**：`score = sharpe_ratio - 0.5 × 最大回撤%`（越高越好）
-4. **约束**：始终强制 `ma_short < ma_long`（违反约束返回 score=-999）
-
-**优化参数空间（8 维）：**
-- `ma_short`（5~50）、`ma_long`（20~200）：均线周期
-- `rsi_period`（7~21）、`rsi_overbought`（60~80）、`rsi_oversold`（20~40）：RSI 参数
-- `stop_loss_pct`（2%~10%）：止损比例
-- `take_profit_pct`（5%~30%）：止盈比例
-- `position_ratio`（10%~40%）：单笔仓位大小
-
-**输出结果：**
-- 最优参数 + 可直接粘贴的 `strategy.yaml` 配置片段
-- 最优参数的回测指标（夏普、最大回撤、胜率等）
-- Walk-Forward 验证（训练集/测试集性能退化率）
-- 完整试验历史保存至 `logs/hyperopt-results.json`
-
-### 动态币种列表（P6.2）
-
-每日从 Binance 自动选取最优交易对，替代固定 8 个币种：
-
-```bash
-# 手动刷新动态币种列表
-npm run pairlist:refresh
-
-# 通过 cron 在每天凌晨自动运行
-npm run cron:sync
-```
-
-**筛选逻辑：**
-1. 调用 `GET https://api.binance.com/api/v3/ticker/24hr`（免费，无需 API Key）
-2. 过滤：仅保留 USDT 计价 + 排除稳定币（USDC/BUSD/DAI 等）+ 排除杠杆代币（UP/DOWN/BEAR/BULL）
-3. 按 24h 成交量 ≥ 50M USDT 过滤（可配置）
-4. 按成交量 / 波动率 / 动量排序（可配置）
-5. 取前 15 个；白名单始终包含，黑名单始终排除
-
-检测到变化时，通过 Telegram 通知新增/移除的币种，并更新 `logs/current-pairlist.json`。
-
-### Web 实时仪表盘（P6.8）
-
-轻量级 Web 界面，实时展示持仓状态、资金曲线和信号历史：
-
-```bash
-# 启动仪表盘服务器（默认 8080 端口）
-npm run dashboard
-
-# 自定义端口
-DASHBOARD_PORT=3000 npm run dashboard
-```
-
-**API 端点：**
-- `GET /` — HTML 仪表盘页面（每 10 秒自动刷新）
-- `GET /api/data` — JSON 数据（账户、持仓、交易记录、资金曲线、信号）
-- `GET /api/health` — 系统健康状态（运行时间、内存、Node.js 版本）
-
-**仪表盘功能：**
-- 总资产 + 今日盈亏（大字显示）
-- 持仓表格：币种 / 入场价 / PnL% / 止损距离
-- 资金曲线图（Chart.js，从初始资金到现在）
-- 最近 20 笔交易记录
-- 最近 20 条信号历史
