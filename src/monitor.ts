@@ -9,7 +9,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { getKlines } from "./exchange/binance.js";
 import { DataProvider } from "./exchange/data-provider.js";
-import { calculateIndicators } from "./strategy/indicators.js";
+
 import { notifySignal, notifyError, notifyPaperTrade, notifyStopLoss } from "./notify/openclaw.js";
 import {
   handleSignal,
@@ -20,6 +20,8 @@ import {
   formatSummaryMessage,
 } from "./paper/engine.js";
 import { loadNewsReport, evaluateSentimentGate } from "./news/sentiment-gate.js";
+import { checkMtfFilter } from "./strategy/mtf-filter.js";
+import { loadRecentTrades } from "./strategy/recent-trades.js";
 import { readSentimentCache } from "./news/sentiment-cache.js";
 import { processSignal } from "./strategy/signal-engine.js";
 import { fetchFundingRatePct } from "./strategy/funding-rate-signal.js";
@@ -104,32 +106,11 @@ async function scanSymbol(
       if (klines.length < limit) return;
     }
 
-    // ── 多时间框架趋势过滤（MTF）──────────────────────────
-    // 如果配置了 trend_timeframe，拉取更高级别 K 线判断大趋势方向
-    // 买入信号只在大趋势为多头时执行；卖出/止损不受限制
-    let mtfTrendBull: boolean | null = null; // null = 未启用
-    if (cfg.trend_timeframe && cfg.trend_timeframe !== cfg.timeframe) {
-      try {
-        const trendLimit = cfg.strategy.ma.long + 10;
-        // 优先用 DataProvider 缓存（MTF K 线，由 runScenario 预拉）
-        const trendKlines = provider.get(symbol, cfg.trend_timeframe)
-          ?? await getKlines(symbol, cfg.trend_timeframe, trendLimit);
-        const trendInd = calculateIndicators(
-          trendKlines,
-          cfg.strategy.ma.short,
-          cfg.strategy.ma.long,
-          cfg.strategy.rsi.period,
-          cfg.strategy.macd
-        );
-        if (trendInd) {
-          mtfTrendBull = trendInd.maShort > trendInd.maLong;
-          log(
-            `${scenarioPrefix}${symbol}: MTF(${cfg.trend_timeframe}) MA短=${trendInd.maShort.toFixed(4)} MA长=${trendInd.maLong.toFixed(4)} → ${mtfTrendBull ? "多头✅" : "空头🚫"}`
-          );
-        }
-      } catch (err: unknown) {
-        log(`${scenarioPrefix}${symbol}: MTF 获取失败，跳过趋势过滤 — ${String(err)}`);
-      }
+    // ── 多时间框架趋势过滤（MTF）— 使用共享函数（A-001 fix）──
+    const mtfCheck = await checkMtfFilter(symbol, "buy", cfg, provider);
+    const mtfTrendBull = mtfCheck.trendBull;
+    if (mtfCheck.trendBull !== null) {
+      log(`${scenarioPrefix}${symbol}: MTF(${cfg.trend_timeframe}) → ${mtfCheck.trendBull ? "多头✅" : "空头🚫"}`);
     }
 
     // ── 构建外部上下文（CVD / 资金费率 / BTC 主导率 / 持仓方向 / 相关性 K 线）──
@@ -190,7 +171,8 @@ async function scanSymbol(
       ...(currentPosSide !== undefined ? { currentPosSide } : {}),
       ...(Object.keys(heldKlinesMap).length > 0 ? { heldKlinesMap } : {}),
     };
-    const engineResult = processSignal(symbol, klines, cfg, externalCtx);
+    const recentTrades = loadRecentTrades();
+    const engineResult = processSignal(symbol, klines, cfg, externalCtx, recentTrades);
 
     if (!engineResult.indicators) return;
 

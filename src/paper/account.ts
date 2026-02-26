@@ -508,9 +508,10 @@ export function paperCoverShort(
   opts: {
     feeRate?: number;
     slippagePercent?: number;
+    overrideQty?: number; // A-007: 部分平空（分批止盈使用）
   } = {}
 ): PaperTrade | null {
-  const { feeRate = 0.001, slippagePercent = 0.05 } = opts;
+  const { feeRate = 0.001, slippagePercent = 0.05, overrideQty } = opts;
 
   const position = account.positions[symbol];
   if (position?.side !== "short") return null;
@@ -519,33 +520,46 @@ export function paperCoverShort(
   const slippageAmount = (price * slippagePercent) / 100;
   const execPrice = price + slippageAmount;
 
-  const { quantity, entryPrice } = position;
-  const marginUsdt = position.marginUsdt ?? quantity * entryPrice;
+  const { entryPrice } = position;
+  // 部分平空支持
+  const coverQty = overrideQty && overrideQty > 0
+    ? Math.min(overrideQty, position.quantity)
+    : position.quantity;
+  const isPartial = coverQty < position.quantity;
+  const marginUsdt = position.marginUsdt ?? position.quantity * entryPrice;
+  const coverMargin = isPartial ? marginUsdt * (coverQty / position.quantity) : marginUsdt;
 
-  const grossUsdt = quantity * execPrice; // 买回所需花费
+  const grossUsdt = coverQty * execPrice; // 买回所需花费
   const fee = grossUsdt * feeRate;
-  const pnl = (entryPrice - execPrice) * quantity - fee; // 正数=盈利，负数=亏损
-  const pnlPercent = pnl / marginUsdt;
+  const pnl = (entryPrice - execPrice) * coverQty - fee; // 正数=盈利，负数=亏损
+  const pnlPercent = coverMargin > 0 ? pnl / coverMargin : 0;
 
   // 保护：最多亏光保证金（无负余额）
-  const returnAmount = Math.max(0, marginUsdt + pnl);
+  const returnAmount = Math.max(0, coverMargin + pnl);
 
   if (pnl < 0) {
     account.dailyLoss.loss += Math.abs(pnl);
   }
 
   account.usdt += returnAmount;
-  Reflect.deleteProperty(account.positions, symbol);
+  if (isPartial) {
+    position.quantity -= coverQty;
+    if (position.marginUsdt !== undefined) {
+      position.marginUsdt -= coverMargin;
+    }
+  } else {
+    Reflect.deleteProperty(account.positions, symbol);
+  }
 
   const trade: PaperTrade = {
     id: generateId(),
     symbol,
     side: "cover",
-    quantity,
+    quantity: coverQty,
     price: execPrice,
     usdtAmount: returnAmount,
     fee,
-    slippage: quantity * slippageAmount,
+    slippage: coverQty * slippageAmount,
     timestamp: Date.now(),
     reason,
     pnl,

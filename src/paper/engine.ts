@@ -253,6 +253,14 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
       // 记录开空信号
       const newShortPos = trade ? account.positions[signal.symbol] : undefined;
       if (newShortPos) {
+        // A-007 fix: 空头也初始化分批止盈
+        if (cfg.risk.take_profit_stages?.length) {
+          newShortPos.tpStages = cfg.risk.take_profit_stages.map((s) => ({
+            stagePct: s.at_percent,
+            closeRatio: s.close_ratio,
+            triggered: false,
+          }));
+        }
         try {
           const sigId = logSignal({
             symbol: signal.symbol,
@@ -324,7 +332,11 @@ function checkStagedTakeProfit(
   if (!pos.tpStages) return;
   // ── Guard: entryPrice <= 0 会导致 pnlPercent 为 NaN ──
   if (pos.entryPrice <= 0) return;
-  const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+  const isShort = pos.side === "short";
+  // A-007 fix: 空头盈利方向相反
+  const pnlPercent = isShort
+    ? ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100
+    : ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
 
   // 用 entries() 获取索引，避免 indexOf 的 O(n) 搜索
   for (const [idx, stage] of pos.tpStages.entries()) {
@@ -336,10 +348,10 @@ function checkStagedTakeProfit(
     if (partialQty <= 0) continue;
 
     const label = `分批止盈第${idx + 1}档：盈利 ${pnlPercent.toFixed(2)}%，平掉 ${(stage.closeRatio * 100).toFixed(0)}% 仓位`;
-    const trade = paperSell(account, symbol, currentPrice, label, {
-      ...paperOpts(cfg),
-      overrideQty: partialQty,
-    });
+    // A-007 fix: 空头用 paperCoverShort
+    const trade = isShort
+      ? paperCoverShort(account, symbol, currentPrice, label, { ...paperOpts(cfg), overrideQty: partialQty })
+      : paperSell(account, symbol, currentPrice, label, { ...paperOpts(cfg), overrideQty: partialQty });
     if (trade) {
       stage.triggered = true;
       triggered.push({ symbol, trade, reason: "take_profit", pnlPercent });
@@ -576,8 +588,8 @@ export function checkExitConditions(
       continue;
     }
 
-    // ── 分批止盈（仅多头，无法全仓出场时才检查）──
-    if (!isShort && pos.tpStages) {
+    // ── 分批止盈（多头和空头均支持，A-007 fix）──
+    if (pos.tpStages) {
       checkStagedTakeProfit(account, symbol, pos, currentPrice, cfg, triggered);
     }
   }

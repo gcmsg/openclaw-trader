@@ -16,7 +16,8 @@
 import fs from "fs";
 import path from "path";
 import { getKlines } from "../exchange/binance.js";
-import { calculateIndicators } from "../strategy/indicators.js";
+import { checkMtfFilter } from "../strategy/mtf-filter.js";
+import { loadRecentTrades } from "../strategy/recent-trades.js";
 import { processSignal } from "../strategy/signal-engine.js";
 import { loadStrategyConfig, loadPaperConfig, buildPaperRuntime } from "../config/loader.js";
 import { createLiveExecutor } from "../live/executor.js";
@@ -136,7 +137,8 @@ async function processSymbol(
     ...(currentPosSide !== undefined ? { currentPosSide } : {}),
     ...(Object.keys(heldKlinesMap).length > 0 ? { heldKlinesMap } : {}),
   };
-  const engineResult = processSignal(symbol, klines, cfg, externalCtx);
+  const recentTrades = loadRecentTrades();
+  const engineResult = processSignal(symbol, klines, cfg, externalCtx, recentTrades);
 
   if (!engineResult.indicators) {
     log(`${label} ${symbol}: 指标计算失败，跳过`);
@@ -182,34 +184,14 @@ async function processSymbol(
       }
     } catch { /* 日历加载失败静默跳过 */ }
 
-    // MTF 趋势过滤
-    if (cfg.trend_timeframe && cfg.trend_timeframe !== cfg.timeframe) {
-      try {
-        const trendLimit = cfg.strategy.ma.long + 10;
-        const trendKlines = provider.get(symbol, cfg.trend_timeframe)
-          ?? await getKlines(symbol, cfg.trend_timeframe, trendLimit);
-        const trendInd = calculateIndicators(
-          trendKlines,
-          cfg.strategy.ma.short,
-          cfg.strategy.ma.long,
-          cfg.strategy.rsi.period,
-          cfg.strategy.macd
-        );
-        if (trendInd) {
-          const mtfTrendBull = trendInd.maShort > trendInd.maLong;
-          log(`${label} ${symbol}: MTF(${cfg.trend_timeframe}) → ${mtfTrendBull ? "多头✅" : "空头🚫"}`);
-          if (signal.type === "buy" && !mtfTrendBull) {
-            log(`${label} ${symbol}: 🚫 MTF 趋势过滤：${cfg.trend_timeframe} 空头，忽略买入`);
-            return;
-          }
-          if (signal.type === "short" && mtfTrendBull) {
-            log(`${label} ${symbol}: 🚫 MTF 趋势过滤：${cfg.trend_timeframe} 多头，忽略开空`);
-            return;
-          }
-        }
-      } catch (err: unknown) {
-        log(`${label} ${symbol}: MTF 获取失败，跳过趋势过滤 — ${String(err)}`);
-      }
+    // MTF 趋势过滤 — 使用共享函数（A-001 fix）
+    const mtfCheck = await checkMtfFilter(symbol, signal.type, cfg, provider);
+    if (mtfCheck.trendBull !== null) {
+      log(`${label} ${symbol}: MTF(${cfg.trend_timeframe}) → ${mtfCheck.trendBull ? "多头✅" : "空头🚫"}`);
+    }
+    if (mtfCheck.filtered) {
+      log(`${label} ${symbol}: 🚫 ${mtfCheck.reason}`);
+      return;
     }
 
     // 情绪门控
