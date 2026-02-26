@@ -90,12 +90,30 @@ export async function fetchDynamicPairlist(cfg?: PairlistConfig): Promise<Ranked
   const whitelist = cfg?.whitelist ?? [];
   const sortBy = cfg?.sortBy ?? "volume";
 
-  // 1. 拉取 Binance 24h tickers
-  const response = await fetch("https://api.binance.com/api/v3/ticker/24hr");
-  if (!response.ok) {
-    throw new Error(`Binance API error: ${response.status} ${response.statusText}`);
+  // 1. 拉取 Binance 24h tickers（AbortController 10s 超时保护）
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
+  let tickers: BinanceTicker24h[];
+  try {
+    const response = await fetch("https://api.binance.com/api/v3/ticker/24hr", {
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) {
+      throw new Error(`Binance API error: ${response.status} ${response.statusText}`);
+    }
+    tickers = (await response.json()) as BinanceTicker24h[];
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("Binance API timeout after 10s");
+    }
+    if (err instanceof Error && err.message.startsWith("Binance API error:")) {
+      throw err;
+    }
+    throw new Error(`Binance fetch failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const tickers = (await response.json()) as BinanceTicker24h[];
 
   // 2. 过滤
   const filtered = tickers.filter((t) => {

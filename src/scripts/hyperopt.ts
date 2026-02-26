@@ -42,7 +42,7 @@ interface CliArgs {
   save: boolean;
 }
 
-function parseArgs(argv: string[]): CliArgs {
+export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     symbol: "BTCUSDT",
     trials: 100,
@@ -65,19 +65,25 @@ function parseArgs(argv: string[]): CliArgs {
         args.symbol = next();
         break;
       case "--trials":
-      case "-t":
-        args.trials = parseInt(next(), 10);
+      case "-t": {
+        const v = parseInt(next(), 10);
+        args.trials = Number.isNaN(v) ? 100 : v;
         break;
+      }
       case "--days":
-      case "-d":
-        args.days = parseInt(next(), 10);
+      case "-d": {
+        const v = parseInt(next(), 10);
+        args.days = Number.isNaN(v) ? 60 : v;
         break;
+      }
       case "--walk-forward":
         args.walkForward = true;
         break;
-      case "--seed":
-        args.seed = parseInt(next(), 10);
+      case "--seed": {
+        const v = parseInt(next(), 10);
+        if (!Number.isNaN(v)) args.seed = v;
         break;
+      }
       case "--no-save":
         args.save = false;
         break;
@@ -341,7 +347,10 @@ async function main(): Promise<void> {
 // 入口
 // ─────────────────────────────────────────────────────
 
-main().catch((err: unknown) => {
-  console.error("❌ Hyperopt 运行失败:", err);
-  process.exit(1);
-});
+// 只在直接执行时运行（避免单元测试 import 时触发 main）
+if (process.argv[1]?.endsWith("hyperopt.ts") || process.argv[1]?.endsWith("hyperopt.js")) {
+  main().catch((err: unknown) => {
+    console.error("❌ Hyperopt 运行失败:", err);
+    process.exit(1);
+  });
+}

@@ -22,7 +22,7 @@ import type { Kline } from "../types.js";
 // CLI 参数解析
 // ─────────────────────────────────────────────────────
 
-function parseArgs(argv: string[]): {
+export function parseArgs(argv: string[]): {
   useBacktest: boolean;
   days: number;
   minTrades: number;
@@ -32,13 +32,16 @@ function parseArgs(argv: string[]): {
   const useBacktest = args.includes("--backtest");
 
   const daysIdx = args.indexOf("--days");
-  const days = daysIdx >= 0 ? parseInt(args[daysIdx + 1] ?? "30", 10) : 30;
+  const daysRaw = daysIdx >= 0 ? parseInt(args[daysIdx + 1] ?? "30", 10) : 30;
+  const days = Number.isNaN(daysRaw) ? 30 : daysRaw;
 
   const minIdx = args.indexOf("--min-trades");
-  const minTrades = minIdx >= 0 ? parseInt(args[minIdx + 1] ?? "5", 10) : 5;
+  const minTradesRaw = minIdx >= 0 ? parseInt(args[minIdx + 1] ?? "5", 10) : 5;
+  const minTrades = Number.isNaN(minTradesRaw) ? 5 : minTradesRaw;
 
   const topIdx = args.indexOf("--top");
-  const topN = topIdx >= 0 ? parseInt(args[topIdx + 1] ?? "5", 10) : 5;
+  const topNRaw = topIdx >= 0 ? parseInt(args[topIdx + 1] ?? "5", 10) : 5;
+  const topN = Number.isNaN(topNRaw) ? 5 : topNRaw;
 
   return { useBacktest, days, minTrades, topN };
 }
@@ -149,7 +152,10 @@ async function main(): Promise<void> {
   console.log(`总交易: ${totalTrades} | 胜率: ${overallWR}% | 信号组合数: ${stats.length}`);
 }
 
-main().catch((e: unknown) => {
-  console.error("Fatal:", e);
-  process.exit(1);
-});
+// 只在直接执行时运行（避免单元测试 import 时触发 main）
+if (process.argv[1]?.endsWith("signal-stats.ts") || process.argv[1]?.endsWith("signal-stats.js")) {
+  main().catch((e: unknown) => {
+    console.error("Fatal:", e);
+    process.exit(1);
+  });
+}

@@ -83,12 +83,17 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
       skipped = `已达最大持仓数 ${cfg.risk.max_positions}，跳过 ${signal.symbol}`;
     } else {
       const equity = calcTotalEquity(account, { [signal.symbol]: signal.price });
-      const existingPos = account.positions[signal.symbol];
-      const symbolValue = existingPos ? existingPos.quantity * signal.price : 0;
-      if (symbolValue / equity >= cfg.risk.max_position_per_symbol) {
-        skipped = `${signal.symbol} 已达单币最大仓位 ${(cfg.risk.max_position_per_symbol * 100).toFixed(0)}%，跳过`;
-      } else if ((account.dailyLoss.loss / equity) * 100 >= cfg.risk.daily_loss_limit_percent) {
-        skipped = `今日亏损已达 ${cfg.risk.daily_loss_limit_percent}%，暂停当日开仓`;
+      // ── Guard: equity <= 0 → 账户净值异常，跳过 buy 信号 ──
+      if (equity <= 0) {
+        skipped = `账户净值异常（${equity.toFixed(2)} USDT），跳过 ${signal.symbol}`;
+      } else {
+        const existingPos = account.positions[signal.symbol];
+        const symbolValue = existingPos ? existingPos.quantity * signal.price : 0;
+        if (symbolValue / equity >= cfg.risk.max_position_per_symbol) {
+          skipped = `${signal.symbol} 已达单币最大仓位 ${(cfg.risk.max_position_per_symbol * 100).toFixed(0)}%，跳过`;
+        } else if ((account.dailyLoss.loss / equity) * 100 >= cfg.risk.daily_loss_limit_percent) {
+          skipped = `今日亏损已达 ${cfg.risk.daily_loss_limit_percent}%，暂停当日开仓`;
+        }
       }
     }
 
@@ -204,14 +209,19 @@ export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineRes
         skipped = `已达最大持仓数 ${cfg.risk.max_positions}，跳过开空 ${signal.symbol}`;
       } else {
         const equity = calcTotalEquity(account, { [signal.symbol]: signal.price });
-        const existingPos = account.positions[signal.symbol];
-        const symbolValue = existingPos
-          ? (existingPos.marginUsdt ?? existingPos.quantity * signal.price)
-          : 0;
-        if (symbolValue / equity >= cfg.risk.max_position_per_symbol) {
-          skipped = `${signal.symbol} 已达单币最大仓位，跳过开空`;
-        } else if ((account.dailyLoss.loss / equity) * 100 >= cfg.risk.daily_loss_limit_percent) {
-          skipped = `今日亏损已达 ${cfg.risk.daily_loss_limit_percent}%，暂停当日开仓`;
+        // ── Guard: equity <= 0 → 账户净值异常，跳过开空信号 ──
+        if (equity <= 0) {
+          skipped = `账户净值异常（${equity.toFixed(2)} USDT），跳过开空 ${signal.symbol}`;
+        } else {
+          const existingPos = account.positions[signal.symbol];
+          const symbolValue = existingPos
+            ? (existingPos.marginUsdt ?? existingPos.quantity * signal.price)
+            : 0;
+          if (symbolValue / equity >= cfg.risk.max_position_per_symbol) {
+            skipped = `${signal.symbol} 已达单币最大仓位，跳过开空`;
+          } else if ((account.dailyLoss.loss / equity) * 100 >= cfg.risk.daily_loss_limit_percent) {
+            skipped = `今日亏损已达 ${cfg.risk.daily_loss_limit_percent}%，暂停当日开仓`;
+          }
         }
       }
     }
@@ -312,6 +322,8 @@ function checkStagedTakeProfit(
   triggered: { symbol: string; trade: PaperTrade; reason: ExitReason; pnlPercent: number }[]
 ): void {
   if (!pos.tpStages) return;
+  // ── Guard: entryPrice <= 0 会导致 pnlPercent 为 NaN ──
+  if (pos.entryPrice <= 0) return;
   const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
 
   // 用 entries() 获取索引，避免 indexOf 的 O(n) 搜索
@@ -368,6 +380,8 @@ export function checkExitConditions(
   for (const [symbol, pos] of Object.entries(account.positions)) {
     const currentPrice = prices[symbol];
     if (!currentPrice) continue;
+    // ── Guard: entryPrice <= 0 会导致 pnlPercent/profitRatio 为 NaN ──
+    if (pos.entryPrice <= 0) continue;
 
     const isShort = pos.side === "short";
 

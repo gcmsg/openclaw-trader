@@ -34,7 +34,7 @@ interface CliArgs {
   seed?: number;
 }
 
-function parseArgs(argv: string[]): CliArgs {
+export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     symbols: ["BTCUSDT", "ETHUSDT"],
     days: 90,
@@ -59,19 +59,27 @@ function parseArgs(argv: string[]): CliArgs {
         args.symbols = next().split(",").map((s) => s.trim()).filter(Boolean);
         break;
       case "--days":
-      case "-d":
-        args.days = parseInt(next(), 10);
+      case "-d": {
+        const v = parseInt(next(), 10);
+        args.days = Number.isNaN(v) ? 90 : v;
         break;
+      }
       case "--trials":
-      case "-t":
-        args.trials = parseInt(next(), 10);
+      case "-t": {
+        const v = parseInt(next(), 10);
+        args.trials = Number.isNaN(v) ? 50 : v;
         break;
-      case "--train-ratio":
-        args.trainRatio = parseFloat(next());
+      }
+      case "--train-ratio": {
+        const v = parseFloat(next());
+        args.trainRatio = Number.isNaN(v) ? 0.7 : v;
         break;
-      case "--min-improvement":
-        args.minImprovementPct = parseFloat(next());
+      }
+      case "--min-improvement": {
+        const v = parseFloat(next());
+        args.minImprovementPct = Number.isNaN(v) ? 5 : v;
         break;
+      }
       case "--dry-run":
         args.dryRun = true;
         break;
@@ -81,9 +89,11 @@ function parseArgs(argv: string[]): CliArgs {
       case "--no-notify":
         args.notify = false;
         break;
-      case "--seed":
-        args.seed = parseInt(next(), 10);
+      case "--seed": {
+        const v = parseInt(next(), 10);
+        if (!Number.isNaN(v)) args.seed = v;
         break;
+      }
     }
   }
 
@@ -141,7 +151,10 @@ async function main(): Promise<void> {
 // 入口
 // ─────────────────────────────────────────────────────
 
-main().catch((err: unknown) => {
-  console.error("❌ Auto Walk-Forward 运行失败:", err);
-  process.exit(1);
-});
+// 只在直接执行时运行（避免单元测试 import 时触发 main）
+if (process.argv[1]?.endsWith("auto-wf.ts") || process.argv[1]?.endsWith("auto-wf.js")) {
+  main().catch((err: unknown) => {
+    console.error("❌ Auto Walk-Forward 运行失败:", err);
+    process.exit(1);
+  });
+}

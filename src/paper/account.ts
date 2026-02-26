@@ -178,7 +178,10 @@ export function saveAccount(account: PaperAccount, scenarioId = "default"): void
   const statePath = getAccountPath(scenarioId);
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   account.updatedAt = Date.now();
-  fs.writeFileSync(statePath, JSON.stringify(account, null, 2));
+  // 原子写入：先写 .tmp 再 rename，防止并发写入损坏
+  const tmpPath = statePath + ".tmp";
+  fs.writeFileSync(tmpPath, JSON.stringify(account, null, 2));
+  fs.renameSync(tmpPath, statePath);
 }
 
 /** 重置每日亏损计数（每日首次调用时自动触发） */
