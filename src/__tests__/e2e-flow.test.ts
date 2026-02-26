@@ -12,15 +12,14 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { existsSync, unlinkSync, mkdirSync } from "fs";
-import { processSignal, type ExternalContext } from "../strategy/signal-engine.js";
+import { processSignal } from "../strategy/signal-engine.js";
 import {
   handleSignal,
   checkExitConditions,
-  checkStopLoss,
   checkMaxDrawdown,
 } from "../paper/engine.js";
 import { loadAccount, saveAccount } from "../paper/account.js";
-import type { Signal, Kline, RuntimeConfig, Indicators } from "../types.js";
+import type { Signal, Kline, RuntimeConfig } from "../types.js";
 
 // ── Mock：阻止真实 I/O ──────────────────────────────
 vi.mock("../strategy/signal-history.js", () => ({
@@ -138,35 +137,28 @@ function makeConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
 }
 
 // ── 辅助：构造信号 ──────────────────────────────────
-function makeBuySignal(symbol: string, price: number, indicators?: Partial<Indicators>): Signal {
+function makeIndicators(price: number, overrides: Partial<Signal["indicators"]> = {}): Signal["indicators"] {
+  return {
+    maShort: price * 1.02,
+    maLong: price * 0.98,
+    rsi: 55,
+    price,
+    volume: 1000,
+    avgVolume: 800,
+    macd: { macd: 10, signal: 5, histogram: 5 },
+    atr: price * 0.02,
+    ...overrides,
+  };
+}
+
+function makeBuySignal(symbol: string, price: number): Signal {
   return {
     symbol,
     type: "buy",
     price,
     reason: ["ma_bullish", "macd_bullish", "rsi_not_overbought"],
-    indicators: {
-      maShort: price * 1.02,
-      maLong: price * 0.98,
-      rsi: 55,
-      macd: { macd: 10, signal: 5, histogram: 5 },
-      atr: price * 0.02,
-      ...indicators,
-    },
-  };
-}
-
-function makeSellSignal(symbol: string, price: number): Signal {
-  return {
-    symbol,
-    type: "sell",
-    price,
-    reason: ["ma_bearish"],
-    indicators: {
-      maShort: price * 0.98,
-      maLong: price * 1.02,
-      rsi: 45,
-      macd: { macd: -10, signal: -5, histogram: -5 },
-    },
+    indicators: makeIndicators(price),
+    timestamp: Date.now(),
   };
 }
 
@@ -345,12 +337,13 @@ describe("E2E: 开空 → 平空（futures）", () => {
       type: "short",
       price: 50000,
       reason: ["ma_bearish", "rsi_overbought"],
-      indicators: {
+      indicators: makeIndicators(50000, {
         maShort: 49000,
         maLong: 51000,
         rsi: 75,
         macd: { macd: -10, signal: -5, histogram: -5 },
-      },
+      }),
+      timestamp: Date.now(),
     };
 
     const result = handleSignal(shortSignal, cfg);
@@ -389,18 +382,13 @@ describe("E2E: 分批止盈", () => {
 
     // 应有部分平仓
     if (exits1.length > 0) {
-      // 有退出记录
-      const account = loadAccount(cfg.paper.initial_usdt, TEST_SCENARIO);
-      // 仓位可能还在（只平了一半）或全部平掉取决于实现
-      // 关键是交易记录了
+      // 有退出记录，关键是交易记录了盈利
       expect(exits1[0]!.pnlPercent).toBeGreaterThan(0);
     } else {
       // 分批止盈可能作为内部操作不返回在 exits 里
-      // 检查仓位数量是否减半
-      const account = loadAccount(cfg.paper.initial_usdt, TEST_SCENARIO);
-      const pos = account.positions["BTCUSDT"];
+      const acct = loadAccount(cfg.paper.initial_usdt, TEST_SCENARIO);
       // 至少账户有变动
-      expect(account.usdt).toBeGreaterThanOrEqual(cfg.paper.initial_usdt * 0.79);
+      expect(acct.usdt).toBeGreaterThanOrEqual(cfg.paper.initial_usdt * 0.79);
     }
   });
 });
