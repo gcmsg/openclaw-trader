@@ -194,6 +194,15 @@ export interface ExecutionConfig {
    * 部分成交时按实际成交量记账。
    */
   order_timeout_seconds?: number;
+  /**
+   * 出场确认：价格偏离超过此比例时拒绝出场（防闪崩）。默认 0.15 (15%)
+   * 仅对 stop_loss 出场有效；take_profit/force_exit 等不受限制。
+   */
+  max_exit_price_deviation?: number;
+  /**
+   * 出场确认：被拒绝后的冷却秒数（防止反复打日志）。默认 300 (5min)
+   */
+  exit_rejection_cooldown_seconds?: number;
 }
 
 export interface NotifyConfig {

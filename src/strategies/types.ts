@@ -117,4 +117,22 @@ export interface Strategy {
     },
     ctx: StrategyContext
   ): number | null;
+
+  /**
+   * 可选：出场前确认钩子（参考 Freqtrade confirm_trade_exit）。
+   * 在执行止损/止盈/ROI/信号出场前调用。返回 false 则跳过本次出场（等下一轮重试）。
+   * 典型用途：闪崩保护（价格异常偏离时拒绝出场）、流动性检查、出场冷却。
+   */
+  confirmExit?(
+    position: {
+      symbol: string;
+      side: "long" | "short";
+      entryPrice: number;
+      currentPrice: number;
+      profitRatio: number;
+      holdMs: number;
+    },
+    exitReason: string,
+    ctx: StrategyContext
+  ): boolean;
 }

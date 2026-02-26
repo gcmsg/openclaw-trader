@@ -8,12 +8,16 @@ import type { Signal, RuntimeConfig } from "../types.js";
 import { calcAtrPositionSize } from "../strategy/indicators.js";
 import { checkMinimalRoi } from "../strategy/roi-table.js";
 import { resolveNewStopLoss } from "../strategy/break-even.js";
+import { shouldConfirmExit, isExitRejectionCoolingDown } from "../strategy/confirm-exit.js";
 import type { Strategy, StrategyContext } from "../strategies/types.js";
 import { logSignal, closeSignal } from "../signals/history.js";
 import { TradeDB } from "../persistence/db.js";
 
 // ── G5: SQLite 懒加载单例（每个 scenarioId 一个 DB）──────────
 const _dbMap = new Map<string, TradeDB>();
+
+// ── P8.2: 出场拒绝冷却记录（symbol → 上次被拒绝的时间戳）──────
+const _exitRejectionLog = new Map<string, number>();
 
 function getDb(scenarioId: string): TradeDB {
   const existing = _dbMap.get(scenarioId);
@@ -500,6 +504,33 @@ export function checkExitConditions(
     }
 
     if (exitReason) {
+      // ── P8.2 出场确认钩子 ──────────────────────────────────────
+      {
+        const holdMs = Date.now() - pos.entryTime;
+        const profitRatio = isShort
+          ? (pos.entryPrice - currentPrice) / pos.entryPrice
+          : (currentPrice - pos.entryPrice) / pos.entryPrice;
+        const maxDev = cfg.execution.max_exit_price_deviation ?? 0.15;
+        const cooldownSec = cfg.execution.exit_rejection_cooldown_seconds ?? 300;
+        const confirmResult = shouldConfirmExit(
+          { symbol, side: pos.side ?? "long", entryPrice: pos.entryPrice, currentPrice, profitRatio, holdMs },
+          exitReason,
+          maxDev,
+          strategy,
+          ctx
+        );
+        if (!confirmResult.confirmed) {
+          const cooling = isExitRejectionCoolingDown(symbol, cooldownSec * 1000, _exitRejectionLog);
+          if (!cooling) {
+            console.log(
+              `[confirm-exit] ${symbol} 出场被拒绝 (reason: ${confirmResult.reason ?? "unknown"}, exitReason: ${exitReason})`
+            );
+            _exitRejectionLog.set(symbol, Date.now());
+          }
+          continue;
+        }
+      }
+      // ── 出场执行 ──────────────────────────────────────────────
       const sigHistId = pos.signalHistoryId;
       const posDbId = pos.dbId; // G5
       // 多头用 paperSell，空头用 paperCoverShort

@@ -33,6 +33,7 @@ import {
 import { calcAtrPositionSize } from "../strategy/indicators.js";
 import { checkMinimalRoi } from "../strategy/roi-table.js";
 import { resolveNewStopLoss } from "../strategy/break-even.js";
+import { shouldConfirmExit, isExitRejectionCoolingDown } from "../strategy/confirm-exit.js";
 import type { Strategy } from "../strategies/types.js";
 import type { ExitReason } from "../paper/engine.js";
 import type { ExchangePosition } from "./reconcile.js";
@@ -108,8 +109,10 @@ export class LiveExecutor {
   private readonly cfg: RuntimeConfig;
   private readonly scenarioId: string;
   private readonly isTestnet: boolean;
-  /** 可选：策略插件（用于 customStoploss 钩子） */
+  /** 可选：策略插件（用于 customStoploss / confirmExit 钩子） */
   strategy?: Strategy;
+  /** P8.2: 出场拒绝冷却记录（symbol → 上次被拒绝的时间戳） */
+  private readonly _exitRejectionLog = new Map<string, number>();
 
   constructor(cfg: RuntimeConfig) {
     this.cfg = cfg;
@@ -740,6 +743,33 @@ export class LiveExecutor {
       }
 
       if (exitReason) {
+        // ── P8.2 出场确认钩子 ──────────────────────────────────
+        {
+          const holdMs = Date.now() - pos.entryTime;
+          const profitRatio = isShort
+            ? (pos.entryPrice - currentPrice) / pos.entryPrice
+            : (currentPrice - pos.entryPrice) / pos.entryPrice;
+          const maxDev = this.cfg.execution.max_exit_price_deviation ?? 0.15;
+          const cooldownSec = this.cfg.execution.exit_rejection_cooldown_seconds ?? 300;
+          const confirmResult = shouldConfirmExit(
+            { symbol, side: pos.side ?? "long", entryPrice: pos.entryPrice, currentPrice, profitRatio, holdMs },
+            exitReason,
+            maxDev,
+            this.strategy,
+            undefined // StrategyContext not available in executor loop
+          );
+          if (!confirmResult.confirmed) {
+            const cooling = isExitRejectionCoolingDown(symbol, cooldownSec * 1000, this._exitRejectionLog);
+            if (!cooling) {
+              console.log(
+                `[confirm-exit] ${symbol} 出场被拒绝 (reason: ${confirmResult.reason ?? "unknown"}, exitReason: ${exitReason})`
+              );
+              this._exitRejectionLog.set(symbol, Date.now());
+            }
+            continue;
+          }
+        }
+        // ── 出场执行 ───────────────────────────────────────────
         try {
           const result = isShort
             ? await this.handleCover(symbol, currentPrice, exitLabel)
