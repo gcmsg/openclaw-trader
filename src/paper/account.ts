@@ -61,6 +61,12 @@ export interface PaperPosition {
   stopLossOrderId?: number;
   /** 止盈挂单 ID */
   takeProfitOrderId?: number;
+  /** 原生交易所止损单 orderId（可选，仅 live 模式使用） */
+  exchangeSlOrderId?: number;
+  /** 原生交易所止损价（与本地止损价保持一致） */
+  exchangeSlPrice?: number;
+  /** 出场订单超时计数（连续超时 N 次后触发 forceExit） */
+  exitTimeoutCount?: number;
   // 分批建仓（DCA）状态
   dcaState?: {
     /** 目标分批数（含第一批） */

@@ -114,10 +114,16 @@ function formatHoldTime(entryTime: number): string {
   return `${minutes}m`;
 }
 
-/** 格式化数字符号 */
-function signedStr(n: number, decimals = 2): string {
-  const sign = n >= 0 ? "+" : "";
-  return `${sign}${n.toFixed(decimals)}`;
+/** 格式化带符号的金额：+$1.23 或 -$1.23 */
+function fmtPnl(amount: number): string {
+  const sign = amount >= 0 ? "+" : "-";
+  return `${sign}$${Math.abs(amount).toFixed(2)}`;
+}
+
+/** 格式化带符号的百分比：+2.30% 或 -1.50% */
+function fmtPct(pct: number): string {
+  const sign = pct >= 0 ? "+" : "-";
+  return `${sign}${Math.abs(pct).toFixed(1)}%`;
 }
 
 // ─────────────────────────────────────────────────────
@@ -218,7 +224,6 @@ export async function handleProfit(logsDir: string): Promise<string> {
   const scenarios = listScenarioIds(logsDir);
   if (scenarios.length === 0) return "📊 *收益汇总*\n\n暂无数据";
 
-  let totalUnrealizedPnl = 0;
   let totalRealizedPnl = 0;
   const lines = ["📊 *收益汇总*", ""];
 
@@ -233,19 +238,7 @@ export async function handleProfit(logsDir: string): Promise<string> {
       )
       .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
 
-    // 未实现 PnL：当前持仓以入场价估算（无实时价格时未实现=0）
-    let unrealized = 0;
-    for (const pos of Object.values(account.positions)) {
-      // 如果 side=short，用保证金计算
-      if (pos.side === "short") {
-        const margin = pos.marginUsdt ?? pos.quantity * pos.entryPrice;
-        // 无实时价格，unrealized=0（保守显示）
-        unrealized += margin - margin; // = 0
-      }
-      // long: unrealized = 0 when using entry price as current
-    }
-
-    // 总资产（以入场价估算持仓价值）
+    // 总资产（以入场价估算持仓价值，无实时价格）
     let positionValue = 0;
     for (const pos of Object.values(account.positions)) {
       if (pos.side === "short") {
@@ -260,22 +253,15 @@ export async function handleProfit(logsDir: string): Promise<string> {
     const totalPnlPct =
       account.initialUsdt > 0 ? (totalPnl / account.initialUsdt) * 100 : 0;
 
-    totalUnrealizedPnl += unrealized;
     totalRealizedPnl += realized;
 
-    const sign = totalPnl >= 0 ? "+" : "";
     lines.push(
-      `${scenarioId}：$${totalEquity.toFixed(2)} (${sign}${totalPnlPct.toFixed(1)}%)`
+      `${scenarioId}：$${totalEquity.toFixed(2)} (${fmtPct(totalPnlPct)})`
     );
   }
 
   lines.push("");
-  lines.push(
-    `*总计未实现 PnL：${signedStr(totalUnrealizedPnl)}$${Math.abs(totalUnrealizedPnl).toFixed(2)}*`
-  );
-  lines.push(
-    `*已实现 PnL：${signedStr(totalRealizedPnl, 2)}$${Math.abs(totalRealizedPnl).toFixed(2)}*`
-  );
+  lines.push(`*已实现 PnL：${fmtPnl(totalRealizedPnl)}*`);
 
   return lines.join("\n");
 }
@@ -302,8 +288,6 @@ export async function handlePositions(logsDir: string): Promise<string> {
     for (const pos of posEntries) {
       const holdTime = formatHoldTime(pos.entryTime);
       const side = pos.side === "short" ? "空头" : "多头";
-
-      // 以入场价作为"当前价"（无实时价格）
       const entryFmt = `$${pos.entryPrice.toFixed(4)}`;
       lines.push(
         `• ${pos.symbol} ${entryFmt} (${side}) | 持仓 ${holdTime}`
@@ -336,9 +320,10 @@ export async function handleStatus(logsDir: string): Promise<string> {
     if (keys.length === 0) {
       lines.push("  无去重记录");
     } else {
-      for (const key of keys.slice(0, 8)) {
+      const displayKeys = keys.slice(0, 8);
+      for (const key of displayKeys) {
         const ts = dedup[key];
-        const ago = ts
+        const ago = ts !== undefined
           ? `${Math.round((Date.now() - ts) / 60_000)}min ago`
           : "unknown";
         lines.push(`  ${key}：${ago}`);
@@ -357,7 +342,9 @@ export async function handleStatus(logsDir: string): Promise<string> {
   const scenarios = listScenarioIds(logsDir);
   lines.push(`📂 *Scenario 数量*：${scenarios.length}`);
   if (scenarios.length > 0) {
-    lines.push(`  ${scenarios.slice(0, 5).join(", ")}${scenarios.length > 5 ? "..." : ""}`);
+    const preview = scenarios.slice(0, 5).join(", ");
+    const suffix = scenarios.length > 5 ? "..." : "";
+    lines.push(`  ${preview}${suffix}`);
   }
 
   // Live-monitor 日志最后修改时间
@@ -365,7 +352,9 @@ export async function handleStatus(logsDir: string): Promise<string> {
   try {
     const stat = fs.statSync(liveLogPath);
     const agoMin = Math.round((Date.now() - stat.mtimeMs) / 60_000);
-    lines.push(`\n🏃 *live-monitor*：${agoMin < 5 ? "运行中" : "最后活跃 " + String(agoMin) + "min 前"}`);
+    const statusStr =
+      agoMin < 5 ? "运行中" : `最后活跃 ${String(agoMin)}min 前`;
+    lines.push(`\n🏃 *live-monitor*：${statusStr}`);
   } catch {
     lines.push("\n🏃 *live-monitor*：未知");
   }
@@ -392,7 +381,7 @@ export async function handleForceSell(
   // 找到包含该持仓的 scenario
   let foundScenarioId: string | null = null;
 
-  if (targetScenarioId) {
+  if (targetScenarioId !== null) {
     const account = loadAccount(1000, targetScenarioId);
     if (account.positions[symbolUpper]) {
       foundScenarioId = targetScenarioId;
@@ -408,8 +397,8 @@ export async function handleForceSell(
     }
   }
 
-  if (!foundScenarioId) {
-    return `❌ 未找到持仓：${symbolUpper}${targetScenarioId ? ` (${targetScenarioId})` : ""}`;
+  if (foundScenarioId === null) {
+    return `❌ 未找到持仓：${symbolUpper}${targetScenarioId !== null ? ` (${targetScenarioId})` : ""}`;
   }
 
   // 获取当前价格
@@ -423,7 +412,7 @@ export async function handleForceSell(
   }
 
   const execPrice = price ?? pos.entryPrice;
-  const priceSource = price ? "实时价格" : "入场价（获取失败）";
+  const priceSource = price !== null ? "实时价格" : "入场价（获取失败）";
 
   let trade: ReturnType<typeof paperSell> | ReturnType<typeof paperCoverShort>;
 
@@ -441,14 +430,13 @@ export async function handleForceSell(
 
   const pnl = trade.pnl ?? 0;
   const pnlPct = (trade.pnlPercent ?? 0) * 100;
-  const sign = pnl >= 0 ? "+" : "";
 
   return (
     `✅ *强制平仓成功*\n\n` +
     `• 交易对：${symbolUpper}\n` +
     `• Scenario：${foundScenarioId}\n` +
     `• 成交价：$${execPrice.toFixed(4)} (${priceSource})\n` +
-    `• PnL：${sign}$${pnl.toFixed(2)} (${sign}${pnlPct.toFixed(2)}%)\n` +
+    `• PnL：${fmtPnl(pnl)} (${fmtPct(pnlPct)})\n` +
     `• 账户余额：$${account.usdt.toFixed(2)}`
   );
 }
