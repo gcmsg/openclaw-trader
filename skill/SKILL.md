@@ -24,7 +24,8 @@ openclaw-trader/
 │   │   ├── ws.ts               ← WebSocket kline stream
 │   │   ├── order-flow.ts       ← CVD (aggTrade + file cache)
 │   │   ├── futures-data.ts     ← Funding rate + OI
-│   │   └── macro-data.ts       ← DXY/SPX/VIX via FRED
+│   │   ├── macro-data.ts       ← DXY/SPX/VIX via FRED
+│   │   └── liquidation-data.ts ← P5.3 Binance forced-order heatmap (long/short squeeze)
 │   ├── strategy/
 │   │   ├── indicators.ts       ← EMA / RSI Wilder / MACD / ATR / VWAP
 │   │   ├── signals.ts          ← 20+ condition checkers
@@ -54,7 +55,8 @@ openclaw-trader/
 │   │   ├── emergency-monitor.ts ← Critical keyword scan (10-min cron)
 │   │   ├── sentiment-gate.ts    ← Keyword scoring + cache integration
 │   │   ├── sentiment-cache.ts   ← LLM sentiment persistence (6h TTL)
-│   │   └── llm-sentiment.ts     ← OpenClaw Gateway LLM analysis
+│   │   ├── llm-sentiment.ts     ← OpenClaw Gateway LLM analysis
+│   │   └── reddit-sentiment.ts  ← P5.4 Reddit public JSON API (no auth; r/CryptoCurrency + r/Bitcoin)
 │   ├── health/
 │   │   ├── heartbeat.ts     ← Task ping tracking
 │   │   ├── checker.ts       ← Health check cron (30-min)
@@ -304,6 +306,44 @@ correlation:
 
 When portfolio heat (correlation × weight sum) ≥ 0.9: position blocked.  
 When heat < 0.9: continuous reduction — `adjusted_size = base × (1 - heat)`.
+
+## Liquidation Heatmap (P5.3)
+
+Module: `src/exchange/liquidation-data.ts`  
+API: `GET https://fapi.binance.com/fapi/v1/allForceOrders` (no API key needed)  
+IPv4 forced via `https.Agent({ family: 4 })` — same pattern as `macro-data.ts`.
+
+Key exports:
+- `getLiquidationData(symbol, lookbackHours?)` → `LiquidationSummary`
+  - `totalLongLiqUsd` / `totalShortLiqUsd` — USD value of liquidated positions
+  - `netLiqPressure` — positive = more short squeezes = bullish bias
+  - `dominance`: `"long_squeeze"` | `"short_squeeze"` | `"balanced"`
+  - `dominanceRatio` — max/min ratio; < 1.2 → balanced
+  - `priceRange.{min,max}` — liquidation price band
+- `formatLiquidationReport(summary, symbol)` — Telegram-ready string
+
+Integrated in `src/scripts/market-analysis.ts` for BTC + ETH each run.  
+Limit: Binance public endpoint allows up to 1000 records per request; rate-limited at ~20 req/s per IP.
+
+## Reddit Sentiment (P5.4)
+
+Module: `src/news/reddit-sentiment.ts`  
+API: Reddit public JSON API (no auth required)  
+**Must** set `User-Agent: openclaw-trader/1.0` header — without it, gets HTTP 429.
+
+Key exports:
+- `fetchRedditPosts(subreddit, keywords?)` → `RedditPost[]`
+  - With `keywords`: uses `search.json?q=...&sort=new&limit=25&t=day`
+  - Without `keywords`: uses `new.json?limit=25`
+  - Each post includes `sentiment?: "bullish" | "bearish" | "neutral"` (keyword classified)
+- `analyzeRedditSentiment(posts)` → `RedditSentimentResult`
+  - `bullishCount`, `bearishCount`, `neutralCount`
+  - `confidence` = |bull - bear| / total (0–1)
+  - `topPosts` — top 5 by score
+- `formatRedditReport(result)` — Telegram-ready string
+
+Integrated in `src/scripts/market-analysis.ts` (r/CryptoCurrency + r/Bitcoin per run).  
+Limit: Reddit unauthenticated = ~60 req/min; authenticated = 100 req/min. No caching required for periodic reports.
 
 ## References
 

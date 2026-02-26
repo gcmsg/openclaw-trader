@@ -1,4 +1,32 @@
 {
-  "generatedAt": "2026-02-25T16:11:11.634Z",
-  "stats": []
+  "generatedAt": "2026-02-26T01:50:59.161Z",
+  "stats": [
+    {
+      "key": "buy:ma_bullish+macd_bullish+rsi_not_overbought",
+      "rules": [
+        "ma_bullish",
+        "macd_bullish",
+        "rsi_not_overbought"
+      ],
+      "signalType": "buy",
+      "total": 3,
+      "closed": 0,
+      "open": 3,
+      "wins": 0,
+      "losses": 0,
+      "winRate": 0,
+      "avgPnlPct": 0,
+      "avgWinPct": 0,
+      "avgLossPct": 0,
+      "rrRatio": 0,
+      "avgHoldHours": 0,
+      "totalPnlPct": 0,
+      "symbols": [
+        "BTCUSDT",
+        "XRPUSDT",
+        "DOGEUSDT"
+      ],
+      "stopLossCount": 0
+    }
+  ]
 }

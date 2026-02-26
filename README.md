@@ -20,6 +20,8 @@
 - 🛡️ **Risk Management** — Stop-loss · take-profit · trailing stop · staged TP · time-stop · daily loss limit · total drawdown pause · R:R pre-filter
 - 🏁 **Regime Filter** — Classifies market as trending / sideways / breakout_watch / reduced_size; skips or halves position accordingly
 - 🔄 **Regime-Adaptive Parameters** (P5.2) — Auto-switch TP / SL / ROI Table per regime via `regime_overrides` config block
+- 💥 **Liquidation Heatmap** (P5.3) — Binance Futures public API (`/fapi/v1/allForceOrders`); BTC + ETH long/short squeeze summary per analysis run
+- 🗣️ **Reddit Sentiment** (P5.4) — Reddit public JSON API (no auth); r/CryptoCurrency + r/Bitcoin; keyword sentiment + top posts per analysis run
 - 📐 **ATR Dynamic Sizing** — Normalize per-trade risk using ATR volatility
 - 🎯 **Kelly Position Sizing** — Dynamic position size from rolling win-rate and R:R; half-Kelly mode; fallback to fixed when sample < 10
 - 🔗 **Correlation Filter** — Portfolio heat map; Pearson > 0.75 → continuous position reduction (not binary block)
@@ -35,7 +37,7 @@
 - 🩺 **Watchdog** — Every 5 min: alert if `price_monitor` hasn't run within 3 min; 30-min cooldown
 - 🗂️ **Log Rotation** — Daily: archive logs > 20 MB / 24h; keep 30 days; clean old paper backups
 - 🔄 **Position Reconciliation** — On live-monitor startup: diff local account vs exchange; halt if > 10% mismatch
-- ✅ **Tested** — 518 unit tests across indicators, signals, VWAP, CVD, ROI table, Kelly, attribution, watchdog, reconcile
+- ✅ **Tested** — 638 unit tests across indicators, signals, VWAP, CVD, ROI table, Kelly, attribution, watchdog, reconcile, liquidation heatmap, Reddit sentiment
 
 ### Architecture
 
@@ -381,6 +383,8 @@ MIT
 - 🛡️ **风险管理** — 止损/止盈/追踪止损/R:R 预过滤/日亏限额/ATR 仓位/分批止盈/时间止损
 - 🏁 **市场状态过滤** — 趋势/横盘/突破等状态识别；横盘自动跳过或减半仓位
 - 🔄 **Regime 自适应参数** — 检测到震荡市时自动切换 TP/止损/ROI Table，`regime_overrides` 配置
+- 💥 **清算热力图** (P5.3) — Binance 合约公开接口（无需 Key），BTC + ETH 多/空爆仓统计，辅助判断市场风险
+- 🗣️ **Reddit 社区情绪** (P5.4) — Reddit 公开 JSON API（无需 Auth），r/CryptoCurrency + r/Bitcoin，关键词情绪分析 + 热帖排行
 - ⏱️ **ROI Table 时间衰减止盈** — 持仓越久止盈目标越低（仿 Freqtrade `minimal_roi`）；三引擎一致
 - 🛡️ **入场滑点防闪崩** — 下单前实时检查价格偏离，超 `max_entry_slippage` 自动取消
 - 📋 **订单状态机** — `PendingOrder` 追踪入场/止损/止盈订单；部分成交告警；启动时扫描孤儿订单
@@ -392,7 +396,7 @@ MIT
 - 🩺 **Watchdog 自监控** — 每 5 分钟检查 price_monitor 是否活着；30 分钟冷却告警
 - 🗂️ **日志轮转** — 每日凌晨自动归档；保留 30 天；清理旧备份
 - 🔄 **持仓对账** — live-monitor 启动时比对本地 vs 交易所；差异 > 10% 暂停启动
-- ✅ **完整测试** — 518 条单元测试
+- ✅ **完整测试** — 638 条单元测试
 
 ### 运行架构
 

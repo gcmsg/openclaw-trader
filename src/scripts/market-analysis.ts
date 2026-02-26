@@ -18,6 +18,8 @@ import { getNewsDigest, formatNewsDigest } from "../news/digest.js";
 import { loadNewsReport, scoreNewsTitles } from "../news/sentiment-gate.js";
 import { writeKeywordSentimentCache, writeSentimentCache } from "../news/sentiment-cache.js";
 import { analyzeSentimentWithLLM, llmResultToEntry, formatLLMSentimentReport } from "../news/llm-sentiment.js";
+import { getLiquidationData, formatLiquidationReport } from "../exchange/liquidation-data.js";
+import { fetchRedditPosts, analyzeRedditSentiment, formatRedditReport } from "../news/reddit-sentiment.js";
 import { loadStrategyConfig } from "../config/loader.js";
 import { trackBtcDominance, getBtcDominanceTrend } from "../strategy/btc-dominance.js";
 import { getKlines } from "../exchange/binance.js";
@@ -75,7 +77,8 @@ async function main() {
   }
 
   // 并发拉取所有数据 + LLM 分析（同步进行，互不阻塞）
-  const [futuresData, multiTf, btcDeriv, ethDeriv, onchain, newsDigest, llmSentiment] = await Promise.all([
+  const [futuresData, multiTf, btcDeriv, ethDeriv, onchain, newsDigest, llmSentiment,
+    btcLiq, ethLiq, redditCrypto, redditBtc] = await Promise.all([
     getBatchFuturesData(FUTURES_SYMBOLS, prices),
     getBatchMultiTfContext(symbols, baseCfg, ["1h", "4h", "1d"] as Timeframe[]),
     getDerivativesSnapshot("BTCUSDT").catch(() => null),
@@ -90,6 +93,12 @@ async function main() {
           marketCapChange: llmMktChange,
         }).catch(() => null)
       : Promise.resolve(null),
+    // P5.3 清算热力图
+    getLiquidationData("BTCUSDT", 24).catch(() => null),
+    getLiquidationData("ETHUSDT", 24).catch(() => null),
+    // P5.4 Reddit 情绪
+    fetchRedditPosts("CryptoCurrency").catch(() => null),
+    fetchRedditPosts("Bitcoin").catch(() => null),
   ]);
 
   // 读取情绪报告（复用已加载的 localNewsReport）
@@ -161,6 +170,26 @@ async function main() {
   if (llmSentiment) {
     sections.push(`\n${separator}`);
     sections.push(formatLLMSentimentReport(llmSentiment));
+  }
+
+  // 4.96 P5.3 清算热力图（BTC + ETH）
+  if (btcLiq ?? ethLiq) {
+    sections.push(`\n${separator}`);
+    if (btcLiq) sections.push(formatLiquidationReport(btcLiq, "BTCUSDT"));
+    if (ethLiq) {
+      sections.push("");
+      sections.push(formatLiquidationReport(ethLiq, "ETHUSDT"));
+    }
+  }
+
+  // 4.97 P5.4 Reddit 社区情绪
+  {
+    const allPosts = [...(redditCrypto ?? []), ...(redditBtc ?? [])];
+    if (allPosts.length > 0) {
+      const redditResult = analyzeRedditSentiment(allPosts);
+      sections.push(`\n${separator}`);
+      sections.push(formatRedditReport(redditResult));
+    }
   }
 
   // 5. 多 TF 技术面扫描
