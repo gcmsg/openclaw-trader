@@ -68,6 +68,7 @@ const mockReturnValue = {
     days: 60,
     initialUsdt: 1000,
     fundingEnabled: false,
+    spreadBps: 0,
   },
 };
 

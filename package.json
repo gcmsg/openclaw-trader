@@ -39,7 +39,8 @@
     "telegram-bot": "tsx src/scripts/telegram-bot.ts",
     "cmd": "tsx src/scripts/telegram-bot.ts",
     "weekly": "tsx src/scripts/weekly-report.ts",
-    "signal-stats": "tsx src/scripts/signal-stats.ts"
+    "signal-stats": "tsx src/scripts/signal-stats.ts",
+    "drift": "tsx src/scripts/drift-monitor.ts"
   },
   "dependencies": {
     "asciichart": "^1.5.25",
