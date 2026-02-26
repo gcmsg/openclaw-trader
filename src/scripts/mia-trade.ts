@@ -206,10 +206,10 @@ async function showStatus(scenarioId: string): Promise<void> {
 const [, , action, symbol, scenarioId = "testnet-default", ...rest] = process.argv;
 
 if (action === "close") {
-  await closePosition(symbol, scenarioId);
+  await closePosition(symbol!, scenarioId);
 } else if (action === "buy") {
   const usdt = rest[0] ? parseFloat(rest[0]) : 800;
-  await openPosition(symbol, scenarioId, usdt, "mia_analysis_buy");
+  await openPosition(symbol!, scenarioId, usdt, "mia_analysis_buy");
 } else if (action === "status") {
   await showStatus(symbol ?? scenarioId);
 } else {

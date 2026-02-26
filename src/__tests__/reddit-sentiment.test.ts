@@ -41,8 +41,9 @@ function makeRedditListing(posts: Partial<RedditChild["data"]>[]): unknown {
 }
 
 function mockHttpsRequest(responseBody: unknown) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return vi.spyOn(https, "request").mockImplementation(
-    (_opts: unknown, callback?: ((res: IncomingMessage) => void) | undefined) => {
+    ((_opts: unknown, callback?: ((res: IncomingMessage) => void) | undefined) => {
       const res = new EventEmitter() as IncomingMessage;
       (res as unknown as { statusCode: number }).statusCode = 200;
       setTimeout(() => {
@@ -55,7 +56,7 @@ function mockHttpsRequest(responseBody: unknown) {
       (req as unknown as { end: () => void; setTimeout: (ms: number, cb: () => void) => void }).end = () => {};
       (req as unknown as { end: () => void; setTimeout: (ms: number, cb: () => void) => void }).setTimeout = () => {};
       return req;
-    }
+    }) as unknown as typeof https.request
   );
 }
 
@@ -110,8 +111,8 @@ describe("fetchRedditPosts", () => {
     );
     const posts = await fetchRedditPosts("CryptoCurrency");
     expect(posts).toHaveLength(2);
-    expect(posts[0].title).toBe("Bitcoin rally to new highs!");
-    expect(posts[0].score).toBe(500);
+    expect(posts[0]!.title).toBe("Bitcoin rally to new highs!");
+    expect(posts[0]!.score).toBe(500);
   });
 
   it("帖子含 sentiment 字段（关键词分类）", async () => {
@@ -119,7 +120,7 @@ describe("fetchRedditPosts", () => {
       makeRedditListing([{ title: "Bitcoin surges to ATH! Rally continues" }])
     );
     const posts = await fetchRedditPosts("Bitcoin");
-    expect(["bullish", "bearish", "neutral"]).toContain(posts[0].sentiment);
+    expect(["bullish", "bearish", "neutral"]).toContain(posts[0]!.sentiment);
   });
 
   it("利多关键词触发 bullish", async () => {
@@ -127,7 +128,7 @@ describe("fetchRedditPosts", () => {
       makeRedditListing([{ title: "Bitcoin surges after ETF approval and institutional buy" }])
     );
     const posts = await fetchRedditPosts("Bitcoin");
-    expect(posts[0].sentiment).toBe("bullish");
+    expect(posts[0]!.sentiment).toBe("bullish");
   });
 
   it("利空关键词触发 bearish", async () => {
@@ -135,7 +136,7 @@ describe("fetchRedditPosts", () => {
       makeRedditListing([{ title: "Market crash and liquidation wave hits crypto" }])
     );
     const posts = await fetchRedditPosts("CryptoCurrency");
-    expect(posts[0].sentiment).toBe("bearish");
+    expect(posts[0]!.sentiment).toBe("bearish");
   });
 
   it("空结果时返回空数组", async () => {
@@ -145,8 +146,9 @@ describe("fetchRedditPosts", () => {
   });
 
   it("HTTP 4xx 时抛出异常", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.spyOn(https, "request").mockImplementation(
-      (_opts: unknown, callback?: ((res: IncomingMessage) => void) | undefined) => {
+      ((_opts: unknown, callback?: ((res: IncomingMessage) => void) | undefined) => {
         const res = new EventEmitter() as IncomingMessage;
         (res as unknown as { statusCode: number }).statusCode = 429;
         setTimeout(() => res.emit("end"), 0);
@@ -155,7 +157,7 @@ describe("fetchRedditPosts", () => {
         (req as unknown as { end: () => void; setTimeout: (ms: number, cb: () => void) => void }).end = () => {};
         (req as unknown as { end: () => void; setTimeout: (ms: number, cb: () => void) => void }).setTimeout = () => {};
         return req;
-      }
+      }) as unknown as typeof https.request
     );
     await expect(fetchRedditPosts("CryptoCurrency")).rejects.toThrow(/429/);
   });
@@ -163,7 +165,7 @@ describe("fetchRedditPosts", () => {
   it("带关键词时使用 search 接口（URL 含 q= 参数）", async () => {
     const spy = mockHttpsRequest(makeRedditListing([]));
     await fetchRedditPosts("CryptoCurrency", ["bitcoin", "eth"]);
-    const callArg = spy.mock.calls[0][0] as { path?: string };
+    const callArg = spy.mock.calls[0]![0]! as { path?: string };
     expect(callArg?.path ?? "").toContain("search.json");
   });
 });
@@ -209,8 +211,8 @@ describe("analyzeRedditSentiment", () => {
     );
     const result = analyzeRedditSentiment(posts);
     expect(result.topPosts).toHaveLength(5);
-    expect(result.topPosts[0].score).toBe(90);
-    expect(result.topPosts[4].score).toBe(50);
+    expect(result.topPosts[0]!.score).toBe(90);
+    expect(result.topPosts[4]!.score).toBe(50);
   });
 
   it("avgScore 计算正确", () => {

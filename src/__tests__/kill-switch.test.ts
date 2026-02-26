@@ -8,15 +8,12 @@
  * - isKillSwitchActive 过期自动恢复
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// 使用临时目录存放测试状态文件，避免污染真实 logs/
-const TEST_STATE_DIR = path.resolve(__dirname, "../../logs/test-kill-switch-tmp");
-
 // ── 在导入模块之前，Mock 状态文件路径 ──────────────────
 // 通过直接在模块内部读写 STATE_FILE 来测试，需要临时重定向
 

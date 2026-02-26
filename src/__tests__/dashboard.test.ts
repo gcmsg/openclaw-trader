@@ -5,7 +5,7 @@
  * 使用 vitest mock 隔离文件系统和配置加载。
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   buildEquityCurve,
   type AccountSummary,

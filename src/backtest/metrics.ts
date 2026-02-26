@@ -20,7 +20,7 @@ export interface BacktestTrade {
   proceeds: number; // 卖出时获得的 USDT（扣手续费）
   pnl: number; // 盈亏 USDT
   pnlPercent: number; // 盈亏百分比（-0.05 表示 -5%）
-  exitReason: "signal" | "stop_loss" | "take_profit" | "trailing_stop" | "end_of_data";
+  exitReason: "signal" | "stop_loss" | "take_profit" | "trailing_stop" | "end_of_data" | "time_stop";
 }
 
 export interface EquityPoint {
