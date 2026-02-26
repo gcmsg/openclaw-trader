@@ -207,7 +207,7 @@ scenarios:
   - id: "testnet-default"
     name: "Testnet × 默认策略"
     enabled: true               # ✅ 已配置 .secrets/binance-testnet.json
-    strategy_id: "default"      # 使用 strategy.yaml 默认配置
+    strategy_id: "long-short"   # 多空双向策略（替代纯多头 default）
     initial_usdt: 10000         # 与 Testnet 账户实际余额保持一致
     fee_rate: 0.001
     slippage_percent: 0.05       # 市价单典型滑点（0 会产生虚假乐观结果）
