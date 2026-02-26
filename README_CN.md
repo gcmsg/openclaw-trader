@@ -23,6 +23,7 @@ openclaw-trader 7×24 监控加密货币市场，通过技术分析 + 情绪分�
 - **多时间框架确认** — 1h / 4h / 1d 趋势对齐后入场
 - **市场状态自适应** — 趋势 / 横盘 / 突破 / 缩仓；不同状态自动调整参数
 - **可插拔策略** — YAML 配置（默认）或 TypeScript 插件（RSI 均值回归、突破策略、自定义）
+- **集成投票** — 多策略加权投票决策，支持阈值和全票一致模式
 
 ### 风险管理
 - **入场保护** — R:R 预过滤、入场滑点防护、相关性仓位缩减、Kelly 仓位
@@ -44,9 +45,11 @@ openclaw-trader 7×24 监控加密货币市场，通过技术分析 + 情绪分�
 
 ### 回测与优化
 - **回测引擎** — 历史数据 + 夏普 / 索提诺 / Calmar / 最大回撤 / BTC Alpha / 滑点扫描
+- **Bid/Ask Spread 建模** — 可配置 `spread_bps`，更真实的回测成本模拟
 - **蜡烛内模拟** — K 线内高低价出场检查
 - **贝叶斯优化** — TPE + 精英进化，8 维参数空间，Walk-Forward 验证
 - **自动 Walk-Forward** — 定期自动重优化
+- **信号统计分析** — 按信号组合统计胜率、期望收益、利润因子（`npm run signal-stats`）
 
 ### 运维
 - **Telegram 指令** — `/profit`、`/positions`、`/balance`、`/status`、`/forcesell BTCUSDT`
@@ -56,6 +59,9 @@ openclaw-trader 7×24 监控加密货币市场，通过技术分析 + 情绪分�
 - **日志轮转** — 每日归档，保留 30 天
 - **持仓对账** — 启动时比对本地与交易所状态
 - **SQLite 持久化** — 可选 `better-sqlite3` 交易历史
+- **每周绩效报告** — 资金曲线 SVG 图表 + 关键指标，自动发 Telegram（`npm run weekly`）
+- **执行偏差监控** — 对比模拟盘与实盘成交，检测滑点漂移（`npm run drift`）
+- **策略级 DCA** — `adjustPosition()` 钩子让插件控制加仓/减仓逻辑
 
 ## 快速开始
 
@@ -67,7 +73,7 @@ vim config/strategy.yaml       # 配置策略
 npm run monitor                # 单次信号扫描
 npm run live                   # 启动 Testnet/实盘监控
 npm run paper:status           # 查看模拟盘
-npm test                       # 运行 1040+ 测试
+npm test                       # 运行 1259 测试
 ```
 
 ## 配置
@@ -130,13 +136,14 @@ const myStrategy: Strategy = {
   // customStoploss?(position, ctx) → number | null    动态止损
   // confirmExit?(position, exitReason, ctx) → boolean  出场确认
   // shouldExit?(position, ctx) → ExitResult | null      自定义出场
+  // adjustPosition?(position, ctx) → number | null      DCA（>0 加仓，<0 减仓）
   // onTradeClosed?(result, ctx) → void                  交易关闭回调
 };
 
 registerStrategy(myStrategy);
 ```
 
-内置策略：`default`（YAML 条件匹配）、`rsi-reversal`（RSI 均值回归）、`breakout`（趋势突破）
+内置策略：`default`（YAML 条件匹配）、`rsi-reversal`（RSI 均值回归）、`breakout`（趋势突破）、`ensemble`（多策略投票）
 
 ## 常用命令
 
@@ -156,6 +163,9 @@ registerStrategy(myStrategy);
 | `npm run cmd -- "/profit"` | 本地执行 Telegram 指令 |
 | `npm run cron:sync` | 同步定时任务到系统 crontab |
 | `npm run health:check` | 手动健康检查 |
+| `npm run signal-stats` | 信号组合统计（`--backtest`、`--days`、`--top`） |
+| `npm run weekly` | 每周绩效报告（`--scenario`、`--days`、`--send`） |
+| `npm run drift` | 执行偏差监控（`--paper`、`--live`、`--threshold`） |
 | `npm test` | 运行全部测试 |
 
 ## 定时任务
@@ -204,7 +214,7 @@ src/
 ## 测试
 
 ```bash
-npm test                        # 1040+ 测试，约 15 秒
+npm test                        # 1259 测试，约 15 秒
 npx tsc --noEmit                # TypeScript 严格模式检查
 ```
 

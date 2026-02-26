@@ -23,6 +23,7 @@ openclaw-trader monitors crypto markets 24/7, detects trading signals using tech
 - **Multi-timeframe confirmation** — 1h / 4h / 1d trend alignment before entry
 - **Regime-aware** — trending / sideways / breakout / reduced-size; auto-adjusts parameters per regime
 - **Pluggable strategies** — YAML config (default) or TypeScript plugins (RSI reversal, breakout, custom)
+- **Ensemble voting** — Multiple strategies vote with configurable weights; threshold and unanimous modes
 
 ### Risk Management
 - **Entry protection** — R:R pre-filter, entry slippage guard, correlation-based position reduction, Kelly sizing
@@ -44,9 +45,11 @@ openclaw-trader monitors crypto markets 24/7, detects trading signals using tech
 
 ### Backtesting & Optimization
 - **Backtest engine** — Historical data with Sharpe, Sortino, Calmar, max drawdown, BTC alpha, slippage sweep
+- **Bid/ask spread modeling** — Configurable `spread_bps` for realistic backtest cost simulation
 - **Intra-candle simulation** — High/low price exit checks within each candle
 - **Bayesian hyperopt** — TPE + elite evolution across 8 parameters; walk-forward validation
 - **Auto walk-forward** — Scheduled periodic re-optimization
+- **Signal statistics** — Per-signal-combo win rate, expectancy, profit factor analysis (`npm run signal-stats`)
 
 ### Operations
 - **Telegram commands** — `/profit`, `/positions`, `/balance`, `/status`, `/forcesell BTCUSDT`
@@ -56,6 +59,9 @@ openclaw-trader monitors crypto markets 24/7, detects trading signals using tech
 - **Log rotation** — Daily archival, 30-day retention
 - **Position reconciliation** — Diff local vs exchange state on startup
 - **SQLite persistence** — Optional `better-sqlite3` trade history alongside JSON
+- **Weekly performance report** — Equity curve SVG chart + key metrics, auto-send to Telegram (`npm run weekly`)
+- **Execution drift monitor** — Compare paper vs live fills to detect slippage divergence (`npm run drift`)
+- **Strategy-level DCA** — `adjustPosition()` hook lets plugins control add/reduce logic per trade
 
 ## Quick Start
 
@@ -67,7 +73,7 @@ vim config/strategy.yaml     # Configure strategy
 npm run monitor              # Single signal scan
 npm run live                 # Start testnet/live monitor daemon
 npm run paper:status         # View paper trading account
-npm test                     # Run 1040+ tests
+npm test                     # Run 1259 tests
 ```
 
 ## Configuration
@@ -130,13 +136,14 @@ const myStrategy: Strategy = {
   // customStoploss?(position, ctx) → number | null
   // confirmExit?(position, exitReason, ctx) → boolean
   // shouldExit?(position, ctx) → ExitResult | null
+  // adjustPosition?(position, ctx) → number | null  (DCA: >0 add, <0 reduce)
   // onTradeClosed?(result, ctx) → void
 };
 
 registerStrategy(myStrategy);
 ```
 
-Built-in: `default` (YAML conditions), `rsi-reversal`, `breakout`
+Built-in: `default` (YAML conditions), `rsi-reversal`, `breakout`, `ensemble` (multi-strategy voting)
 
 ## CLI Commands
 
@@ -156,6 +163,9 @@ Built-in: `default` (YAML conditions), `rsi-reversal`, `breakout`
 | `npm run cmd -- "/profit"` | Execute Telegram command locally |
 | `npm run cron:sync` | Sync scheduled tasks to system crontab |
 | `npm run health:check` | Manual health check |
+| `npm run signal-stats` | Signal combo statistics (`--backtest`, `--days`, `--top`) |
+| `npm run weekly` | Weekly performance report (`--scenario`, `--days`, `--send`) |
+| `npm run drift` | Paper vs live execution drift (`--paper`, `--live`, `--threshold`) |
 | `npm test` | Run all tests |
 
 ## Scheduled Tasks
@@ -188,7 +198,8 @@ src/
 ├── types.ts                    Global TypeScript types
 ├── exchange/                   Binance REST/WS, market data, pairlist
 ├── strategy/                   Indicators, signals, risk filters, break-even, ROI table
-├── strategies/                 Pluggable strategy system (interface + registry + plugins)
+├── strategies/                 Pluggable strategy system (interface + registry + plugins + ensemble)
+├── analysis/                   Signal statistics + execution drift monitoring
 ├── paper/                      Paper trading engine (account, exits, status)
 ├── backtest/                   Backtest engine (fetcher, runner, metrics, report)
 ├── live/                       Live/testnet executor + reconciliation
@@ -212,7 +223,7 @@ logs/                           Runtime state, reports, caches, backtest results
 ## Testing
 
 ```bash
-npm test                        # 1040+ tests, ~15s
+npm test                        # 1259 tests, ~15s
 npx tsc --noEmit                # TypeScript strict mode check
 ```
 
