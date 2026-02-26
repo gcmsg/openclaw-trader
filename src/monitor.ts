@@ -25,10 +25,12 @@ import { processSignal } from "./strategy/signal-engine.js";
 import { fetchFundingRatePct } from "./strategy/funding-rate-signal.js";
 import { getBtcDominanceTrend } from "./strategy/btc-dominance.js";
 import { readEmergencyHalt } from "./news/emergency-monitor.js";
+import { checkEventRisk, loadCalendar } from "./strategy/events-calendar.js";
 import { readCvdCache } from "./exchange/order-flow.js";
 import { calcKellyRatio } from "./strategy/kelly.js";
 import { loadAccount } from "./paper/account.js";
 import { ping } from "./health/heartbeat.js";
+import { isKillSwitchActive } from "./health/kill-switch.js";
 import { loadRuntimeConfigs } from "./config/loader.js";
 import type { RuntimeConfig, Signal, Indicators, Kline } from "./types.js";
 
@@ -323,6 +325,12 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
 
   if (state.paused) {
     log(`${prefix}⚠️ 策略已暂停（触发最大亏损上限）`);
+    return;
+  }
+
+  // P6.7: Kill Switch 熔断检查
+  if (isKillSwitchActive()) {
+    log(`${prefix}⛔ Kill Switch 激活，跳过扫描`);
     return;
   }
 

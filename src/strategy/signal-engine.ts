@@ -17,6 +17,12 @@ import { checkCorrelation } from "./correlation.js";
 import { checkProtections } from "./protection-manager.js";
 import type { TradeRecord } from "./protection-manager.js";
 
+// ── F4 Strategy Plugin 支持 ──────────────────────────
+// 副作用 import：注册所有内置策略（default / rsi-reversal / breakout）
+import "../strategies/index.js";
+import { getStrategy } from "../strategies/registry.js";
+import type { StrategyContext } from "../strategies/types.js";
+
 // ─────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────
@@ -107,7 +113,36 @@ export function processSignal(
   if (external.btcDomChange !== undefined) indicators.btcDomChange = external.btcDomChange;
 
   // ── 3. 信号检测 ───────────────────────────────────────
-  const signal = detectSignal(symbol, indicators, cfg, external.currentPosSide);
+  //
+  // F4 Strategy Plugin 支持：
+  //   strategy_id === "default" 或未配置 → 走现有 detectSignal 逻辑（完全不变）
+  //   strategy_id 为其他值 → 从注册中心获取插件，调用 populateSignal()
+  const strategyId = cfg.strategy_id ?? "default";
+
+  let signal: Signal;
+
+  if (strategyId !== "default") {
+    // ── 策略插件路径 ─────────────────────────────────
+    const plugin = getStrategy(strategyId);
+    const ctx: StrategyContext = {
+      klines,
+      cfg,
+      indicators,
+      ...(external.currentPosSide !== undefined ? { currentPosSide: external.currentPosSide } : {}),
+    };
+    const signalType = plugin.populateSignal(ctx);
+    signal = {
+      symbol,
+      type: signalType,
+      price: indicators.price,
+      indicators,
+      reason: [`strategy:${strategyId}`],
+      timestamp: Date.now(),
+    };
+  } else {
+    // ── 默认路径（现有逻辑，完全不变）──────────────
+    signal = detectSignal(symbol, indicators, cfg, external.currentPosSide);
+  }
 
   if (signal.type === "none" || signal.type === "sell" || signal.type === "cover") {
     // 平仓信号和无信号直接放行，不做额外过滤

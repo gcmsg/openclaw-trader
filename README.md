@@ -188,6 +188,92 @@ All signal conditions are defined in `config/strategy.yaml` under `signals.buy /
 > **Short engine**: single-direction (no hedge mode). Longs and shorts share the `max_positions` pool.  
 > `marketSell` = open short · `marketBuyByQty` = cover short
 
+### Strategy Plugin System (F4)
+
+Beyond YAML condition matching, you can write **code-based strategy plugins** for complex or ML-driven logic.
+
+**Built-in plugins:**
+
+| ID | Name | Description |
+|---|---|---|
+| `default` | YAML Condition Match | Reads `signals.buy/sell/short/cover` from YAML (existing behavior) |
+| `rsi-reversal` | RSI Mean Reversion | RSI < 30 → buy (oversold); RSI > 70 → sell (overbought). Best for ranging markets. |
+| `breakout` | Trend Breakout | Close > N-bar high + volume × 1.5x → buy; close < N-bar low → sell. Best for trending markets. |
+
+**How to use a plugin** — set `strategy_id` in a strategy profile YAML:
+
+```yaml
+# config/strategies/my-strategy.yaml
+name: "RSI Reversal Strategy"
+strategy_id: "rsi-reversal"   # ← selects the plugin
+rsi:
+  oversold: 30
+  overbought: 70
+```
+
+**How to create a custom plugin** (TypeScript, ~20 lines):
+
+```typescript
+// src/strategies/my-plugin.ts
+import type { Strategy, StrategyContext } from "./types.js";
+import { registerStrategy } from "./registry.js";
+
+const myStrategy: Strategy = {
+  id: "my-plugin",
+  name: "My Custom Strategy",
+  description: "Example plugin",
+  populateSignal(ctx: StrategyContext) {
+    const { indicators } = ctx;
+    if (indicators.rsi < 25 && indicators.maShort > indicators.maLong) return "buy";
+    if (indicators.rsi > 75) return "sell";
+    return "none";
+  },
+};
+
+registerStrategy(myStrategy);
+export { myStrategy };
+```
+
+Then add it to `src/strategies/index.ts`:
+```typescript
+import "./my-plugin.js";   // triggers registration
+```
+
+**List all registered strategies:**
+```bash
+npm run strategies
+```
+
+---
+
+### 策略插件系统 (F4)
+
+除 YAML 条件匹配外，可以编写**代码策略插件**实现复杂逻辑。
+
+**内置插件：**
+
+| ID | 名称 | 描述 |
+|---|---|---|
+| `default` | YAML 条件匹配 | 读取 YAML 的 `signals.buy/sell/short/cover`（现有行为，完全不变） |
+| `rsi-reversal` | RSI 均值回归 | RSI < 30 买入（超卖）；RSI > 70 卖出（超买）。适合横盘震荡市。 |
+| `breakout` | 趋势突破 | 收盘突破 N 根高点 + 量能放大 → 买入；跌破 N 根低点 → 卖出。适合趋势行情。 |
+
+**使用插件**：在策略 profile YAML 中设置 `strategy_id`：
+
+```yaml
+# config/strategies/my-strategy.yaml
+name: "RSI 均值回归策略"
+strategy_id: "rsi-reversal"   # ← 选择插件
+```
+
+**创建自定义插件**（TypeScript，约 20 行）— 见英文版示例。
+
+```bash
+npm run strategies   # 列出所有已注册策略及描述
+```
+
+---
+
 ### Project Structure
 
 ```

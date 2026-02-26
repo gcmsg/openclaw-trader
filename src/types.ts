@@ -204,6 +204,13 @@ export interface NotifyConfig {
 export interface StrategyConfig {
   symbols: string[];
   timeframe: Timeframe;
+  /**
+   * F4 Strategy Plugin ID（可选）。
+   * 指定使用哪个策略插件（src/strategies/*.ts）。
+   * 默认 "default" = 走现有 YAML 条件匹配逻辑（行为完全不变）。
+   * 可选值："default" | "rsi-reversal" | "breakout" | 自定义
+   */
+  strategy_id?: string;
   protections?: ProtectionConfig;
   /** 趋势确认时间框架（可选）。如设置，只有该时间框架 MA 多头时才允许买入。
    *  例：主策略 1h，trend_timeframe: "4h" → 4h MA多头才开 1h 买单。 */
@@ -292,6 +299,13 @@ export interface ExchangeConfig {
 export interface StrategyProfile {
   name: string;
   description?: string;
+  /**
+   * F4 Strategy Plugin ID（可选）。
+   * 在策略 profile YAML（config/strategies/*.yaml）中设置，
+   * 指定使用哪个策略插件（"rsi-reversal" | "breakout" | 自定义）。
+   * 默认不设置 = "default"（YAML 条件匹配）。
+   */
+  strategy_id?: string;
   symbols?: string[];
   timeframe?: Timeframe;
   trend_timeframe?: Timeframe;

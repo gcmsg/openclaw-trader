@@ -15,6 +15,11 @@ scenarios:
     name: "保守 × 现货"
     enabled: true
     strategy_id: "conservative"
+    # F4 Strategy Plugin 示例（在策略 YAML 中设置，不在 scenario 级别设置）：
+    # 在 config/strategies/conservative.yaml 中添加：
+    #   strategy_id: "rsi-reversal"    # 使用 RSI 均值回归插件策略
+    # 或:
+    #   strategy_id: "breakout"        # 使用趋势突破插件策略
     initial_usdt: 10000
     fee_rate: 0.001
     slippage_percent: 0.05

@@ -23,6 +23,8 @@ import { fetchRedditPosts, analyzeRedditSentiment, formatRedditReport } from "..
 import { loadStrategyConfig } from "../config/loader.js";
 import { trackBtcDominance, getBtcDominanceTrend } from "../strategy/btc-dominance.js";
 import { getKlines } from "../exchange/binance.js";
+import { fetchOptionsSummary, formatOptionsReport } from "../exchange/options-data.js";
+import { loadCalendar, getUpcomingEvents, checkEventRisk, formatEventReport } from "../strategy/events-calendar.js";
 import type { Timeframe } from "../types.js";
 
 const ALL_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT"];
@@ -190,6 +192,29 @@ async function main() {
       sections.push(`\n${separator}`);
       sections.push(formatRedditReport(redditResult));
     }
+  }
+
+  // 4.98 P6.4 期权市场信号（BTC + ETH）
+  const [btcOptions, ethOptions] = await Promise.all([
+    fetchOptionsSummary("BTC").catch(() => null),
+    fetchOptionsSummary("ETH").catch(() => null),
+  ]);
+  if (btcOptions ?? ethOptions) {
+    sections.push(`\n${separator}`);
+    if (btcOptions) sections.push(formatOptionsReport(btcOptions));
+    if (ethOptions) {
+      sections.push("");
+      sections.push(formatOptionsReport(ethOptions));
+    }
+  }
+
+  // 4.99 P6.5 宏观事件日历
+  {
+    const calendarEvents = loadCalendar();
+    const upcoming = getUpcomingEvents(calendarEvents, 7);
+    const eventRisk = checkEventRisk(calendarEvents);
+    sections.push(`\n${separator}`);
+    sections.push(formatEventReport(eventRisk, upcoming));
   }
 
   // 5. 多 TF 技术面扫描

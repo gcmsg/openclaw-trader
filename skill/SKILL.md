@@ -237,6 +237,69 @@ MTF filter: skip `buy` if higher-TF MA is bearish; skip `short` if higher-TF MA 
 - **Binance Futures**: `marketSell` = open short, `marketBuyByQty` = cover short
 - **Testnet quirk**: market orders return `status=NEW` initially; poll `getOrder()` after ~2s for `FILLED`
 
+## Strategy Plugin System (F4)
+
+Plugin-based signal logic runs **alongside** YAML condition matching.
+
+### Architecture
+```
+signal-engine.ts
+  └── cfg.strategy_id === "default" → detectSignal() (YAML conditions, unchanged)
+  └── cfg.strategy_id === "rsi-reversal" → rsiReversalStrategy.populateSignal()
+  └── cfg.strategy_id === "breakout"     → breakoutStrategy.populateSignal()
+  └── cfg.strategy_id === "your-plugin"  → registered plugin
+```
+
+### Built-in plugins
+| ID | Logic |
+|---|---|
+| `default` | Reads `signals.buy/sell/short/cover` from YAML (existing behavior) |
+| `rsi-reversal` | RSI < oversold → buy; RSI > overbought → sell |
+| `breakout` | Close > 20-bar high + volume × 1.5× → buy; close < 20-bar low → sell |
+
+### Activate a plugin
+In `config/strategies/your-strategy.yaml`:
+```yaml
+strategy_id: "rsi-reversal"   # selects the plugin
+rsi:
+  oversold: 30
+  overbought: 70
+```
+
+### Create a new plugin
+1. Create `src/strategies/my-plugin.ts` implementing the `Strategy` interface
+2. Call `registerStrategy(myStrategy)` at module level
+3. Add `import "./my-plugin.js"` to `src/strategies/index.ts`
+4. Set `strategy_id: "my-plugin"` in the strategy YAML
+
+```typescript
+// Minimal plugin skeleton:
+export const myPlugin: Strategy = {
+  id: "my-plugin",
+  name: "My Plugin",
+  populateSignal(ctx) {
+    if (ctx.indicators.rsi < 25) return "buy";
+    if (ctx.indicators.rsi > 75) return "sell";
+    return "none";
+  },
+};
+registerStrategy(myPlugin);
+```
+
+### Commands
+```bash
+npm run strategies          # list all plugin strategies + YAML profiles
+npm run strategies:list     # YAML profiles only (existing command)
+```
+
+### Key files
+- `src/strategies/types.ts` — `Strategy` / `StrategyContext` / `ExitResult` interfaces
+- `src/strategies/registry.ts` — `registerStrategy / getStrategy / listStrategies`
+- `src/strategies/index.ts` — side-effect imports that register all built-ins
+- `src/strategy/signal-engine.ts` — routes `cfg.strategy_id` to the plugin (step 3)
+
+---
+
 ## Risk Parameters (quick reference)
 
 ```yaml

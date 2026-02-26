@@ -169,6 +169,12 @@ export function buildPaperRuntime(
     signals,
     risk,
     exchange,
+    // F4: 传递策略插件 ID（来自 profile > base，默认 undefined = "default"）
+    ...(profile.strategy_id !== undefined
+      ? { strategy_id: profile.strategy_id }
+      : base.strategy_id !== undefined
+        ? { strategy_id: base.strategy_id }
+        : {}),
     paper: {
       scenarioId: scenario.id,
       initial_usdt: scenario.initial_usdt,

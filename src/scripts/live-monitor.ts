@@ -27,9 +27,19 @@ import { logSignal, closeSignal } from "../signals/history.js";
 import { readEmergencyHalt } from "../news/emergency-monitor.js";
 import { CvdManager } from "../exchange/order-flow.js";
 import { classifyRegime } from "../strategy/regime.js";
+import {
+  isKillSwitchActive,
+  activateKillSwitch,
+  checkBtcCrash,
+} from "../health/kill-switch.js";
 import type { RuntimeConfig } from "../types.js";
 
 const POLL_INTERVAL_MS = 60 * 1000; // 1 分钟轮询
+const BTC_CRASH_THRESHOLD_PCT = 8;  // BTC 1小时跌幅触发阈值（默认 8%）
+const MAX_BTC_PRICE_BUFFER = 60;    // 保留最近 60 个价格点（约 1 小时，1分钟一个）
+
+// ── 最近 BTC 价格缓冲（用于崩盘检测）──
+const btcPriceBuffer: number[] = [];
 
 // ── 优雅退出标志（用对象包裹，避免 no-unnecessary-condition 误报）──
 const _state = { shuttingDown: false };
@@ -359,8 +369,41 @@ async function main(): Promise<void> {
   // 轮询循环
   for (;;) {
     if (_state.shuttingDown) break;
+
+    // P6.7: BTC 崩盘检测（用 CVD manager 的 BTC 最新价格更新缓冲区）
+    // cvdManager 提供 WebSocket 驱动的实时价格；此处取快照值
+    try {
+      const btcKlines = await getKlines("BTCUSDT", "1m", 2);
+      const latestBtcPrice = btcKlines[btcKlines.length - 1]?.close;
+      if (latestBtcPrice && latestBtcPrice > 0) {
+        btcPriceBuffer.push(latestBtcPrice);
+        if (btcPriceBuffer.length > MAX_BTC_PRICE_BUFFER) {
+          btcPriceBuffer.shift();
+        }
+        // 仅在 Kill Switch 未激活时检测崩盘
+        if (!isKillSwitchActive() && btcPriceBuffer.length >= 10) {
+          const { crash, dropPct } = checkBtcCrash(btcPriceBuffer, BTC_CRASH_THRESHOLD_PCT);
+          if (crash) {
+            const reason = `BTC 近期跌幅 ${dropPct.toFixed(2)}% 超过阈值 ${BTC_CRASH_THRESHOLD_PCT}%`;
+            log(`⛔ 自动触发 Kill Switch: ${reason}`);
+            activateKillSwitch(reason);
+            notifyError("KILL_SWITCH", new Error(`⛔ Kill Switch 自动激活: ${reason}`));
+          }
+        }
+      }
+    } catch {
+      // BTC 价格获取失败不影响主流程
+    }
+
     for (const scenario of scenarios) {
       if (_state.shuttingDown) break; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+
+      // P6.7: Kill Switch 检查 — 激活时跳过整个场景
+      if (isKillSwitchActive()) {
+        log(`⛔ Kill Switch 激活，跳过场景 ${scenario.id}`);
+        continue;
+      }
+
       const cfg = buildPaperRuntime(base, paperCfg, scenario);
 
       try {

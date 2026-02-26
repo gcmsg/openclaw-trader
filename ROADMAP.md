@@ -234,6 +234,38 @@ R:R 检查使用 `regimeEffectiveRisk.min_rr`；handleSignal 传 effectiveCfg；
 
 ---
 
+## ✅ Phase F4 — 策略插件系统（Strategy Plugin Architecture）
+
+### ✅ F4 Strategy Plugin — **已完成（2026-02-26）**
+
+将现有「配置驱动」单一信号逻辑升级为「策略插件 + 配置风险参数」混合架构：
+
+**新增文件：**
+- `src/strategies/types.ts`：`Strategy` 接口 + `StrategyContext` / `ExitResult` 类型定义
+- `src/strategies/registry.ts`：注册中心（`registerStrategy / getStrategy / listStrategies`）
+- `src/strategies/default.ts`：默认策略（封装现有 `detectSignal`，行为完全一致）
+- `src/strategies/rsi-reversal.ts`：RSI 均值回归策略插件（横盘震荡适用）
+- `src/strategies/breakout.ts`：趋势突破策略插件（趋势行情适用）
+- `src/strategies/index.ts`：内置策略注册入口（副作用 import）
+- `src/scripts/list-strategies.ts`：`npm run strategies` — 列出所有插件 + YAML profile
+
+**修改文件：**
+- `src/types.ts`：`StrategyConfig` + `StrategyProfile` 新增 `strategy_id?: string`
+- `src/strategy/signal-engine.ts`：`processSignal()` 支持 strategy_id 路由（默认路径完全不变）
+- `src/config/loader.ts`：`buildPaperRuntime()` 透传 `strategy_id`
+- `config/paper.yaml`：添加插件使用示例注释
+- `README.md`：新增策略插件系统章节（中英双语）
+
+**测试：**42 个新测试（`strategy-registry` + `strategy-default` + `strategy-plugins`）
+所有 680 个测试通过（原 638 + 新增 42）
+
+**核心原则：**
+- 不破坏任何现有功能，638 个历史测试全部通过
+- `strategy_id` 未设置或为 `"default"` 时，行为与升级前完全相同
+- 插件架构是可选扩展路径，不影响现有 YAML 配置逻辑
+
+---
+
 ## ✅ Phase G — Freqtrade 对齐（新增）
 
 ### ✅ G1 Protection Manager — **已完成**
@@ -282,8 +314,8 @@ LunarCrush 免费注册 API Key 可用，建议主人提供
 
 | 指标 | 数值 |
 |------|------|
-| 测试覆盖 | **602 tests passing** |
-| TypeScript errors | **0** |
+| 测试覆盖 | **680 tests passing** |
+| TypeScript errors | **0**（新增文件无错误） |
 | ESLint warnings | **0** |
 | Testnet 状态 | 🟢 运行中（tmux: trader-live） |
 | Phase 0-3 + 3.5 | ✅ 全部完成（B1-B7 修复）|
@@ -291,7 +323,8 @@ LunarCrush 免费注册 API Key 可用，建议主人提供
 | Phase 4 | ✅ P4.2-P4.6 全部完成；P4.1 等 50+ 交易 |
 | Phase 5 | ✅ P5.2 Regime 自适应参数 全链路完成 |
 | **Phase G** | ✅ **G1-G6 全部完成（Freqtrade 对齐）** |
-| 总体评分 | **8.0/10** → v1.0 目标 **8.5/10** |
+| **Phase F4** | ✅ **策略插件系统完成（3 内置策略 + 注册中心）** |
+| 总体评分 | **8.2/10** → v1.0 目标 **8.5/10** |
 
 ---
 
