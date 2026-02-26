@@ -170,6 +170,12 @@ export interface RiskConfig {
    * 若不配置则回退到固定 take_profit_percent。
    */
   minimal_roi?: Record<string, number>;
+
+  // ── Break-Even Stop（保本止损，可选）──
+  /** 触发保本止损的最低盈利比率。如 0.03 = 盈利达 +3% 后激活 */
+  break_even_profit?: number;
+  /** 保本止损线相对于入场价的偏移（正数=高于入场价）。默认 0.001 = 入场价 +0.1% */
+  break_even_stop?: number;
 }
 
 export interface ExecutionConfig {

@@ -99,4 +99,22 @@ export interface Strategy {
    * 每次 paper/live 引擎关闭一笔交易后调用。
    */
   onTradeClosed?(result: TradeResult, ctx: StrategyContext): void;
+
+  /**
+   * 可选：自定义动态止损逻辑（参考 Freqtrade custom_stoploss）。
+   * 返回新的止损价格，返回 null 则使用默认止损逻辑（含 break_even_stop）。
+   * 仅在持仓期间每轮调用一次。
+   */
+  customStoploss?(
+    position: {
+      symbol: string;
+      side: "long" | "short";
+      entryPrice: number;
+      currentPrice: number;
+      currentStopLoss: number;
+      profitRatio: number;   // 当前盈利比率（正 = 盈利）
+      holdMs: number;
+    },
+    ctx: StrategyContext
+  ): number | null;
 }

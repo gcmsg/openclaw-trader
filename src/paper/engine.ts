@@ -7,6 +7,8 @@
 import type { Signal, RuntimeConfig } from "../types.js";
 import { calcAtrPositionSize } from "../strategy/indicators.js";
 import { checkMinimalRoi } from "../strategy/roi-table.js";
+import { resolveNewStopLoss } from "../strategy/break-even.js";
+import type { Strategy, StrategyContext } from "../strategies/types.js";
 import { logSignal, closeSignal } from "../signals/history.js";
 import { TradeDB } from "../persistence/db.js";
 
@@ -338,7 +340,9 @@ export type ExitReason = "stop_loss" | "take_profit" | "trailing_stop" | "time_s
 
 export function checkExitConditions(
   prices: Record<string, number>,
-  cfg: RuntimeConfig
+  cfg: RuntimeConfig,
+  strategy?: Strategy,
+  ctx?: StrategyContext
 ): {
   symbol: string;
   trade: PaperTrade;
@@ -382,6 +386,29 @@ export function checkExitConditions(
     const pnlPercent = isShort
       ? ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100
       : ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+
+    // ── P8.1 Break-Even Stop / Custom Stoploss ──
+    {
+      const holdMs = Date.now() - pos.entryTime;
+      const profitRatio = isShort
+        ? (pos.entryPrice - currentPrice) / pos.entryPrice
+        : (currentPrice - pos.entryPrice) / pos.entryPrice;
+      const newStop = resolveNewStopLoss(
+        pos.side ?? "long",
+        pos.entryPrice,
+        pos.stopLoss,
+        currentPrice,
+        profitRatio,
+        holdMs,
+        symbol,
+        cfg.risk,
+        strategy,
+        ctx
+      );
+      if (newStop !== null) {
+        pos.stopLoss = newStop;
+      }
+    }
 
     let exitReason: "stop_loss" | "take_profit" | "trailing_stop" | "time_stop" | null = null;
     let exitLabel = "";

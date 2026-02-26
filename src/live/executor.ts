@@ -32,6 +32,8 @@ import {
 } from "../paper/account.js";
 import { calcAtrPositionSize } from "../strategy/indicators.js";
 import { checkMinimalRoi } from "../strategy/roi-table.js";
+import { resolveNewStopLoss } from "../strategy/break-even.js";
+import type { Strategy } from "../strategies/types.js";
 import type { ExitReason } from "../paper/engine.js";
 import type { ExchangePosition } from "./reconcile.js";
 import { sendTelegramMessage } from "../notify/openclaw.js";
@@ -106,6 +108,8 @@ export class LiveExecutor {
   private readonly cfg: RuntimeConfig;
   private readonly scenarioId: string;
   private readonly isTestnet: boolean;
+  /** 可选：策略插件（用于 customStoploss 钩子） */
+  strategy?: Strategy;
 
   constructor(cfg: RuntimeConfig) {
     this.cfg = cfg;
@@ -660,6 +664,49 @@ export class LiveExecutor {
       const pnlPercent = isShort
         ? ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100
         : ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+
+      // ── P8.1 Break-Even Stop / Custom Stoploss ──
+      {
+        const holdMs = Date.now() - pos.entryTime;
+        const profitRatio = isShort
+          ? (pos.entryPrice - currentPrice) / pos.entryPrice
+          : (currentPrice - pos.entryPrice) / pos.entryPrice;
+        const newStop = resolveNewStopLoss(
+          pos.side ?? "long",
+          pos.entryPrice,
+          pos.stopLoss,
+          currentPrice,
+          profitRatio,
+          holdMs,
+          symbol,
+          this.cfg.risk,
+          this.strategy,
+          undefined // StrategyContext not available in executor loop
+        );
+        if (newStop !== null) {
+          const oldStop = pos.stopLoss;
+          pos.stopLoss = newStop;
+          // 若有原生止损单，先取消再重新挂新止损单
+          if (pos.exchangeSlOrderId !== undefined) {
+            await this.cancelExchangeStopLoss(symbol, pos.exchangeSlOrderId);
+            const newSlOrderId = await this.placeExchangeStopLoss(
+              symbol,
+              pos.side ?? "long",
+              pos.quantity,
+              newStop
+            );
+            if (newSlOrderId !== null) {
+              pos.exchangeSlOrderId = newSlOrderId;
+              pos.exchangeSlPrice = newStop;
+            }
+          }
+          saveAccount(account, this.scenarioId);
+          const label = this.isTestnet ? "[TESTNET]" : "[LIVE]";
+          console.log(
+            `${label} [break-even] ${symbol} SL updated: $${oldStop.toFixed(4)} → $${newStop.toFixed(4)}`
+          );
+        }
+      }
 
       const hitStopLoss = isShort ? currentPrice >= pos.stopLoss : currentPrice <= pos.stopLoss;
       const hitTakeProfit = isShort ? currentPrice <= pos.takeProfit : currentPrice >= pos.takeProfit;
