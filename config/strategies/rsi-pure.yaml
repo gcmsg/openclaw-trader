@@ -1,7 +1,9 @@
 # 纯 RSI 均值回归策略：超卖反弹，超买回落
 # 适合：震荡区间市场，利用过度反应做反转
+# 使用 rsi-reversal 插件策略（含自适应止损 + 连续亏损保护）
 name: "RSI 均值回归"
 description: "RSI 极值为核心信号，不依赖 MA 趋势判断，适合震荡市"
+strategy_id: "rsi-reversal"
 
 timeframe: "1h"
 
@@ -31,7 +33,7 @@ signals:
     - macd_histogram_expanding
 
 risk:
-  stop_loss_percent: 5
+  stop_loss_percent: 4
   take_profit_percent: 10   # 均值回归目标不高
   trailing_stop:
     enabled: false
