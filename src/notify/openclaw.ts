@@ -1,9 +1,41 @@
 import { spawnSync } from "child_process";
+import * as fs from "fs";
+import * as path from "path";
+import { fileURLToPath } from "url";
 import type { Signal, TradeResult } from "../types.js";
 import type { PaperTrade, PaperAccount } from "../paper/account.js";
 
 const OPENCLAW_BIN = process.env["OPENCLAW_BIN"] ?? "openclaw";
 const GATEWAY_TOKEN = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
+
+// ── 跨场景通知去重 ────────────────────────────────────────
+// 多个场景同时运行时，相同币种的信号只发送一次（30分钟窗口）
+const DEDUP_MINUTES = 30;
+const DEDUP_PATH = path.resolve(
+  fileURLToPath(import.meta.url), "../../..", "logs/signal-notify-dedup.json"
+);
+
+type DedupState = Record<string, number>; // key: "SYMBOL:type", value: last notify timestamp
+
+function readDedup(): DedupState {
+  try { return JSON.parse(fs.readFileSync(DEDUP_PATH, "utf-8")) as DedupState; }
+  catch { return {}; }
+}
+
+function shouldSendSignal(symbol: string, type: string): boolean {
+  const key = `${symbol}:${type}`;
+  const last = readDedup()[key] ?? 0;
+  return (Date.now() - last) / 60000 >= DEDUP_MINUTES;
+}
+
+function markSignalSent(symbol: string, type: string): void {
+  const state = readDedup();
+  state[`${symbol}:${type}`] = Date.now();
+  try {
+    fs.mkdirSync(path.dirname(DEDUP_PATH), { recursive: true });
+    fs.writeFileSync(DEDUP_PATH, JSON.stringify(state, null, 2));
+  } catch { /* ignore write errors */ }
+}
 
 /** 向 OpenClaw 主会话注入系统事件，触发 Mia 决策 */
 function sendToAgent(message: string): void {
@@ -34,6 +66,10 @@ function formatPercent(value: number): string {
 
 /** 信号通知 */
 export function notifySignal(signal: Signal): void {
+  // 跨场景去重：同一币种同方向信号 30 分钟内只发一次
+  if (!shouldSendSignal(signal.symbol, signal.type)) return;
+  markSignalSent(signal.symbol, signal.type);
+
   const emoji = signal.type === "buy" ? "🟢" : "🔴";
   const action = signal.type === "buy" ? "买入信号" : "卖出信号";
   const { maShort, maLong, rsi } = signal.indicators;
