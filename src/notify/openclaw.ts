@@ -64,6 +64,11 @@ function formatPercent(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
 }
 
+/** 通用 Telegram 文本消息发送 */
+export function sendTelegramMessage(text: string): void {
+  sendToAgent(text);
+}
+
 /** 信号通知 */
 export function notifySignal(signal: Signal): void {
   // 跨场景去重：同一币种同方向信号 30 分钟内只发一次
