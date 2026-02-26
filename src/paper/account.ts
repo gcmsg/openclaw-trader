@@ -153,7 +153,7 @@ export function loadAccount(initialUsdt = 1000, scenarioId = "default"): PaperAc
       // 兼容旧版账户文件（缺少 dailyLoss 字段）
       account.dailyLoss = { date: todayStr(), loss: 0 };
     }
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+     
     if (!account.initialUsdt || account.initialUsdt <= 0) {
       // 兼容旧版账户文件（缺少 initialUsdt 字段），防止 PnL 计算出 NaN
       account.initialUsdt = initialUsdt;

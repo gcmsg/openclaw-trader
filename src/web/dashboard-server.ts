@@ -106,7 +106,7 @@ export function buildDashboardData(): DashboardData {
   const allTrades: TradeRecord[] = [];
 
   // 加载所有 paper 场景
-  let scenarios: Array<{ id: string; name: string; initial_usdt: number }> = [];
+  let scenarios: { id: string; name: string; initial_usdt: number }[];
   try {
     const paperConfig = loadPaperConfig();
     scenarios = paperConfig.scenarios
@@ -163,7 +163,7 @@ export function buildDashboardData(): DashboardData {
     for (const pos of positionList) {
       const side = pos.side ?? "long";
       const currentPrice = pos.entryPrice; // 静态展示使用入场价
-      let unrealizedPnl = 0;
+      let unrealizedPnl: number;
       let costBasis = pos.quantity * pos.entryPrice;
 
       if (side === "short") {

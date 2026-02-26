@@ -95,7 +95,7 @@ export function checkEventRisk(
   const nowMs = (now ?? new Date()).getTime();
 
   // 按优先级排序：during > pre > post（先找最近的高危状态）
-  const candidates: Array<{ state: EventRiskState; priority: number }> = [];
+  const candidates: { state: EventRiskState; priority: number }[] = [];
 
   for (const event of events) {
     const eventMs = eventToTimestampMs(event);
@@ -221,7 +221,7 @@ export function formatEventReport(state: EventRiskState, upcoming: EconomicEvent
     }[state.phase];
 
     lines.push(`🗓️ **宏观事件风险状态**`);
-    lines.push(`${phaseLabel}`);
+    lines.push(phaseLabel);
     lines.push(`→ ${state.eventName}`);
     lines.push(`→ 仓位系数: ×${state.positionRatioMultiplier.toFixed(1)}`);
     if (state.expiresAt > 0) {

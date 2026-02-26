@@ -23,7 +23,7 @@ export interface StateStore {
   /**
    * 写入状态值（立即持久化到磁盘）
    */
-  set<T>(key: string, value: T): void;
+  set(key: string, value: unknown): void;
 
   /**
    * 删除状态键
@@ -91,9 +91,7 @@ export function createStateStore(
   let cache: Record<string, unknown> | null = null;
 
   function ensureLoaded(): Record<string, unknown> {
-    if (cache === null) {
-      cache = loadState(filePath);
-    }
+    cache ??= loadState(filePath);
     return cache;
   }
 
@@ -106,9 +104,9 @@ export function createStateStore(
       return defaultValue;
     },
 
-    set<T>(key: string, value: T): void {
+    set(key: string, value: unknown): void {
       const state = ensureLoaded();
-      state[key] = value as unknown;
+      state[key] = value;
       saveState(filePath, state);
     },
 

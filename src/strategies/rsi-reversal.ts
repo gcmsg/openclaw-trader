@@ -33,7 +33,7 @@ const rsiReversalStrategy: Strategy = {
     const { indicators, cfg, stateStore } = ctx;
 
     // 读取连续亏损次数（默认 0）
-    const consecutiveLosses = stateStore?.get("consecutiveLosses", 0) ?? 0;
+    const consecutiveLosses = stateStore?.get<number>("consecutiveLosses", 0) ?? 0;
 
     // 如果连续亏损 >= 3 次，跳过开仓信号（降低风险）
     if (consecutiveLosses >= 3) {
@@ -41,8 +41,8 @@ const rsiReversalStrategy: Strategy = {
     }
 
     // 从配置读取阈值（或使用默认值）
-    const oversold = cfg.strategy.rsi.oversold ?? 30;
-    const overbought = cfg.strategy.rsi.overbought ?? 70;
+    const oversold = cfg.strategy.rsi.oversold;
+    const overbought = cfg.strategy.rsi.overbought;
 
     if (indicators.rsi < oversold) {
       return "buy";

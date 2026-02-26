@@ -109,7 +109,7 @@ function fetchDeribitOptions(currency: "BTC" | "ETH"): Promise<DeribitOptionItem
         res.on("end", () => {
           try {
             const parsed = JSON.parse(data) as DeribitApiResponse;
-            resolve(parsed.result ?? []);
+            resolve(parsed.result);
           } catch (e) {
             reject(new Error(`Deribit parse error: ${String(e)}`));
           }
@@ -130,7 +130,7 @@ function fetchDeribitOptions(currency: "BTC" | "ETH"): Promise<DeribitOptionItem
 export async function fetchOptionsSummary(symbol: "BTC" | "ETH"): Promise<OptionsSummary> {
   const items = await fetchDeribitOptions(symbol);
 
-  if (!items || items.length === 0) {
+  if (items.length === 0) {
     throw new Error(`Deribit returned empty data for ${symbol}`);
   }
 
@@ -139,7 +139,7 @@ export async function fetchOptionsSummary(symbol: "BTC" | "ETH"): Promise<Option
   const calls: DeribitOptionItem[] = [];
 
   for (const item of items) {
-    const name = item.instrument_name ?? "";
+    const name = item.instrument_name;
     if (name.endsWith("-P")) {
       puts.push(item);
     } else if (name.endsWith("-C")) {
@@ -148,8 +148,8 @@ export async function fetchOptionsSummary(symbol: "BTC" | "ETH"): Promise<Option
   }
 
   // PCR = sum(put OI) / sum(call OI)
-  const totalPutOI = puts.reduce((sum, p) => sum + (p.open_interest ?? 0), 0);
-  const totalCallOI = calls.reduce((sum, c) => sum + (c.open_interest ?? 0), 0);
+  const totalPutOI = puts.reduce((sum, p) => sum + p.open_interest, 0);
+  const totalCallOI = calls.reduce((sum, c) => sum + c.open_interest, 0);
   const putCallRatio = totalCallOI > 0 ? totalPutOI / totalCallOI : 1.0;
 
   // 近月合约 IV（到期日最近的合约，mark_iv > 0）

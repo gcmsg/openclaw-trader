@@ -38,11 +38,11 @@ export function listStrategies(): string[] {
 /**
  * 列出所有已注册的策略详情（含 name/description）。
  */
-export function listStrategyDetails(): Array<{
+export function listStrategyDetails(): {
   id: string;
   name: string;
   description?: string;
-}> {
+}[] {
   return [..._registry.values()].map((s) => ({
     id: s.id,
     name: s.name,

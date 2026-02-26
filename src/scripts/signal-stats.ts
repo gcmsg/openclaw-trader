@@ -16,6 +16,7 @@ import {
   collectFromSignalHistory,
   mergeRecords,
 } from "../analysis/trade-collector.js";
+import type { Kline } from "../types.js";
 
 // ─────────────────────────────────────────────────────
 // CLI 参数解析
@@ -65,7 +66,7 @@ async function runBacktestAndCollect(days: number) {
     console.log(`📌 回测符号: ${symbols.join(", ")}`);
     console.log(`📅 时间范围: ${startDate} ~ ${endDate}\n`);
 
-    const klinesBySymbol: Record<string, import("../types.js").Kline[]> = {};
+    const klinesBySymbol: Record<string, Kline[]> = {};
     for (const sym of symbols) {
       process.stdout.write(`  获取 ${sym} K 线...`);
       try {
@@ -148,7 +149,7 @@ async function main(): Promise<void> {
   console.log(`总交易: ${totalTrades} | 胜率: ${overallWR}% | 信号组合数: ${stats.length}`);
 }
 
-main().catch((e) => {
+main().catch((e: unknown) => {
   console.error("Fatal:", e);
   process.exit(1);
 });

@@ -16,9 +16,7 @@ export interface ParamDef {
   step?: number; // int 类型的步长（float 忽略）
 }
 
-export interface ParamSet {
-  [key: string]: number;
-}
+export type ParamSet = Record<string, number>;
 
 // ─────────────────────────────────────────────────────
 // 默认策略可优化参数空间

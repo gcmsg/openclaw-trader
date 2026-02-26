@@ -218,7 +218,7 @@ describe("shouldConfirmExit — 策略 confirmExit() 回调", () => {
   });
 
   it("T16: 策略 confirmExit() 传入正确的 exitReason 参数", () => {
-    const receivedArgs: Array<{ pos: ConfirmExitPosition; reason: string }> = [];
+    const receivedArgs: { pos: ConfirmExitPosition; reason: string }[] = [];
     const strategy = makeStrategy((pos, reason) => {
       receivedArgs.push({ pos, reason });
       return true;

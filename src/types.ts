@@ -79,10 +79,10 @@ export interface Signal {
  * 避免循环依赖；类型结构与 EnsembleConfig 完全一致。
  */
 export interface EnsembleConfig {
-  strategies: Array<{
+  strategies: {
     id: string;     // 策略 ID（如 "default", "rsi-reversal", "breakout"）
     weight: number; // 投票权重（0~1），默认各 1/N
-  }>;
+  }[];
   /** 多数信号必须达到的加权比例才触发。默认 0.5 */
   threshold?: number;
   /** 要求所有策略一致才触发（unanimous mode）。默认 false */

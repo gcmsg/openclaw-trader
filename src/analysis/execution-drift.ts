@@ -64,7 +64,7 @@ export function reconstructClosedTrades(scenarioId: string): ReconstructedTrade[
     return [];
   }
 
-  const trades = account.trades ?? [];
+  const trades = account.trades;
   const results: ReconstructedTrade[] = [];
 
   // 按 symbol 分组，按时间顺序处理
@@ -88,8 +88,8 @@ export function reconstructClosedTrades(scenarioId: string): ReconstructedTrade[
         if (trade.pnl === undefined) {
           entryStack.push(trade);
         }
-      } else if (trade.side === "sell" || trade.side === "cover") {
-        // 出场：与最近未配对的入场配对
+      } else {
+        // 出场（sell / cover）：与最近未配对的入场配对
         const entry = entryStack.pop();
         if (!entry) continue;
 

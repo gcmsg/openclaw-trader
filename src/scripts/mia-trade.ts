@@ -11,6 +11,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as https from "https";
 import { fileURLToPath } from "url";
+import { logSignal, closeSignal } from "../signals/history.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOGS_DIR = path.resolve(__dirname, "../../logs");
@@ -24,6 +25,7 @@ interface Position {
   entryTime: number;
   stopLoss: number;
   takeProfit: number;
+  signalHistoryId?: string;
 }
 
 interface Trade {
@@ -36,6 +38,8 @@ interface Trade {
   fee: number;
   pnl?: number;
   pnlPercent?: number;
+  entryPrice?: number;
+  holdMs?: number;
   reason: string;
   timestamp: number;
 }
@@ -99,8 +103,11 @@ async function closePosition(symbol: string, scenarioId: string, reason = "mia_m
   const pnl = usdtReturn - fee - pos.quantity * pos.entryPrice;
   const pnlPct = (pnl / (pos.quantity * pos.entryPrice)) * 100;
 
+  const now = Date.now();
+  const holdMs = now - pos.entryTime;
+
   const trade: Trade = {
-    id: `mia_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    id: `mia_${now}_${Math.random().toString(36).slice(2, 8)}`,
     symbol,
     side: "sell",
     price,
@@ -109,14 +116,21 @@ async function closePosition(symbol: string, scenarioId: string, reason = "mia_m
     fee,
     pnl,
     pnlPercent: pnlPct / 100,
+    entryPrice: pos.entryPrice,
+    holdMs,
     reason,
-    timestamp: Date.now(),
+    timestamp: now,
   };
 
   account.usdt += usdtReturn - fee;
   delete account.positions[symbol];
   account.trades.push(trade);
   saveAccount(scenarioId, account);
+
+  // 更新 signal-history.jsonl
+  if (pos.signalHistoryId) {
+    closeSignal(pos.signalHistoryId, price, "manual", pnl);
+  }
 
   const sign = pnl >= 0 ? "+" : "";
   console.log(`✅ 平仓 ${symbol} @$${price.toFixed(4)} | PnL: ${sign}$${pnl.toFixed(2)} (${sign}${pnlPct.toFixed(2)}%)`);
@@ -152,6 +166,15 @@ async function openPosition(
   const stopLoss = entryPrice * (1 - stopLossPct / 100);
   const takeProfit = entryPrice * (1 + takeProfitPct / 100);
 
+  const signalHistoryId = logSignal({
+    symbol,
+    type: "buy",
+    entryPrice,
+    scenarioId,
+    source: "paper",
+    notes: reason,
+  });
+
   const pos: Position = {
     symbol,
     side: "long",
@@ -160,6 +183,7 @@ async function openPosition(
     entryTime: Date.now(),
     stopLoss,
     takeProfit,
+    signalHistoryId,
   };
 
   const trade: Trade = {

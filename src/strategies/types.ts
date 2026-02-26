@@ -14,9 +14,7 @@ import type { StateStore } from "./state-store.js";
 // Extra Indicators (插件可计算的额外指标)
 // ─────────────────────────────────────────────────────
 
-export interface ExtraIndicators {
-  [key: string]: number | boolean | undefined;
-}
+export type ExtraIndicators = Record<string, number | boolean | undefined>;
 
 // ─────────────────────────────────────────────────────
 // Strategy Context（传入插件的完整上下文）

@@ -82,7 +82,7 @@ async function processPendingCommands(): Promise<number> {
   }
 
   // 追加响应记录
-  let existing: CommandResponse[] = [];
+  let existing: CommandResponse[];
   try {
     existing = JSON.parse(
       fs.readFileSync(RESPONSES_FILE, "utf-8")
@@ -100,7 +100,7 @@ async function processPendingCommands(): Promise<number> {
 
 /** 添加一条命令到 pending 队列（供外部调用） */
 export function enqueueCommand(text: string): void {
-  let commands: PendingCommand[] = [];
+  let commands: PendingCommand[];
   try {
     commands = JSON.parse(
       fs.readFileSync(PENDING_COMMANDS_FILE, "utf-8")

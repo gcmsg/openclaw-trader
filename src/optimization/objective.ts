@@ -33,6 +33,7 @@ export interface EvalResult {
  * @param klineCache   预加载的 K 线缓存（key = symbol，value = 全量 K 线）
  * @returns            { score, metrics }
  */
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function evaluateParams(
   params: ParamSet,
   symbol: string,

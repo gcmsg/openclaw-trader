@@ -82,29 +82,30 @@ interface RawSignalRecord {
  * 忽略开仓记录（side="buy" 或 side="short"）。
  */
 export function collectFromBacktest(backtestResult: unknown): TradeRecord[] {
+  if (backtestResult == null || typeof backtestResult !== 'object') return [];
   const result = backtestResult as RawBacktestResult;
-  const rawTrades = result?.trades;
+  const rawTrades = result.trades;
   if (!Array.isArray(rawTrades)) return [];
 
   const records: TradeRecord[] = [];
 
   for (const raw of rawTrades) {
-    const t = raw as RawBacktestTrade;
+    const t = raw;
 
     // 只取平仓记录
     if (t.side !== "sell" && t.side !== "cover") continue;
 
     const side: "long" | "short" = t.side === "cover" ? "short" : "long";
-    const entryTime = t.entryTime ?? 0;
-    const exitTime = t.exitTime ?? 0;
+    const entryTime = t.entryTime;
+    const exitTime = t.exitTime;
     const holdMs = exitTime - entryTime;
 
     records.push({
-      symbol: t.symbol ?? "UNKNOWN",
+      symbol: t.symbol,
       side,
       signalConditions: Array.isArray(t.signalConditions) ? t.signalConditions : [],
-      entryPrice: t.entryPrice ?? 0,
-      exitPrice: t.exitPrice ?? 0,
+      entryPrice: t.entryPrice,
+      exitPrice: t.exitPrice,
       pnlPercent: t.pnlPercent ?? 0,
       pnlUsdt: t.pnl ?? 0,
       exitReason: t.exitReason ?? "signal",
@@ -171,7 +172,7 @@ export function collectFromSignalHistory(filepath?: string): TradeRecord[] {
 
     const signalConditions: string[] =
       Array.isArray(parsed.entryConditions?.triggeredRules)
-        ? (parsed.entryConditions.triggeredRules as string[])
+        ? (parsed.entryConditions.triggeredRules)
         : [];
 
     records.push({

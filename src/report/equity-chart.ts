@@ -20,8 +20,9 @@ export interface EquityPoint {
  * @param outputPath 输出路径（.svg 扩展名）
  * @returns SVG 文件路径
  */
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function generateEquityChart(
-  equityPoints: Array<{ timestamp: number; equity: number }>,
+  equityPoints: { timestamp: number; equity: number }[],
   title: string,
   outputPath: string
 ): Promise<string> {
@@ -46,7 +47,7 @@ export async function generateEquityChart(
 
 /** 生成 ASCII 文本图表（用于 Telegram 消息）*/
 export function generateAsciiChart(
-  equityPoints: Array<{ timestamp: number; equity: number }>,
+  equityPoints: { timestamp: number; equity: number }[],
   height = 10,
   width = 60
 ): string {
@@ -77,7 +78,7 @@ function downsample(values: number[], targetLen: number): number[] {
 function renderAscii(values: number[], height: number): string {
   if (values.length === 0) return "(no data)";
 
-  const allVals = values as number[];
+  const allVals = values;
   const min = Math.min(...allVals);
   const max = Math.max(...allVals);
   const range = max - min || 1;
@@ -98,7 +99,7 @@ function renderAscii(values: number[], height: number): string {
 }
 
 function buildSvg(
-  points: Array<{ timestamp: number; equity: number }>,
+  points: { timestamp: number; equity: number }[],
   title: string,
   minE: number,
   maxE: number

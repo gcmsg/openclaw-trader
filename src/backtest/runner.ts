@@ -11,6 +11,8 @@
 import { calculateIndicators } from "../strategy/indicators.js";
 import { processSignal } from "../strategy/signal-engine.js";
 import { getMinimalRoiThreshold } from "../strategy/roi-table.js";
+import { resolveNewStopLoss } from "../strategy/break-even.js";
+import { shouldConfirmExit } from "../strategy/confirm-exit.js";
 import type { Kline, StrategyConfig } from "../types.js";
 import {
   calculateMetrics,
@@ -19,6 +21,10 @@ import {
   type EquityPoint,
 } from "./metrics.js";
 import type { FundingRateRecord } from "./fetcher.js";
+import type { Strategy, StrategyContext, TradeResult } from "../strategies/types.js";
+// 副作用：注册所有内置策略
+import "../strategies/index.js";
+import { getStrategy } from "../strategies/registry.js";
 
 // ─────────────────────────────────────────────────────
 // Types
@@ -48,6 +54,8 @@ interface BacktestPosition {
   // 资金费率追踪（Futures 专用）
   lastFundingTs?: number;    // 上次资金费率结算时间（毫秒）
   totalFundingPaid?: number; // 累计已付资金费（正=付出，负=收入）
+  // 触发开仓的信号条件
+  signalConditions?: string[];
 }
 
 interface BacktestAccount {
@@ -85,6 +93,11 @@ export interface BacktestOptions {
    * false：向后兼容，所有出场用 close 价格判断（旧行为）
    */
   intracandle?: boolean;
+  /**
+   * 测试/外部注入策略实例（优先于 cfg.strategy_id 注册表查找）
+   * 用于单测时传入 mock strategy 而无需注册到全局注册表。
+   */
+  strategyOverride?: Strategy;
 }
 
 export interface BacktestResult {
@@ -144,7 +157,8 @@ function doBuy(
   price: number,
   time: number,
   cfg: StrategyConfig,
-  opts: ExecOpts
+  opts: ExecOpts,
+  signalConditions: string[] = []
 ): void {
   // 已持仓则跳过
   if (account.positions[symbol]) return;
@@ -185,6 +199,7 @@ function doBuy(
     cost: usdtToSpend,
     stopLoss: execPrice * (1 - cfg.risk.stop_loss_percent / 100),
     takeProfit: execPrice * (1 + cfg.risk.take_profit_percent / 100),
+    ...(signalConditions.length > 0 && { signalConditions }),
   };
 
   if (cfg.risk.trailing_stop.enabled) {
@@ -211,6 +226,7 @@ function doBuy(
     pnl: 0,
     pnlPercent: 0,
     exitReason: "signal",
+    ...(signalConditions.length > 0 && { signalConditions }),
   });
 }
 
@@ -220,7 +236,8 @@ function doOpenShort(
   price: number,
   time: number,
   cfg: StrategyConfig,
-  opts: ExecOpts
+  opts: ExecOpts,
+  signalConditions: string[] = []
 ): void {
   if (account.positions[symbol]) return;
   if (Object.keys(account.positions).length >= cfg.risk.max_positions) return;
@@ -253,6 +270,7 @@ function doOpenShort(
     marginUsdt: actualMargin, // 净保证金（用于归还）
     stopLoss: execPrice * (1 + cfg.risk.stop_loss_percent / 100),   // 涨破 = 亏损
     takeProfit: execPrice * (1 - cfg.risk.take_profit_percent / 100), // 跌破 = 盈利
+    ...(signalConditions.length > 0 && { signalConditions }),
   };
 
   if (cfg.risk.trailing_stop.enabled) {
@@ -304,6 +322,7 @@ function doCoverShort(
     pnl,
     pnlPercent,
     exitReason,
+    ...(pos.signalConditions && pos.signalConditions.length > 0 && { signalConditions: pos.signalConditions }),
   });
 }
 
@@ -351,6 +370,7 @@ function doSell(
     pnl,
     pnlPercent,
     exitReason,
+    ...(pos.signalConditions && pos.signalConditions.length > 0 && { signalConditions: pos.signalConditions }),
   });
 }
 
@@ -617,6 +637,19 @@ export function runBacktest(
   // ExecOpts：仅供交易函数使用（手续费 + 滑点 + spread）
   const legacyOpts: ExecOpts = { feeRate, slippagePercent, spreadBps };
 
+  // ── 策略插件查找（用于回测钩子：shouldExit / customStoploss / confirmExit / onTradeClosed）──
+  let strategy: Strategy | undefined = opts.strategyOverride;
+  if (strategy === undefined) {
+    const strategyId = cfg.strategy_id;
+    if (strategyId !== undefined && strategyId !== "") {
+      try {
+        strategy = getStrategy(strategyId);
+      } catch {
+        // 策略未注册，忽略（不影响现有回测逻辑）
+      }
+    }
+  }
+
   const symbols = Object.keys(klinesBySymbol);
   if (symbols.length === 0) {
     throw new Error("klinesBySymbol 不能为空");
@@ -766,20 +799,123 @@ export function runBacktest(
       const kline = klineIndex[sym]?.[time];
       if (!kline) continue;
 
+      const posSide: "long" | "short" = pos.side ?? "long";
+      const holdMs = time - pos.entryTime;
+      const currentPrice = kline.close;
+      const profitRatio = posSide === "short"
+        ? (pos.entryPrice - currentPrice) / pos.entryPrice
+        : (currentPrice - pos.entryPrice) / pos.entryPrice;
+
+      // ── 构建 StrategyContext（供钩子使用）──────────────────
+      const needsCtx = strategy !== undefined || cfg.risk.break_even_profit !== undefined;
+      let stratCtx: StrategyContext | undefined;
+      if (needsCtx) {
+        const win = windows[sym] ?? [];
+        const ind = calculateIndicators(
+          win,
+          cfg.strategy.ma.short,
+          cfg.strategy.ma.long,
+          cfg.strategy.rsi.period,
+          cfg.strategy.macd
+        );
+        if (ind) {
+          stratCtx = { klines: win, cfg, indicators: ind, currentPosSide: posSide };
+        }
+      }
+
+      // ── 辅助：执行出场并调用 onTradeClosed ─────────────────
+      const executeExit = (exitPrice: number, exitReason: BacktestTrade["exitReason"]): void => {
+        if (posSide === "short") {
+          doCoverShort(account, sym, exitPrice, time, exitReason, legacyOpts);
+        } else {
+          doSell(account, sym, exitPrice, time, exitReason, legacyOpts);
+        }
+        // Hook: onTradeClosed
+        if (strategy?.onTradeClosed !== undefined && stratCtx !== undefined) {
+          const lastTrade = account.trades[account.trades.length - 1];
+          if (lastTrade !== undefined) {
+            const tradeResult: TradeResult = {
+              symbol: sym,
+              side: posSide,
+              entryPrice: lastTrade.entryPrice,
+              exitPrice: lastTrade.exitPrice,
+              pnl: lastTrade.pnl,
+              pnlPercent: lastTrade.pnlPercent,
+              holdMs: lastTrade.exitTime - lastTrade.entryTime,
+              exitReason,
+            };
+            strategy.onTradeClosed(tradeResult, stratCtx);
+          }
+        }
+      };
+
+      // ── Hook 优先级 1: shouldExit ───────────────────────────
+      if (strategy?.shouldExit !== undefined && stratCtx !== undefined) {
+        const shouldExitResult = strategy.shouldExit(
+          { symbol: sym, side: posSide, entryPrice: pos.entryPrice, currentPrice, holdMs },
+          stratCtx
+        );
+        if (shouldExitResult?.exit) {
+          // confirmExit 检查
+          const maxDev = cfg.execution.max_exit_price_deviation ?? 0.15;
+          const confirmResult = shouldConfirmExit(
+            { symbol: sym, side: posSide, entryPrice: pos.entryPrice, currentPrice, profitRatio, holdMs },
+            shouldExitResult.reason,
+            maxDev,
+            strategy,
+            stratCtx
+          );
+          if (confirmResult.confirmed) {
+            executeExit(currentPrice, "signal");
+          }
+          continue; // shouldExit 优先，无论是否确认都跳过后续检查
+        }
+      }
+
+      // ── Hook 优先级 2: break_even + customStoploss → 更新 pos.stopLoss ──
+      {
+        const newStop = resolveNewStopLoss(
+          posSide,
+          pos.entryPrice,
+          pos.stopLoss,
+          currentPrice,
+          profitRatio,
+          holdMs,
+          sym,
+          cfg.risk,
+          strategy,
+          stratCtx
+        );
+        if (newStop !== null) {
+          pos.stopLoss = newStop;
+        }
+      }
+
       // 追踪止损状态更新（始终用 high/low，与 intracandle 无关）
       const trailingTriggered = updateTrailingStop(pos, kline.high, kline.low, cfg);
 
-      // 蜡烛内出场检查
+      // ── 常规出场检查（蜡烛内模拟）─────────────────────────
       const exitResult = checkIntracandleExit(
         pos, kline, cfg, time, trailingTriggered, intracandle
       );
 
       if (exitResult) {
-        if (pos.side === "short") {
-          doCoverShort(account, sym, exitResult.exitPrice, time, exitResult.reason, legacyOpts);
-        } else {
-          doSell(account, sym, exitResult.exitPrice, time, exitResult.reason, legacyOpts);
+        // ── Hook 优先级 3: confirmExit ─────────────────────────
+        const useConfirmExit = strategy !== undefined || cfg.execution.max_exit_price_deviation !== undefined;
+        if (useConfirmExit) {
+          const maxDev = cfg.execution.max_exit_price_deviation ?? 0.15;
+          const confirmResult = shouldConfirmExit(
+            { symbol: sym, side: posSide, entryPrice: pos.entryPrice, currentPrice, profitRatio, holdMs },
+            exitResult.reason,
+            maxDev,
+            strategy,
+            stratCtx
+          );
+          if (!confirmResult.confirmed) {
+            continue; // 出场被拒绝，继续持仓
+          }
         }
+        executeExit(exitResult.exitPrice, exitResult.reason);
       }
     }
 
@@ -826,7 +962,7 @@ export function runBacktest(
         // MTF 过滤：多头信号需高级别 MA 也是多头
         const trendBull = getTrendBull(sym, time);
         if (trendBull === false) continue;
-        doBuy(account, sym, kline.close, time, regimeCfg, legacyOpts);
+        doBuy(account, sym, kline.close, time, regimeCfg, legacyOpts, signal.reason);
       } else if (signal.type === "sell") {
         // 平多（detectSignal 已确保只在持多时返回 sell）
         doSell(account, sym, kline.close, time, "signal", legacyOpts);
@@ -834,7 +970,7 @@ export function runBacktest(
         // MTF 过滤：空头信号需高级别 MA 也是空头（反向过滤）
         const trendBull = getTrendBull(sym, time);
         if (trendBull === true) continue; // 大趋势多头，不开空
-        doOpenShort(account, sym, kline.close, time, regimeCfg, legacyOpts);
+        doOpenShort(account, sym, kline.close, time, regimeCfg, legacyOpts, signal.reason);
       } else {
         // cover — 平空（detectSignal 已确保只在持空时返回 cover）
         doCoverShort(account, sym, kline.close, time, "signal", legacyOpts);
@@ -854,10 +990,35 @@ export function runBacktest(
     const pos = account.positions[sym];
     const lastKline = lastTime > 0 ? klineIndex[sym]?.[lastTime] : undefined;
     if (!lastKline || !pos) continue;
+    const posSideForClose: "long" | "short" = pos.side ?? "long";
     if (pos.side === "short") {
       doCoverShort(account, sym, lastKline.close, lastTime, "end_of_data", legacyOpts);
     } else {
       doSell(account, sym, lastKline.close, lastTime, "end_of_data", legacyOpts);
+    }
+    // Hook: onTradeClosed（强制平仓也触发）
+    if (strategy?.onTradeClosed !== undefined) {
+      const win = windows[sym] ?? [];
+      const ind = calculateIndicators(
+        win, cfg.strategy.ma.short, cfg.strategy.ma.long, cfg.strategy.rsi.period, cfg.strategy.macd
+      );
+      if (ind) {
+        const closeCtx: StrategyContext = { klines: win, cfg, indicators: ind, currentPosSide: posSideForClose };
+        const lastTrade = account.trades[account.trades.length - 1];
+        if (lastTrade !== undefined) {
+          const tradeResult: TradeResult = {
+            symbol: sym,
+            side: posSideForClose,
+            entryPrice: lastTrade.entryPrice,
+            exitPrice: lastTrade.exitPrice,
+            pnl: lastTrade.pnl,
+            pnlPercent: lastTrade.pnlPercent,
+            holdMs: lastTrade.exitTime - lastTrade.entryTime,
+            exitReason: "end_of_data",
+          };
+          strategy.onTradeClosed(tradeResult, closeCtx);
+        }
+      }
     }
   }
 

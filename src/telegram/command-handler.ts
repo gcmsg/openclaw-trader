@@ -70,7 +70,7 @@ function defaultFetchPrice(symbol: string): Promise<number | null> {
     };
     const req = https.request(options, (res) => {
       let data = "";
-      res.on("data", (chunk: Buffer) => (data += chunk));
+      res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
       res.on("end", () => {
         try {
           const parsed = JSON.parse(data) as { price: string };
@@ -80,7 +80,7 @@ function defaultFetchPrice(symbol: string): Promise<number | null> {
         }
       });
     });
-    req.on("error", () => resolve(null));
+    req.on("error", () => { resolve(null); });
     req.setTimeout(8000, () => {
       req.destroy();
       resolve(null);
@@ -96,7 +96,7 @@ function defaultFetchPrice(symbol: string): Promise<number | null> {
 /** 扫描 logs 目录，返回所有 scenario ID 列表 */
 function listScenarioIds(logsDir: string): string[] {
   try {
-    const files = fs.readdirSync(logsDir) as string[];
+    const files = fs.readdirSync(logsDir);
     return files
       .filter((f) => f.startsWith("paper-") && f.endsWith(".json"))
       .map((f) => f.slice("paper-".length, -".json".length));
@@ -136,7 +136,7 @@ function fmtPct(pct: number): string {
  * 命令名称不区分大小写。
  */
 export function parseCommand(text: string): TelegramCommand | null {
-  if (!text || !text.startsWith("/")) return null;
+  if (!text.startsWith("/")) return null;
 
   const parts = text.trim().split(/\s+/);
   const rawCmd = parts[0];
@@ -204,7 +204,7 @@ export function handleHelp(): string {
 // /balance
 // ─────────────────────────────────────────────────────
 
-export async function handleBalance(logsDir: string): Promise<string> {
+export function handleBalance(logsDir: string): string {
   const scenarios = listScenarioIds(logsDir);
   if (scenarios.length === 0) return "💰 *USDT 余额*\n\n暂无数据";
 
@@ -220,7 +220,7 @@ export async function handleBalance(logsDir: string): Promise<string> {
 // /profit
 // ─────────────────────────────────────────────────────
 
-export async function handleProfit(logsDir: string): Promise<string> {
+export function handleProfit(logsDir: string): string {
   const scenarios = listScenarioIds(logsDir);
   if (scenarios.length === 0) return "📊 *收益汇总*\n\n暂无数据";
 
@@ -270,7 +270,7 @@ export async function handleProfit(logsDir: string): Promise<string> {
 // /positions
 // ─────────────────────────────────────────────────────
 
-export async function handlePositions(logsDir: string): Promise<string> {
+export function handlePositions(logsDir: string): string {
   const scenarios = listScenarioIds(logsDir);
 
   const lines: string[] = [];
@@ -307,7 +307,7 @@ export async function handlePositions(logsDir: string): Promise<string> {
 // /status
 // ─────────────────────────────────────────────────────
 
-export async function handleStatus(logsDir: string): Promise<string> {
+export function handleStatus(logsDir: string): string {
   const lines = ["⚙️ *系统状态*", ""];
 
   // 信号去重状态
@@ -414,7 +414,7 @@ export async function handleForceSell(
   const execPrice = price ?? pos.entryPrice;
   const priceSource = price !== null ? "实时价格" : "入场价（获取失败）";
 
-  let trade: ReturnType<typeof paperSell> | ReturnType<typeof paperCoverShort>;
+  let trade: ReturnType<typeof paperSell>  ;
 
   if (pos.side === "short") {
     trade = paperCoverShort(account, symbolUpper, execPrice, "telegram_forcesell");

@@ -101,7 +101,7 @@ function fetchRedditJson(url: string): Promise<RedditListing> {
           try {
             resolve(JSON.parse(data) as RedditListing);
           } catch (e) {
-            reject(e);
+            reject(e instanceof Error ? e : new Error(String(e)));
           }
         });
       }
@@ -152,7 +152,7 @@ export async function fetchRedditPosts(
   }
 
   const listing = await fetchRedditJson(url);
-  const children = listing?.data?.children ?? [];
+  const children = listing.data.children;
 
   return children.map((child) => {
     const d = child.data;

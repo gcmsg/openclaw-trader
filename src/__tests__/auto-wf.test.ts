@@ -422,7 +422,7 @@ describe("saveAutoWfState", () => {
     const [, content] = writeSpy.mock.calls[0]!;
     const parsed = JSON.parse(content as string) as typeof state;
     expect(parsed.lastRun).toBe("2025-03-01T00:00:00.000Z");
-    expect(parsed.bySymbol["BTCUSDT"]?.bestSharpe).toBe(1.2);
+    expect(parsed.bySymbol.BTCUSDT?.bestSharpe).toBe(1.2);
 
     writeSpy.mockRestore();
     mkdirSpy.mockRestore();
@@ -447,14 +447,14 @@ describe("saveAutoWfState", () => {
 
 describe("formatAutoWfReport", () => {
   function makeReport(
-    results: Array<{
+    results: {
       symbol: string;
       updated: boolean;
       currentSharpe: number;
       newSharpe: number;
       improvementPct: number;
       error?: string;
-    }>
+    }[]
   ) {
     const bestParams: ParamSet = { ma_short: 15, ma_long: 50 };
     return {

@@ -41,9 +41,9 @@ function makeRedditListing(posts: Partial<RedditChild["data"]>[]): unknown {
 }
 
 function mockHttpsRequest(responseBody: unknown) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   return vi.spyOn(https, "request").mockImplementation(
-    ((_opts: unknown, callback?: ((res: IncomingMessage) => void) | undefined) => {
+    ((_opts: unknown, callback?: ((res: IncomingMessage) => void)  ) => {
       const res = new EventEmitter() as IncomingMessage;
       (res as unknown as { statusCode: number }).statusCode = 200;
       setTimeout(() => {
@@ -146,9 +146,9 @@ describe("fetchRedditPosts", () => {
   });
 
   it("HTTP 4xx 时抛出异常", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     vi.spyOn(https, "request").mockImplementation(
-      ((_opts: unknown, callback?: ((res: IncomingMessage) => void) | undefined) => {
+      ((_opts: unknown, callback?: ((res: IncomingMessage) => void)  ) => {
         const res = new EventEmitter() as IncomingMessage;
         (res as unknown as { statusCode: number }).statusCode = 429;
         setTimeout(() => res.emit("end"), 0);
@@ -165,7 +165,7 @@ describe("fetchRedditPosts", () => {
   it("带关键词时使用 search 接口（URL 含 q= 参数）", async () => {
     const spy = mockHttpsRequest(makeRedditListing([]));
     await fetchRedditPosts("CryptoCurrency", ["bitcoin", "eth"]);
-    const callArg = spy.mock.calls[0]![0]! as { path?: string };
+    const callArg = spy.mock.calls[0]![0] as { path?: string };
     expect(callArg?.path ?? "").toContain("search.json");
   });
 });

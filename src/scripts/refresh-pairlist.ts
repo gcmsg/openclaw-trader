@@ -19,19 +19,19 @@ const PAIRLIST_PATH = path.join(LOGS_DIR, "current-pairlist.json");
 interface PairlistSnapshot {
   symbols: string[];
   updatedAt: number;
-  pairs: Array<{
+  pairs: {
     symbol: string;
     volume24hUsd: number;
     priceChangePercent: number;
     volatility: number;
     score: number;
-  }>;
+  }[];
 }
 
 function loadCurrentPairlist(): string[] {
   try {
     const data = JSON.parse(fs.readFileSync(PAIRLIST_PATH, "utf-8")) as PairlistSnapshot;
-    return data.symbols ?? [];
+    return data.symbols;
   } catch {
     return [];
   }

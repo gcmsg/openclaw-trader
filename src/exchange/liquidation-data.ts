@@ -89,7 +89,7 @@ function fetchForceOrders(
             }
             resolve(json);
           } catch (e) {
-            reject(e);
+            reject(e instanceof Error ? e : new Error(String(e)));
           }
         });
       }

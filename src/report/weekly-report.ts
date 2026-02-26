@@ -29,7 +29,7 @@ export interface WeeklyReportData {
   sharpe: number;             // 周化夏普
   bestTrade: { symbol: string; pnl: number } | null;
   worstTrade: { symbol: string; pnl: number } | null;
-  openPositions: Array<{ symbol: string; pnlPercent: number; holdHours: number }>;
+  openPositions: { symbol: string; pnlPercent: number; holdHours: number }[];
   equityChartPath?: string;   // SVG/PNG 路径
 }
 
@@ -86,7 +86,7 @@ function loadSignalHistory(
 
 // ─── Calculations ─────────────────────────────────────────────────────────────
 
-function calcMaxDrawdown(equityHistory: Array<{ equity: number }>): number {
+function calcMaxDrawdown(equityHistory: { equity: number }[]): number {
   if (equityHistory.length === 0) return 0;
   let peak = equityHistory[0]?.equity ?? 0;
   let maxDd = 0;
@@ -167,7 +167,7 @@ export async function generateWeeklyReport(
   const equityHistory = loadEquityHistory(scenarioId, days);
 
   // Supplement: if no equity history, fall back to account trades pnl to build mini-curve
-  const equityPoints: Array<{ timestamp: number; equity: number }> =
+  const equityPoints: { timestamp: number; equity: number }[] =
     equityHistory.length > 0
       ? equityHistory.map((e) => ({ timestamp: e.timestamp, equity: e.equity }))
       : buildEquityCurveFromTrades(account.trades, initialEquity, sinceMs);
@@ -188,7 +188,7 @@ export async function generateWeeklyReport(
   const sharpe = calcSharpe(dailyReturns);
 
   // 5. Open positions from account
-  const openPositions: Array<{ symbol: string; pnlPercent: number; holdHours: number }> =
+  const openPositions: { symbol: string; pnlPercent: number; holdHours: number }[] =
     Object.entries(account.positions).map(([symbol, pos]) => {
       const holdHours = (now - pos.entryTime) / 3600000;
       // Approximate pnl% (without live price)
@@ -233,10 +233,10 @@ export async function generateWeeklyReport(
  * 从 PaperTrade 列表构建权益曲线（无 equity-history 时的后备方案）
  */
 function buildEquityCurveFromTrades(
-  trades: Array<{ side: string; timestamp: number; pnl?: number }>,
+  trades: { side: string; timestamp: number; pnl?: number }[],
   initialEquity: number,
   sinceMs: number
-): Array<{ timestamp: number; equity: number }> {
+): { timestamp: number; equity: number }[] {
   const periodTrades = trades
     .filter((t) => t.timestamp >= sinceMs)
     .sort((a, b) => a.timestamp - b.timestamp);
@@ -245,7 +245,7 @@ function buildEquityCurveFromTrades(
     return [{ timestamp: sinceMs, equity: initialEquity }];
   }
 
-  const curve: Array<{ timestamp: number; equity: number }> = [
+  const curve: { timestamp: number; equity: number }[] = [
     { timestamp: sinceMs, equity: initialEquity },
   ];
 
@@ -264,7 +264,7 @@ function buildEquityCurveFromTrades(
  * 从权益曲线计算日收益率数组。
  */
 function computeDailyReturns(
-  points: Array<{ timestamp: number; equity: number }>
+  points: { timestamp: number; equity: number }[]
 ): number[] {
   if (points.length < 2) return [];
 

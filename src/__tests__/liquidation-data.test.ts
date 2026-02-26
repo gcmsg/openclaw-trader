@@ -40,9 +40,9 @@ function makeOrder(side: "BUY" | "SELL", price: number, qty: number): MockRawOrd
 }
 
 function mockHttpsRequest(responseBody: unknown) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   return vi.spyOn(https, "request").mockImplementation(
-    ((_opts: unknown, callback?: ((res: IncomingMessage) => void) | undefined) => {
+    ((_opts: unknown, callback?: ((res: IncomingMessage) => void)  ) => {
       const res = new EventEmitter() as IncomingMessage;
       // emit data + end asynchronously
       setTimeout(() => {

@@ -62,7 +62,7 @@ export function recordEquitySnapshot(
 export function loadEquityHistory(
   scenarioId: string,
   sinceDaysAgo?: number
-): Array<{ timestamp: number; equity: number; positions: number }> {
+): { timestamp: number; equity: number; positions: number }[] {
   const filePath = getEquityHistoryPath(scenarioId);
   if (!fs.existsSync(filePath)) return [];
 
@@ -70,7 +70,7 @@ export function loadEquityHistory(
     sinceDaysAgo !== undefined ? Date.now() - sinceDaysAgo * 24 * 60 * 60 * 1000 : 0;
 
   const content = fs.readFileSync(filePath, "utf-8");
-  const results: Array<{ timestamp: number; equity: number; positions: number }> = [];
+  const results: { timestamp: number; equity: number; positions: number }[] = [];
 
   for (const line of content.split("\n")) {
     const trimmed = line.trim();

@@ -164,7 +164,7 @@ describe("delete", () => {
 
   it("11. delete：删除不存在的 key（不报错）", () => {
     const store = makeStore();
-    expect(() => store.delete("nonexistent")).not.toThrow();
+    expect(() => { store.delete("nonexistent"); }).not.toThrow();
   });
 });
 

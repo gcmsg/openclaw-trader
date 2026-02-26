@@ -26,10 +26,10 @@ import { getStrategy } from "./registry.js";
 // ─────────────────────────────────────────────────────
 
 export interface EnsembleConfig {
-  strategies: Array<{
+  strategies: {
     id: string;     // 策略 ID（如 "default", "rsi-reversal", "breakout"）
     weight: number; // 投票权重（0~1），默认各 1/N
-  }>;
+  }[];
   /** 多数信号必须达到的加权比例才触发。默认 0.5 */
   threshold?: number;
   /** 要求所有策略一致才触发（unanimous mode）。默认 false */
@@ -38,11 +38,11 @@ export interface EnsembleConfig {
 
 export interface VoteResult {
   signal: SignalType; // 最终信号
-  votes: Array<{
+  votes: {
     strategyId: string;
     signal: SignalType;
     weight: number;
-  }>;
+  }[];
   buyScore: number;   // 买入加权得分（0~1）
   sellScore: number;  // 卖出加权得分
   shortScore: number;
@@ -185,7 +185,7 @@ export function ensembleVote(
   }
 
   // ── 普通模式：得分最高且 >= threshold 的信号胜出 ──
-  const scores: Array<[SignalType, number]> = [
+  const scores: [SignalType, number][] = [
     ["buy", buyScore],
     ["sell", sellScore],
     ["short", shortScore],
@@ -210,7 +210,7 @@ export function ensembleVote(
 
   // ── 检查是否全票一致 ──────────────────────────────
   const nonNoneVotes = votes.filter((v) => v.signal !== "none");
-  let isUnanimous = false;
+  let isUnanimous: boolean;
   if (nonNoneVotes.length > 0) {
     const first = nonNoneVotes[0]!.signal;
     isUnanimous =

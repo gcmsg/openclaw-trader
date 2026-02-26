@@ -21,6 +21,7 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" });
 }
 
+// eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check
 switch (command) {
   case "status": {
     const state = readKillSwitch();
