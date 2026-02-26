@@ -9,6 +9,7 @@
 import "./default.js";
 import "./rsi-reversal.js";
 import "./breakout.js";
+import "./ensemble-strategy.js";
 
 // 重新导出公共 API
 export { registerStrategy, getStrategy, listStrategies, listStrategyDetails } from "./registry.js";

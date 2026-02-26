@@ -70,6 +70,26 @@ export interface Signal {
 }
 
 // ─────────────────────────────────────────────────────
+// Ensemble Strategy Config
+// ─────────────────────────────────────────────────────
+
+/**
+ * 集成投票策略配置（strategy_id = "ensemble" 时使用）。
+ * 引用此接口无需直接从 strategies/ensemble.ts import，
+ * 避免循环依赖；类型结构与 EnsembleConfig 完全一致。
+ */
+export interface EnsembleConfig {
+  strategies: Array<{
+    id: string;     // 策略 ID（如 "default", "rsi-reversal", "breakout"）
+    weight: number; // 投票权重（0~1），默认各 1/N
+  }>;
+  /** 多数信号必须达到的加权比例才触发。默认 0.5 */
+  threshold?: number;
+  /** 要求所有策略一致才触发（unanimous mode）。默认 false */
+  unanimous?: boolean;
+}
+
+// ─────────────────────────────────────────────────────
 // Shared Config Sections (strategy.yaml)
 // ─────────────────────────────────────────────────────
 
@@ -285,6 +305,8 @@ export interface StrategyConfig {
    *         "30": 0.01
    */
   regime_overrides?: Partial<Record<string, Partial<RiskConfig>>>;
+  /** 集成投票配置。strategy_id = "ensemble" 时使用 */
+  ensemble?: EnsembleConfig;
 }
 
 // ─────────────────────────────────────────────────────
