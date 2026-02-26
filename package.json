@@ -37,9 +37,12 @@
     "analysis": "tsx src/scripts/market-analysis.ts",
     "analyze": "tsx src/scripts/analyze-strategy.ts",
     "telegram-bot": "tsx src/scripts/telegram-bot.ts",
-    "cmd": "tsx src/scripts/telegram-bot.ts"
+    "cmd": "tsx src/scripts/telegram-bot.ts",
+    "weekly": "tsx src/scripts/weekly-report.ts",
+    "signal-stats": "tsx src/scripts/signal-stats.ts"
   },
   "dependencies": {
+    "asciichart": "^1.5.25",
     "axios": "^1.7.0",
     "better-sqlite3": "^12.6.2",
     "technicalindicators": "^3.1.0",
@@ -47,6 +50,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/asciichart": "^1.5.8",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "eslint": "^9.39.3",
