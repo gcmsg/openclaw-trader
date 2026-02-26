@@ -140,6 +140,23 @@ npm run hyperopt -- --symbol BTCUSDT --trials 100 --seed 42  # reproducible
 Output: best params + YAML snippet + logs/hyperopt-results.json
 Objective: `score = sharpe - 0.5 × maxDrawdown%` | Constraint: `ma_short < ma_long`
 
+### Dynamic Pairlist — Auto-select best trading pairs (P6.2)
+```bash
+npm run pairlist:refresh   # Fetch from Binance, diff vs current, Telegram notify if changed
+# Result saved to: logs/current-pairlist.json
+# Cron: runs daily at 0:00 via npm run cron:sync
+```
+Filters: USDT-quoted + no stablecoins + no leveraged tokens + volume ≥ 50M USD
+Sorts by: volume (default) | volatility | momentum | Top 15 pairs
+
+### Web Real-Time Dashboard (P6.8)
+```bash
+npm run dashboard              # Start server at http://localhost:8080
+DASHBOARD_PORT=3000 npm run dashboard  # Custom port
+```
+Endpoints: `GET /` (HTML), `GET /api/data` (JSON), `GET /api/health` (system)
+Features: equity curve (Chart.js), positions table, trade history, signal log, 10s auto-refresh
+
 ### Signal attribution analysis
 ```bash
 npm run attribution   # Reads logs/signal-history.jsonl → reports/signal-attribution.json
@@ -189,7 +206,7 @@ npm run lint          # 0 ESLint errors target
 
 ### Update schedule or strategy
 1. Edit `config/strategy.yaml` or `config/paper.yaml`
-2. Run `npm run cron:sync` to apply cron changes (7 tasks: price_monitor, news_emergency, watchdog, news_collector, health_check, weekly_report, log_rotate)
+2. Run `npm run cron:sync` to apply cron changes (8 tasks: price_monitor, news_emergency, watchdog, news_collector, health_check, weekly_report, log_rotate, pairlist_refresh)
 
 ## Signal Logic
 

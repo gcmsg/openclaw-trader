@@ -458,6 +458,51 @@ Health status levels:
 
 Alerts are sent to Telegram only when issues are detected (silent when healthy).
 
+### Dynamic Pairlist (P6.2)
+
+Automatically selects the best trading pairs from Binance daily, replacing the fixed 8-symbol list:
+
+```bash
+# Manually refresh the dynamic pairlist
+npm run pairlist:refresh
+
+# Runs automatically via cron at midnight (configured in config/strategy.yaml)
+npm run cron:sync
+```
+
+**Filtering logic:**
+1. Calls `GET https://api.binance.com/api/v3/ticker/24hr` (free, no API key)
+2. Filters: USDT-quoted only + no stablecoins (USDC/BUSD/DAI/TUSD bases) + no leveraged tokens (UP/DOWN/BEAR/BULL)
+3. Filters by 24h volume ≥ 50M USDT (configurable)
+4. Sorts by volume / volatility / momentum (configurable)
+5. Takes top 15 pairs; whitelist always included, blacklist always excluded
+
+When changes are detected, a Telegram notification lists added/removed pairs and updates `logs/current-pairlist.json`.
+
+### Web Real-Time Dashboard (P6.8)
+
+Lightweight web interface to monitor positions, equity curve, and signal history in real time:
+
+```bash
+# Start the dashboard server (default port 8080)
+npm run dashboard
+
+# Custom port via environment variable
+DASHBOARD_PORT=3000 npm run dashboard
+```
+
+**API endpoints:**
+- `GET /` — HTML dashboard page (auto-refreshes every 10 seconds)
+- `GET /api/data` — JSON data (accounts, positions, trades, equity curve, signals)
+- `GET /api/health` — System health (uptime, memory, Node.js version)
+
+**Dashboard features:**
+- Total assets + today's P&L (large display)
+- Position table: symbol / entry price / PnL% / stop-loss distance
+- Equity curve chart (Chart.js, from initial balance to now)
+- Recent 20 trades table
+- Recent 20 signal history records
+
 ### Roadmap
 
 **Phase 0 — Critical Fixes** ✅
@@ -487,7 +532,15 @@ Alerts are sent to Telegram only when issues are detected (silent when healthy).
 **Phase 4 — Advanced** *(needs 50+ trades)*
 - [ ] Signal statistics analysis (`getSignalStats()`)
 - [ ] Live trading mode (`mode: auto`)
-- [ ] Web dashboard
+
+**Phase 6 — Intelligence & Ops** *(partial)*
+- [x] P6.1 Hyperopt — Bayesian parameter optimization (`npm run hyperopt`)
+- [x] P6.2 Dynamic Pairlist — Daily auto-selection from Binance (`npm run pairlist:refresh`)
+- [x] P6.3 Intra-candle backtest simulation
+- [x] P6.4 Options market data signals
+- [x] P6.5 Economic calendar risk gate
+- [x] P6.7 Kill switch circuit breaker
+- [x] P6.8 Web real-time dashboard (`npm run dashboard`)
 
 ### License
 
@@ -626,7 +679,15 @@ npm test
 
 **Phase 4 — 进阶** *(需 50+ 笔真实交易记录)*
 - [ ] 实盘自动交易（`mode: auto`）
-- [ ] Web 可视化面板
+
+**Phase 6 — 智能与运维** *(部分完成)*
+- [x] P6.1 Hyperopt 贝叶斯参数优化（`npm run hyperopt`）
+- [x] P6.2 动态币种列表 — 每日从 Binance 自动选取（`npm run pairlist:refresh`）
+- [x] P6.3 K 线内回测仿真
+- [x] P6.4 期权市场数据信号
+- [x] P6.5 经济日历风险门控
+- [x] P6.7 熔断器（Kill Switch）
+- [x] P6.8 Web 实时仪表盘（`npm run dashboard`）
 
 ### 回测使用
 
@@ -683,3 +744,48 @@ npm run hyperopt -- --symbol BTCUSDT --trials 100 --seed 42
 - 最优参数的回测指标（夏普、最大回撤、胜率等）
 - Walk-Forward 验证（训练集/测试集性能退化率）
 - 完整试验历史保存至 `logs/hyperopt-results.json`
+
+### 动态币种列表（P6.2）
+
+每日从 Binance 自动选取最优交易对，替代固定 8 个币种：
+
+```bash
+# 手动刷新动态币种列表
+npm run pairlist:refresh
+
+# 通过 cron 在每天凌晨自动运行
+npm run cron:sync
+```
+
+**筛选逻辑：**
+1. 调用 `GET https://api.binance.com/api/v3/ticker/24hr`（免费，无需 API Key）
+2. 过滤：仅保留 USDT 计价 + 排除稳定币（USDC/BUSD/DAI 等）+ 排除杠杆代币（UP/DOWN/BEAR/BULL）
+3. 按 24h 成交量 ≥ 50M USDT 过滤（可配置）
+4. 按成交量 / 波动率 / 动量排序（可配置）
+5. 取前 15 个；白名单始终包含，黑名单始终排除
+
+检测到变化时，通过 Telegram 通知新增/移除的币种，并更新 `logs/current-pairlist.json`。
+
+### Web 实时仪表盘（P6.8）
+
+轻量级 Web 界面，实时展示持仓状态、资金曲线和信号历史：
+
+```bash
+# 启动仪表盘服务器（默认 8080 端口）
+npm run dashboard
+
+# 自定义端口
+DASHBOARD_PORT=3000 npm run dashboard
+```
+
+**API 端点：**
+- `GET /` — HTML 仪表盘页面（每 10 秒自动刷新）
+- `GET /api/data` — JSON 数据（账户、持仓、交易记录、资金曲线、信号）
+- `GET /api/health` — 系统健康状态（运行时间、内存、Node.js 版本）
+
+**仪表盘功能：**
+- 总资产 + 今日盈亏（大字显示）
+- 持仓表格：币种 / 入场价 / PnL% / 止损距离
+- 资金曲线图（Chart.js，从初始资金到现在）
+- 最近 20 笔交易记录
+- 最近 20 条信号历史
