@@ -153,6 +153,11 @@ export function loadAccount(initialUsdt = 1000, scenarioId = "default"): PaperAc
       // 兼容旧版账户文件（缺少 dailyLoss 字段）
       account.dailyLoss = { date: todayStr(), loss: 0 };
     }
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    if (!account.initialUsdt || account.initialUsdt <= 0) {
+      // 兼容旧版账户文件（缺少 initialUsdt 字段），防止 PnL 计算出 NaN
+      account.initialUsdt = initialUsdt;
+    }
     return account;
   } catch (_e: unknown) {
     const account: PaperAccount = {
@@ -355,7 +360,10 @@ export function paperSell(
   if (!position) return null;
 
   // 部分平仓数量（不超过实际持仓）
-  const sellQty = overrideQty ? Math.min(overrideQty, position.quantity) : position.quantity;
+  const sellQty = overrideQty && overrideQty > 0
+    ? Math.min(overrideQty, position.quantity)
+    : position.quantity;
+  if (sellQty <= 0) return null; // 防止 overrideQty=0 导致除零
   const isPartial = sellQty < position.quantity;
 
   // 滑点：卖出时成交价略低于当前价
@@ -369,7 +377,7 @@ export function paperSell(
 
   const costBasis = sellQty * position.entryPrice;
   const pnl = netUsdt - costBasis;
-  const pnlPercent = pnl / costBasis;
+  const pnlPercent = costBasis > 0 ? pnl / costBasis : 0;
 
   // 更新每日亏损
   if (pnl < 0) {

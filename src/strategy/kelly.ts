@@ -95,11 +95,12 @@ export function calcKellyRatio(trades: KellyInput[], opts: KellyOptions = {}): K
     ? Math.abs(losses.reduce((s, t) => s + t.pnlPercent, 0) / losses.length)
     : 0;
 
-  // 无亏损时 R → Infinity，Kelly → W（仓位 = 胜率）
-  const R = avgLoss > 0 ? avgWin / avgLoss : avgWin;
+  // 无亏损（avgLoss=0）时 R → Infinity，Kelly → W（仓位 = 胜率）
+  // 注意：avgLoss=0 包括"全平仓保本"场景（pnlPercent=0 归入 losses 过滤）
+  const R = avgLoss > 0 ? avgWin / avgLoss : Infinity;
 
-  // Kelly 公式
-  let rawKelly = R > 0 ? W - (1 - W) / R : 0;
+  // Kelly 公式：W - (1-W)/R；当 R=Infinity 时 (1-W)/R=0，结果=W
+  let rawKelly = R === Infinity ? W : R > 0 ? W - (1 - W) / R : 0;
 
   // 负期望值（rawKelly < 0）→ 建议暂停
   if (rawKelly < 0) {
