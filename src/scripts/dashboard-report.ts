@@ -1,10 +1,10 @@
 /**
- * 静态 HTML Dashboard 生成器
+ * 静态 HTML Dashboard 生成器（CLI 入口脚本）
  *
  * 读取 paper 账户数据 → 生成 reports/dashboard.html
  * 包含：权益曲线、最大回撤、交易记录表、各币种统计
  *
- * 用法：npm run dashboard
+ * 用法：npm run dashboard:report
  */
 
 import fs from "fs";

@@ -17,7 +17,7 @@ import {
   collectFromSignalHistory,
   mergeRecords,
 } from "../analysis/trade-collector.js";
-import type { TradeRecord } from "../analysis/types.js";
+import type { TradeRecord } from "../analysis/analysis-types.js";
 
 // ─────────────────────────────────────────────────────
 // 测试辅助

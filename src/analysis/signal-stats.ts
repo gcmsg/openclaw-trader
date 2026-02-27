@@ -5,7 +5,7 @@
  * 计算胜率、盈亏比、期望收益等核心指标。
  */
 
-import type { TradeRecord } from "./types.js";
+import type { TradeRecord } from "./analysis-types.js";
 
 // ─────────────────────────────────────────────────────
 // Types

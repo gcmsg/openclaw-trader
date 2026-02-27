@@ -8,7 +8,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import type { TradeRecord } from "./types.js";
+import type { TradeRecord } from "./analysis-types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
