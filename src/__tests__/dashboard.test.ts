@@ -8,6 +8,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   buildEquityCurve,
+  buildPerfData,
+  getLogLines,
   type AccountSummary,
   type TradeRecord,
   type DashboardData,
@@ -114,6 +116,14 @@ vi.mock("fs", async () => {
             entryTime: Date.now() - 3600_000,
             status: "open",
           }),
+        ].join("\n");
+      }
+      if (fp.includes("monitor.log")) {
+        return [
+          "2026-02-27 09:00:00 [INFO] monitor started",
+          "2026-02-27 09:01:00 [WARN] RSI approaching overbought",
+          "2026-02-27 09:02:00 [ERROR] Failed to fetch price for AVAXUSDT",
+          "2026-02-27 09:03:00 [INFO] signal: buy BTCUSDT",
         ].join("\n");
       }
       // delegate to actual for other files
@@ -369,5 +379,109 @@ describe("Dashboard routing logic", () => {
     );
     expect(typeof startDashboardServer).toBe("function");
     expect(typeof stopDashboardServer).toBe("function");
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// Tests: buildPerfData
+// ─────────────────────────────────────────────────────
+
+describe("buildPerfData", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it("返回 bySymbol 和 byDay 数组", () => {
+    const perf = buildPerfData();
+    expect(perf).toHaveProperty("bySymbol");
+    expect(perf).toHaveProperty("byDay");
+    expect(Array.isArray(perf.bySymbol)).toBe(true);
+    expect(Array.isArray(perf.byDay)).toBe(true);
+  });
+
+  it("bySymbol 包含 ETHUSDT（T002 是 sell 且有 pnl）", () => {
+    const perf = buildPerfData();
+    const eth = perf.bySymbol.find((s) => s.symbol === "ETHUSDT");
+    expect(eth).toBeDefined();
+    expect(eth!.trades).toBe(1);
+    expect(eth!.wins).toBe(1);   // pnl = 9.49 > 0
+    expect(eth!.losses).toBe(0);
+    expect(eth!.winRate).toBeCloseTo(1.0);
+    expect(eth!.totalPnl).toBeCloseTo(9.49);
+  });
+
+  it("bySymbol 每条记录有必要字段", () => {
+    const perf = buildPerfData();
+    for (const s of perf.bySymbol) {
+      expect(s).toHaveProperty("symbol");
+      expect(s).toHaveProperty("trades");
+      expect(s).toHaveProperty("wins");
+      expect(s).toHaveProperty("losses");
+      expect(s).toHaveProperty("winRate");
+      expect(s).toHaveProperty("totalPnl");
+      expect(s).toHaveProperty("avgPnl");
+      expect(s.winRate).toBeGreaterThanOrEqual(0);
+      expect(s.winRate).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("byDay 按日期聚合盈亏", () => {
+    const perf = buildPerfData();
+    // T002 有 pnl，应该出现在 byDay 里
+    expect(perf.byDay.length).toBeGreaterThan(0);
+    for (const day of perf.byDay) {
+      expect(day).toHaveProperty("date");
+      expect(day).toHaveProperty("pnl");
+      expect(day).toHaveProperty("trades");
+      expect(typeof day.date).toBe("string");
+      expect(day.date).toMatch(/^\d{2}\/\d{2}$/); // MM/DD 格式
+    }
+  });
+
+  it("buy 交易不计入绩效统计", () => {
+    const perf = buildPerfData();
+    // T001 是 buy，不应该在 bySymbol 的 ETHUSDT 中算作一笔交易
+    const eth = perf.bySymbol.find((s) => s.symbol === "ETHUSDT");
+    // T002 sell（1笔），T001 buy 不算 → trades=1
+    expect(eth?.trades).toBe(1);
+  });
+
+  it("bySymbol 按 totalPnl 降序排列", () => {
+    const perf = buildPerfData();
+    for (let i = 1; i < perf.bySymbol.length; i++) {
+      expect(perf.bySymbol[i - 1]!.totalPnl).toBeGreaterThanOrEqual(perf.bySymbol[i]!.totalPnl);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// Tests: getLogLines
+// ─────────────────────────────────────────────────────
+
+describe("getLogLines", () => {
+  // 注意：不在 beforeEach 中调用 vi.clearAllMocks()，避免清除 fs mock 实现
+
+  it("读取 monitor.log 并返回行数组", () => {
+    const lines = getLogLines(200);
+    expect(Array.isArray(lines)).toBe(true);
+    expect(lines.length).toBeGreaterThan(0);
+  });
+
+  it("返回最多 tail 行", () => {
+    // mock 返回 4 行，tail=2 → 最多 2 行
+    const lines = getLogLines(2);
+    expect(lines.length).toBeLessThanOrEqual(2);
+  });
+
+  it("返回非空字符串行", () => {
+    const lines = getLogLines(200);
+    // 每行都是非空字符串（无论来自 mock 还是实际文件）
+    expect(lines.every((l) => typeof l === "string" && l.length > 0)).toBe(true);
+  });
+
+  it("返回字符串数组（每行都是 string）", () => {
+    const lines = getLogLines(200);
+    expect(Array.isArray(lines)).toBe(true);
+    for (const line of lines) {
+      expect(typeof line).toBe("string");
+    }
   });
 });
