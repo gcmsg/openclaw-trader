@@ -17,6 +17,9 @@
 
 import axios from "axios";
 import type { SentimentLabel, SentimentEntry } from "./sentiment-cache.js";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("llm-sentiment");
 
 // ─────────────────────────────────────────────────────
 // 配置
@@ -104,7 +107,7 @@ export async function analyzeSentimentWithLLM(params: {
 }): Promise<LLMSentimentResult | null> {
   const token = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
   if (!token) {
-    console.warn("⚠️  OPENCLAW_GATEWAY_TOKEN 未配置，LLM 情绪分析跳过");
+    log.warn("OPENCLAW_GATEWAY_TOKEN 未配置，LLM 情绪分析跳过");
     return null;
   }
 
@@ -132,7 +135,7 @@ export async function analyzeSentimentWithLLM(params: {
     return parseLLMResponse(content);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`⚠️  LLM 情绪分析失败（${msg}），降级到关键词匹配`);
+    log.warn(`LLM 情绪分析失败（${msg}），降级到关键词匹配`);
     return null;
   }
 }

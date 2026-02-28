@@ -11,6 +11,7 @@ import { resolveNewStopLoss } from "../strategy/break-even.js";
 import { shouldConfirmExit, isExitRejectionCoolingDown } from "../strategy/confirm-exit.js";
 import type { Strategy, StrategyContext } from "../strategies/types.js";
 import { logSignal, closeSignal } from "../strategy/signal-history.js";
+import { createLogger } from "../logger.js";
 import { TradeDB } from "../persistence/db.js";
 
 // ── G5: SQLite 懒加载单例（每个 scenarioId 一个 DB）──────────
@@ -42,6 +43,8 @@ import {
   type PaperAccount,
   type PaperPosition,
 } from "./account.js";
+
+const log = createLogger("engine");
 
 export interface PaperEngineResult {
   trade: PaperTrade | null;
@@ -560,7 +563,7 @@ export function checkExitConditions(
         if (!confirmResult.confirmed) {
           const cooling = isExitRejectionCoolingDown(symbol, cooldownSec * 1000, _exitRejectionLog);
           if (!cooling) {
-            console.log(
+            log.info(
               `[confirm-exit] ${symbol} 出场被拒绝 (reason: ${confirmResult.reason ?? "unknown"}, exitReason: ${exitReason})`
             );
             _exitRejectionLog.set(symbol, Date.now());

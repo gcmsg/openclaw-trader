@@ -16,11 +16,13 @@ import https from "https";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createLogger } from "../logger.js";
 import { loadAccount } from "../paper/account.js";
 import { loadPaperConfig } from "../config/loader.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOGS_DIR = path.resolve(__dirname, "../../logs");
+const log = createLogger("dashboard");
 
 // ─────────────────────────────────────────────────────
 // Types
@@ -1151,7 +1153,7 @@ function sendError(res: http.ServerResponse, msg: string, status = 500): void {
 
 export function startDashboardServer(port = 8080): void {
   if (server) {
-    console.log("[dashboard] 服务器已在运行中");
+    log.info("服务器已在运行中");
     return;
   }
 
@@ -1245,18 +1247,18 @@ export function startDashboardServer(port = 8080): void {
 
   // 安全：仅绑定本地回环地址，防止外网直接访问（无认证）
   server.listen(port, "127.0.0.1", () => {
-    console.log(`[dashboard] 🚀 仪表盘运行中: http://localhost:${port}`);
-    console.log(`[dashboard]    页面导航: Overview / Positions / Trades / Performance / Signals / Logs`);
-    console.log(`[dashboard]    ⚠️  仅限本机访问。远程请使用 SSH 隧道: ssh -L ${port}:localhost:${port} user@server`);
+    log.info(`🚀 仪表盘运行中: http://localhost:${port}`);
+    log.info("   页面导航: Overview / Positions / Trades / Performance / Signals / Logs");
+    log.info(`   ⚠️  仅限本机访问。远程请使用 SSH 隧道: ssh -L ${port}:localhost:${port} user@server`);
   });
 
   server.on("error", (err) => {
-    console.error("[dashboard] 服务器错误:", err.message);
+    log.error(`服务器错误: ${err.message}`);
   });
 }
 
 export function stopDashboardServer(): void {
   if (!server) return;
-  server.close(() => console.log("[dashboard] 服务器已停止"));
+  server.close(() => { log.info("服务器已停止"); });
   server = null;
 }
