@@ -104,11 +104,12 @@ function printDetail(
     console.log("─".repeat(60));
     console.log(`  🕐 最近交易:`);
     for (const t of recentTrades) {
-      const emoji = t.side === "buy" ? "🟢" : "🔴";
+      const emoji = t.side === "buy" ? "🟢" : t.side === "short" ? "🔵" : t.side === "cover" ? "🟣" : "🔴";
+      const label = t.side === "buy" ? "开多" : t.side === "short" ? "开空" : t.side === "cover" ? "平空" : "平多";
       const pnl = t.pnl !== undefined ? `  ${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)}` : "";
       const time = new Date(t.timestamp).toLocaleString("zh-CN");
       console.log(
-        `     ${emoji} [${time}] ${t.side === "buy" ? "买" : "卖"} ${t.symbol} @$${t.price.toFixed(4)}${pnl}`
+        `     ${emoji} [${time}] ${label} ${t.symbol} @$${t.price.toFixed(4)}${pnl}`
       );
     }
   }
