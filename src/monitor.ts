@@ -293,7 +293,7 @@ async function scanSymbol(
         log(`${scenarioPrefix}${symbol}: ⏭️ 跳过 — ${result.skipped}`);
       }
       if (result.trade) {
-        const action = result.trade.side === "buy" ? "买入" : "卖出";
+        const action = result.trade.side === "buy" ? "买入(开多)" : result.trade.side === "short" ? "开空" : result.trade.side === "cover" ? "平空" : "卖出(平多)";
         log(
           `${scenarioPrefix}${symbol}: 📝 模拟${action} @${result.trade.price.toFixed(4)}（仓位 ${(effectiveRatio * 100).toFixed(0)}%）`
         );
