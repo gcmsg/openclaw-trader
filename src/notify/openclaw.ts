@@ -153,8 +153,17 @@ export function notifyError(context: string, error: Error): void {
 
 /** 模拟盘交易通知 */
 export function notifyPaperTrade(trade: PaperTrade, account: PaperAccount): void {
-  const side = trade.side === "buy" ? "买入" : "卖出";
-  const emoji = trade.side === "buy" ? "🟢" : "🔴";
+  // 准确显示多头/空头操作方向
+  const side =
+    trade.side === "buy" ? "买入(开多)" :
+    trade.side === "short" ? "开空" :
+    trade.side === "cover" ? "平空" :
+    "卖出(平多)";
+  const emoji =
+    trade.side === "buy" ? "🟢" :
+    trade.side === "short" ? "🔵" :
+    trade.side === "cover" ? "🟣" :
+    "🔴";
   const pnlLine =
     trade.pnl !== undefined
       ? `💰 本笔盈亏: ${trade.pnl >= 0 ? "+" : ""}$${trade.pnl.toFixed(2)} (${trade.pnl >= 0 ? "+" : ""}${((trade.pnlPercent ?? 0) * 100).toFixed(2)}%)`
