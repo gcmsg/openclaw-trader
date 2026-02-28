@@ -148,6 +148,10 @@ export function loadAccount(initialUsdt = 1000, scenarioId = "default"): PaperAc
   const statePath = getAccountPath(scenarioId);
   try {
     const account = JSON.parse(fs.readFileSync(statePath, "utf-8")) as PaperAccount;
+    // Guard: 基础字段校验，防止损坏文件导致后续 NaN
+    if (typeof account.usdt !== "number" || typeof account.positions !== "object" || account.positions === null) {
+      throw new Error(`Invalid account state: ${statePath}`);
+    }
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (!account.dailyLoss) {
       // 兼容旧版账户文件（缺少 dailyLoss 字段）
@@ -296,6 +300,7 @@ export function paperDcaAdd(
 
   const slippageAmount = (price * slippagePercent) / 100;
   const execPrice = price + slippageAmount;
+  if (!isFinite(execPrice) || execPrice <= 0) return null; // Guard: 价格无效
   const slippageUsdt = addUsdt * (slippagePercent / 100);
   const fee = addUsdt * feeRate;
   const netUsdt = addUsdt - fee;
@@ -303,6 +308,7 @@ export function paperDcaAdd(
 
   // 加权均价：原仓值 + 新仓值 / 总量
   const totalQty = pos.quantity + addQty;
+  if (totalQty <= 0) return null; // Guard: 总量为零
   const weightedAvgPrice =
     (pos.quantity * pos.entryPrice + addQty * execPrice) / totalQty;
 

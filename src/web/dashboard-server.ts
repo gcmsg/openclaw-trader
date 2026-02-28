@@ -1077,7 +1077,7 @@ function stopLogRefresh() {
 function fetchLogs() {
   fetch('/api/logs?tail=200').then(function(r) { return r.json(); }).then(function(res) {
     renderLogs(res.lines || []);
-  }).catch(function() {});
+  }).catch(function(e) { console.warn("[dashboard] fetchLogs failed:", e); });
 }
 function renderLogs(lines) {
   var term = document.getElementById('log-terminal');

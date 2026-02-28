@@ -364,6 +364,11 @@ async function main(): Promise<void> {
   }
 }
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 main().catch((err: unknown) => {
   const msg = err instanceof Error ? err.message : String(err);
   console.error("❌ 回测失败:", msg);

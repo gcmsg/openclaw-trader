@@ -112,6 +112,11 @@ async function main(): Promise<void> {
   console.log("[pairlist] 💾 已保存至", PAIRLIST_PATH);
 }
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 main().catch((err: unknown) => {
   console.error("[pairlist] Fatal:", err);
   process.exit(1);

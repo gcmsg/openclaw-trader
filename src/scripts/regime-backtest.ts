@@ -157,4 +157,9 @@ async function main() {
   console.log("\n💾 结果已保存: logs/regime-backtest.json");
 }
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 main().catch(console.error);

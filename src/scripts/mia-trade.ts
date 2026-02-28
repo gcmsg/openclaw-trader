@@ -9,9 +9,9 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import * as https from "https";
 import { fileURLToPath } from "url";
 import { logSignal, closeSignal } from "../strategy/signal-history.js";
+import { getPrice } from "../exchange/binance.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOGS_DIR = path.resolve(__dirname, "../../logs");
@@ -65,28 +65,8 @@ function saveAccount(scenarioId: string, account: PaperAccount): void {
   fs.writeFileSync(p, JSON.stringify(account, null, 2));
 }
 
-// ── 价格获取 ───────────────────────────────────────────
-function fetchPrice(symbol: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: "api.binance.com",
-      path: `/api/v3/ticker/price?symbol=${symbol}`,
-      method: "GET",
-      agent: new https.Agent({ family: 4 }),
-    };
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.on("data", (c) => (data += c));
-      res.on("end", () => {
-        try { resolve(parseFloat((JSON.parse(data) as { price: string }).price)); }
-        catch { reject(new Error(`Price parse failed: ${data.slice(0, 100)}`)); }
-      });
-    });
-    req.on("error", reject);
-    req.setTimeout(8000, () => { req.destroy(); reject(new Error("timeout")); });
-    req.end();
-  });
-}
+// ── 价格获取（复用 exchange/binance.ts 的 getPrice）───────
+const fetchPrice = getPrice;
 
 // ── 关仓 ───────────────────────────────────────────────
 async function closePosition(symbol: string, scenarioId: string, reason = "mia_manual_close"): Promise<void> {
@@ -225,6 +205,11 @@ async function showStatus(scenarioId: string): Promise<void> {
     );
   }
 }
+
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
 
 // ── 主入口 ─────────────────────────────────────────────
 const [, , action, symbol, scenarioId = "testnet-default", ...rest] = process.argv;

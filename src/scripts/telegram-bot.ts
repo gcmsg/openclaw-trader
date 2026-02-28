@@ -121,6 +121,11 @@ export function enqueueCommand(text: string): void {
 // 入口：判断运行模式
 // ─────────────────────────────────────────────────────
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 const args = process.argv.slice(2);
 
 if (args.length > 0) {

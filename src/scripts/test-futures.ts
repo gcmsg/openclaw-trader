@@ -107,6 +107,11 @@ async function main() {
     : "⚠️  手续费偏高，核查配置");
 }
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 main().catch((e: unknown) => {
   console.error("测试异常:", e instanceof Error ? e.message : e);
   process.exit(1);

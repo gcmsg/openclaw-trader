@@ -152,6 +152,11 @@ async function main(): Promise<void> {
 // ─────────────────────────────────────────────────────
 
 // 只在直接执行时运行（避免单元测试 import 时触发 main）
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 if (process.argv[1]?.endsWith("auto-wf.ts") || process.argv[1]?.endsWith("auto-wf.js")) {
   main().catch((err: unknown) => {
     console.error("❌ Auto Walk-Forward 运行失败:", err);

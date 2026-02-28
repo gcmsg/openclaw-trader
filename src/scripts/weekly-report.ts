@@ -102,6 +102,11 @@ async function main(): Promise<void> {
   }
 }
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 main().catch((err: unknown) => {
   console.error("Fatal:", err);
   process.exit(1);

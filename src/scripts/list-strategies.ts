@@ -8,6 +8,11 @@ import "../strategies/index.js";
 import { listStrategyDetails } from "../strategies/registry.js";
 import { listStrategyProfiles, loadStrategyProfile, loadPaperConfig } from "../config/loader.js";
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 const W = 60;
 const line = "═".repeat(W);
 const dash = "─".repeat(W);

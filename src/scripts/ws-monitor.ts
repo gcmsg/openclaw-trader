@@ -437,6 +437,11 @@ async function main(): Promise<void> {
   log(`✅ WebSocket 监控运行中，等待 K 线收盘事件...`);
 }
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 main().catch((err: unknown) => {
   console.error("Fatal:", String(err));
   process.exit(1);

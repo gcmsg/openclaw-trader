@@ -7,7 +7,6 @@
 
 import fs from "fs";
 import path from "path";
-import https from "https";
 import { fileURLToPath } from "url";
 import {
   loadAccount,
@@ -15,6 +14,7 @@ import {
   paperSell,
   paperCoverShort,
 } from "../paper/account.js";
+import { getPrice } from "../exchange/binance.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_LOGS_DIR = path.resolve(__dirname, "../../logs");
@@ -61,32 +61,7 @@ export function _resetPriceFetcher(): void {
 }
 
 function defaultFetchPrice(symbol: string): Promise<number | null> {
-  return new Promise((resolve) => {
-    const options = {
-      hostname: "api.binance.com",
-      path: `/api/v3/ticker/price?symbol=${symbol}`,
-      method: "GET",
-      agent: new https.Agent({ family: 4 }),
-    };
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
-      res.on("end", () => {
-        try {
-          const parsed = JSON.parse(data) as { price: string };
-          resolve(parseFloat(parsed.price));
-        } catch {
-          resolve(null);
-        }
-      });
-    });
-    req.on("error", () => { resolve(null); });
-    req.setTimeout(8000, () => {
-      req.destroy();
-      resolve(null);
-    });
-    req.end();
-  });
+  return getPrice(symbol).catch(() => null);
 }
 
 // ─────────────────────────────────────────────────────

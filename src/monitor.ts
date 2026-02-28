@@ -123,7 +123,7 @@ async function scanSymbol(
     try {
       const frPct = await fetchFundingRatePct(symbol);
       if (frPct !== undefined) externalFundingRate = frPct;
-    } catch { /* 失败静默跳过 */ }
+    } catch (e: unknown) { log(`${scenarioPrefix}${symbol}: ⚠️ 资金费率获取失败: ${e instanceof Error ? e.message : String(e)}`); }
 
     // BTC 主导率趋势（读历史文件，非阻塞）
     try {
@@ -132,7 +132,7 @@ async function scanSymbol(
         externalBtcDom = domTrend.latest;
         externalBtcDomChange = domTrend.change;
       }
-    } catch { /* 失败静默跳过 */ }
+    } catch (e: unknown) { log(`${scenarioPrefix}${symbol}: ⚠️ BTC 主导率获取失败: ${e instanceof Error ? e.message : String(e)}`); }
 
     // 真实 CVD（若 CvdManager 已运行并写入缓存，优先用真实数据）
     try {
@@ -142,7 +142,7 @@ async function scanSymbol(
           Date.now() - realCvd.updatedAt < maxAgeMs) {
         externalCvd = realCvd.cvd;
       }
-    } catch { /* 失败静默跳过 */ }
+    } catch (e: unknown) { log(`${scenarioPrefix}${symbol}: ⚠️ CVD 缓存读取失败: ${e instanceof Error ? e.message : String(e)}`); }
 
     // 当前持仓方向 + 持仓 K 线（用于 processSignal 内部的相关性检查）
     const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
@@ -157,7 +157,7 @@ async function scanSymbol(
             // 优先从 DataProvider 取缓存
             const cached = provider.get(sym, cfg.timeframe);
             heldKlinesMap[sym] = cached ?? await getKlines(sym, cfg.timeframe, corrLookback + 1);
-          } catch { /* 获取失败跳过 */ }
+          } catch (e: unknown) { log(`${scenarioPrefix}${symbol}: ⚠️ 相关性K线(${sym})获取失败: ${e instanceof Error ? e.message : String(e)}`); }
         })
       );
     }
@@ -234,7 +234,7 @@ async function scanSymbol(
           const approxRatio = baseRatio * eventRisk.positionRatioMultiplier;
           log(`${scenarioPrefix}${symbol}: ⚠️ 事件风险期（${eventRisk.eventName}），建议仓位 ≈ ${(approxRatio * 100).toFixed(0)}%（×${eventRisk.positionRatioMultiplier}）`);
         }
-      } catch { /* 日历加载失败静默跳过 */ }
+      } catch (e: unknown) { log(`${scenarioPrefix}${symbol}: ⚠️ 事件日历加载失败: ${e instanceof Error ? e.message : String(e)}`); }
     }
 
     // MTF 过滤：买入信号且大趋势为空头 → 跳过
@@ -282,7 +282,7 @@ async function scanSymbol(
             log(`${scenarioPrefix}${symbol}: 🎯 Kelly → ${kellyResult.reason}`);
             effectiveRatio = kellyResult.ratio;
           }
-        } catch { /* Kelly 计算失败不影响主流程，沿用 effectiveRatio */ }
+        } catch (e: unknown) { log(`${scenarioPrefix}${symbol}: ⚠️ Kelly 计算失败: ${e instanceof Error ? e.message : String(e)}`); }
       }
 
       // P5.2: 合并 regime 参数覆盖（止盈/止损/ROI Table 等）+ 仓位比例调整
@@ -438,6 +438,9 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
 
 async function main(): Promise<void> {
   log("─── 监控扫描开始 ───");
+  if (!process.env["OPENCLAW_GATEWAY_TOKEN"]) {
+    log("⚠️ 环境变量 OPENCLAW_GATEWAY_TOKEN 未设置，通知功能将不可用");
+  }
   const done = ping("price_monitor");
 
   const runtimes = loadRuntimeConfigs();
@@ -459,6 +462,11 @@ async function main(): Promise<void> {
   done();
   log("─── 监控扫描完成 ───\n");
 }
+
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
 
 main().catch((err: unknown) => {
   console.error("Fatal:", String(err));

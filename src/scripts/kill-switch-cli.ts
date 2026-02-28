@@ -15,6 +15,11 @@ import {
   isKillSwitchActive,
 } from "../health/kill-switch.js";
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 const [, , command, ...args] = process.argv;
 
 function formatTime(ts: number): string {

@@ -119,6 +119,11 @@ function syncCron(): void {
   console.log(execSync("crontab -l", { encoding: "utf-8" }));
 }
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 try {
   syncCron();
 } catch (err: unknown) {

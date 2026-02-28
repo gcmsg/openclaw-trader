@@ -470,6 +470,11 @@ function main() {
   console.log(`   总交易：${datasets.reduce((s, d) => s + d.numTrades, 0)} 笔`);
 }
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 try {
   main();
 } catch (e: unknown) {

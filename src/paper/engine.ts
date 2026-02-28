@@ -71,6 +71,18 @@ function paperOpts(cfg: RuntimeConfig) {
  */
 export function handleSignal(signal: Signal, cfg: RuntimeConfig): PaperEngineResult {
   const sid = scenarioId(cfg);
+
+  // ── Guard: 信号价格无效（NaN / 0 / 负数 / Infinity）→ 跳过 ──
+  if (!signal.price || !isFinite(signal.price) || signal.price <= 0) {
+    return {
+      trade: null,
+      skipped: `信号价格无效（${signal.price}），跳过 ${signal.symbol}`,
+      stopLossTriggered: false,
+      stopLossTrade: null,
+      account: loadAccount(cfg.paper.initial_usdt, sid),
+    };
+  }
+
   const account = loadAccount(cfg.paper.initial_usdt, sid);
   resetDailyLossIfNeeded(account);
 

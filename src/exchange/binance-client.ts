@@ -223,6 +223,50 @@ async function httpsRequest(
 }
 
 // ─────────────────────────────────────────────────────
+// 带自动重试的请求包装（429/5xx/网络错误）
+// ─────────────────────────────────────────────────────
+
+const MAX_RETRIES = 3;
+
+async function httpsRequestWithRetry(
+  hostname: string,
+  method: "GET" | "POST" | "DELETE",
+  path: string,
+  headers: Record<string, string>,
+  body?: string
+): Promise<unknown> {
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await httpsRequest(hostname, method, path, headers, body);
+    } catch (err: unknown) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const msg = lastError.message;
+
+      // 可重试条件：429/418 限速、5xx 服务器错误、网络/超时错误
+      const isRateLimit = msg.includes("rate limit hit");
+      const isTimeout = msg.includes("timeout");
+      const isNetwork = msg.includes("ECONNRESET") || msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT");
+      const is5xx = msg.includes("HTTP 5");
+
+      if (!isRateLimit && !isTimeout && !isNetwork && !is5xx) throw lastError; // 不可重试
+      if (attempt >= MAX_RETRIES) break; // 已达最大重试
+
+      // 指数退避：429 使用 retry-after，其他用 1s/2s/4s
+      let waitMs: number;
+      if (isRateLimit) {
+        const match = /retry after (\d+)s/.exec(msg);
+        waitMs = match ? parseInt(match[1], 10) * 1000 : 5000;
+      } else {
+        waitMs = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
+      }
+      await new Promise<void>((r) => setTimeout(r, waitMs));
+    }
+  }
+  throw lastError!;
+}
+
+// ─────────────────────────────────────────────────────
 // BinanceClient 类
 // ─────────────────────────────────────────────────────
 
@@ -244,7 +288,15 @@ export class BinanceClient {
     market: "spot" | "futures" = "spot"
   ) {
     const raw = fs.readFileSync(credentialsPath, "utf-8");
-    this.creds = JSON.parse(raw) as BinanceCredentials;
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed !== "object" || parsed === null ||
+      typeof (parsed as Record<string, unknown>).apiKey !== "string" ||
+      typeof (parsed as Record<string, unknown>).secretKey !== "string"
+    ) {
+      throw new Error(`Invalid credentials file (missing apiKey/secretKey): ${credentialsPath}`);
+    }
+    this.creds = parsed as BinanceCredentials;
 
     const env = testnet ? "testnet" : "production";
     this.hostname = ENDPOINTS[market][env];
@@ -259,14 +311,14 @@ export class BinanceClient {
   /** 获取当前价格 */
   async getPrice(symbol: string): Promise<number> {
     const path = `${this.apiPrefix}/ticker/price?symbol=${symbol}`;
-    const res = (await httpsRequest(this.hostname, "GET", path, {})) as { price: string };
+    const res = (await httpsRequestWithRetry(this.hostname, "GET", path, {})) as { price: string };
     return parseFloat(res.price);
   }
 
   /** 获取交易对信息（精度、最小下单量等） */
   async getSymbolInfo(symbol: string): Promise<SymbolInfo> {
     const path = `${this.apiPrefix}/exchangeInfo?symbol=${symbol}`;
-    const res = (await httpsRequest(this.hostname, "GET", path, {})) as {
+    const res = (await httpsRequestWithRetry(this.hostname, "GET", path, {})) as {
       symbols: {
         symbol: string;
         baseAsset: string;
@@ -314,7 +366,7 @@ export class BinanceClient {
   async getAccountInfo(): Promise<AccountInfo> {
     const qs = this.buildSignedQuery({});
     const path = `${this.accountPrefix}/account?${qs}`;
-    const raw = await httpsRequest(this.hostname, "GET", path, this.signedHeaders());
+    const raw = await httpsRequestWithRetry(this.hostname, "GET", path, this.signedHeaders());
 
     if (this.market === "futures") {
       // Futures 账户结构：{ assets: [{ asset, walletBalance, availableBalance }] }
@@ -369,7 +421,7 @@ export class BinanceClient {
 
     const body = this.buildSignedQuery(params);
     const path = `${this.apiPrefix}/order`;
-    return (await httpsRequest(this.hostname, "POST", path, this.signedHeaders(), body)) as OrderResponse;
+    return (await httpsRequestWithRetry(this.hostname, "POST", path, this.signedHeaders(), body)) as OrderResponse;
   }
 
   /**
@@ -459,14 +511,14 @@ export class BinanceClient {
   async cancelOrder(symbol: string, orderId: number): Promise<OrderResponse> {
     const qs = this.buildSignedQuery({ symbol, orderId });
     const path = `${this.apiPrefix}/order?${qs}`;
-    return (await httpsRequest(this.hostname, "DELETE", path, this.signedHeaders())) as OrderResponse;
+    return (await httpsRequestWithRetry(this.hostname, "DELETE", path, this.signedHeaders())) as OrderResponse;
   }
 
   /** 查询订单状态 */
   async getOrder(symbol: string, orderId: number): Promise<OrderResponse> {
     const qs = this.buildSignedQuery({ symbol, orderId });
     const path = `${this.apiPrefix}/order?${qs}`;
-    return (await httpsRequest(this.hostname, "GET", path, this.signedHeaders())) as OrderResponse;
+    return (await httpsRequestWithRetry(this.hostname, "GET", path, this.signedHeaders())) as OrderResponse;
   }
 
   /** 获取所有挂单 */
@@ -474,7 +526,7 @@ export class BinanceClient {
     const params: Record<string, string | number | boolean> = symbol ? { symbol } : {};
     const qs = this.buildSignedQuery(params);
     const path = `${this.apiPrefix}/openOrders?${qs}`;
-    return (await httpsRequest(this.hostname, "GET", path, this.signedHeaders())) as OrderResponse[];
+    return (await httpsRequestWithRetry(this.hostname, "GET", path, this.signedHeaders())) as OrderResponse[];
   }
 
   /**
@@ -485,7 +537,7 @@ export class BinanceClient {
     if (this.market !== "futures") return [];
     const qs = this.buildSignedQuery({});
     const path = `/fapi/v2/positionRisk?${qs}`;
-    const raw = await httpsRequest(this.hostname, "GET", path, this.signedHeaders());
+    const raw = await httpsRequestWithRetry(this.hostname, "GET", path, this.signedHeaders());
     return raw as { symbol: string; positionAmt: string; entryPrice: string; unrealizedProfit: string }[];
   }
 
@@ -543,7 +595,7 @@ export class BinanceClient {
    */
   async ping(): Promise<boolean> {
     try {
-      await httpsRequest(this.hostname, "GET", `${this.apiPrefix}/ping`, {});
+      await httpsRequestWithRetry(this.hostname, "GET", `${this.apiPrefix}/ping`, {});
       return true;
     } catch (_e: unknown) {
       return false;

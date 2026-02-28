@@ -35,4 +35,9 @@ function main(): void {
   console.log(`\n[attribution] JSON 报告已写入: ${ATTRIBUTION_REPORT_PATH}`);
 }
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 main();

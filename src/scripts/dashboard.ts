@@ -18,6 +18,11 @@ console.log(`  API:      http://localhost:${PORT}/api/data`);
 console.log(`  Health:   http://localhost:${PORT}/api/health`);
 console.log(`  按 Ctrl+C 停止\n`);
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 startDashboardServer(PORT);
 
 // 优雅关闭

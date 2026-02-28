@@ -300,6 +300,11 @@ async function main() {
   return fullReport;
 }
 
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+  process.exit(1);
+});
+
 main().catch((e: unknown) => {
   console.error("分析失败:", e instanceof Error ? e.message : String(e));
   process.exit(1);
