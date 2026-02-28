@@ -132,7 +132,8 @@ function buildDashboardData(scenarioId: string, initialUsdt: number): DashboardD
     price: t.price,
     usdt: t.usdtAmount,
     pnl: t.pnl ?? null,
-    pnlPct: t.pnlPercent ?? null,
+    // PaperTrade.pnlPercent 存储为比例（0.038 = +3.8%），展示需 ×100
+    pnlPct: t.pnlPercent != null ? t.pnlPercent * 100 : null,
   }));
 
   return {
