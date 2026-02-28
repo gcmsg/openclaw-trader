@@ -22,6 +22,7 @@
 import { fetchHistoricalKlines } from "../backtest/fetcher.js";
 import { runBacktest } from "../backtest/runner.js";
 import { formatReport, saveReport } from "../backtest/report.js";
+import { parseBacktestArgs, type BacktestCliArgs } from "../backtest/cli-args.js";
 import {
   loadStrategyConfig,
   loadStrategyProfile,
@@ -30,83 +31,6 @@ import {
   mergeStrategySection,
 } from "../config/loader.js";
 import type { StrategyConfig, Kline } from "../types.js";
-
-// ─────────────────────────────────────────────────────
-// 参数解析
-// ─────────────────────────────────────────────────────
-
-interface CliArgs {
-  strategy?: string;
-  days: number;
-  timeframe?: string;
-  symbols?: string[];
-  initialUsdt: number;
-  save: boolean;
-  compare: boolean;
-  slippageSweep: boolean;
-  spreadBps: number;
-}
-
-export function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = {
-    days: 90,
-    initialUsdt: 1000,
-    save: true,
-    compare: false,
-    slippageSweep: false,
-    spreadBps: 0,
-  };
-
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    // nextArg 辅助：安全取下一个参数
-    const nextArg = (): string => {
-      const val = argv[++i];
-      if (val === undefined) throw new Error(`参数 ${arg} 缺少值`);
-      return val;
-    };
-    switch (arg) {
-      case "--strategy":
-      case "-s":
-        args.strategy = nextArg();
-        break;
-      case "--days":
-      case "-d":
-        args.days = parseInt(nextArg(), 10);
-        break;
-      case "--timeframe":
-      case "-t":
-        args.timeframe = nextArg();
-        break;
-      case "--symbols":
-      case "-S":
-        args.symbols = nextArg()
-          .split(",")
-          .map((s) => s.trim().toUpperCase());
-        break;
-      case "--initial-usdt":
-        args.initialUsdt = parseFloat(nextArg());
-        break;
-      case "--no-save":
-        args.save = false;
-        break;
-      case "--compare":
-        args.compare = true;
-        break;
-      case "--slippage-sweep":
-        args.slippageSweep = true;
-        break;
-      case "--spread":
-        args.spreadBps = parseFloat(nextArg());
-        break;
-      case undefined:
-      default:
-        break; // 未知参数或 undefined（noUncheckedIndexedAccess）跳过
-    }
-  }
-
-  return args;
-}
 
 // ─────────────────────────────────────────────────────
 // 构建回测用策略配置（strategy.yaml + profile 合并）
@@ -161,7 +85,7 @@ function buildBacktestConfig(
 // 单次回测
 // ─────────────────────────────────────────────────────
 
-async function runOne(strategyId: string | undefined, args: CliArgs): Promise<void> {
+async function runOne(strategyId: string | undefined, args: BacktestCliArgs): Promise<void> {
   const cfg = buildBacktestConfig(strategyId, {
     timeframe: args.timeframe,
     symbols: args.symbols,
@@ -233,7 +157,7 @@ async function runOne(strategyId: string | undefined, args: CliArgs): Promise<vo
 // 多策略对比
 // ─────────────────────────────────────────────────────
 
-async function runCompare(args: CliArgs): Promise<void> {
+async function runCompare(args: BacktestCliArgs): Promise<void> {
   const strategies = listStrategyProfiles();
   if (strategies.length === 0) {
     console.log("⚠️  没有找到策略文件（config/strategies/*.yaml）");
@@ -322,7 +246,7 @@ async function runCompare(args: CliArgs): Promise<void> {
  * 对同一策略、同一历史数据，以 0 / 0.05 / 0.1 / 0.2% 四种滑点各跑一次回测，
  * 展示滑点对最终收益、最大回撤、胜率的影响。
  */
-async function runSlippageSweep(args: CliArgs): Promise<void> {
+async function runSlippageSweep(args: BacktestCliArgs): Promise<void> {
   const SLIPPAGE_LEVELS = [0, 0.05, 0.1, 0.2]; // %
 
   const cfg = buildBacktestConfig(args.strategy, {
@@ -425,7 +349,7 @@ async function runSlippageSweep(args: CliArgs): Promise<void> {
 // ─────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const args = parseBacktestArgs(process.argv.slice(2));
 
   console.log("🚀 openclaw-trader 回测引擎");
   const spreadMsg = args.spreadBps > 0 ? `  |  spread: ${args.spreadBps} bps` : "";

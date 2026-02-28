@@ -2,7 +2,7 @@
  * 信号归因分析测试
  */
 import { describe, it, expect } from "vitest";
-import { analyzeGroups, formatAttributionReport } from "../scripts/signal-attribution.js";
+import { analyzeGroups, formatAttributionReport } from "../analysis/attribution.js";
 
 // ─── 测试辅助 ─────────────────────────────────────────
 

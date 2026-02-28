@@ -25,7 +25,7 @@
 
 import { describe, it, expect } from "vitest";
 import { runBacktest } from "../backtest/runner.js";
-import { parseArgs } from "../scripts/backtest.js";
+import { parseBacktestArgs } from "../backtest/cli-args.js";
 import type { Kline, StrategyConfig } from "../types.js";
 
 // ─── 辅助函数 ───────────────────────────────────────
@@ -484,27 +484,27 @@ describe("BacktestResult.config.spreadBps", () => {
 
 describe("CLI parseArgs：--spread 参数", () => {
   it("--spread 5 → spreadBps = 5", () => {
-    const args = parseArgs(["--spread", "5"]);
+    const args = parseBacktestArgs(["--spread", "5"]);
     expect(args.spreadBps).toBe(5);
   });
 
   it("--spread 10.5 → spreadBps = 10.5", () => {
-    const args = parseArgs(["--spread", "10.5"]);
+    const args = parseBacktestArgs(["--spread", "10.5"]);
     expect(args.spreadBps).toBeCloseTo(10.5, 5);
   });
 
   it("无 --spread → spreadBps = 0（默认值）", () => {
-    const args = parseArgs([]);
+    const args = parseBacktestArgs([]);
     expect(args.spreadBps).toBe(0);
   });
 
   it("--spread 0 → spreadBps = 0", () => {
-    const args = parseArgs(["--spread", "0"]);
+    const args = parseBacktestArgs(["--spread", "0"]);
     expect(args.spreadBps).toBe(0);
   });
 
   it("--spread 与其他参数混合解析正确", () => {
-    const args = parseArgs(["--days", "30", "--spread", "5", "--no-save"]);
+    const args = parseBacktestArgs(["--days", "30", "--spread", "5", "--no-save"]);
     expect(args.days).toBe(30);
     expect(args.spreadBps).toBe(5);
     expect(args.save).toBe(false);
