@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-28T00:41:44.774Z",
+  "generatedAt": "2026-02-28T01:10:05.351Z",
   "stats": [
     {
       "key": "buy:strategy:rsi-reversal",
@@ -33,9 +33,9 @@
         "rsi_oversold"
       ],
       "signalType": "buy",
-      "total": 1,
+      "total": 4,
       "closed": 0,
-      "open": 1,
+      "open": 4,
       "wins": 0,
       "losses": 0,
       "winRate": 0,
@@ -46,7 +46,10 @@
       "avgHoldHours": 0,
       "totalPnlPct": 0,
       "symbols": [
-        "ETHUSDT"
+        "ETHUSDT",
+        "SOLUSDT",
+        "AVAXUSDT",
+        "ADAUSDT"
       ],
       "stopLossCount": 0
     },

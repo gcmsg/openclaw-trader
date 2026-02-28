@@ -6,7 +6,7 @@
  */
 
 import { getPriceChanges } from "../news/fetcher.js";
-import { loadAccount, getAccountSummary, getAccountPath } from "./account.js";
+import { loadAccount, getAccountSummary, getAccountPath, calcTotalEquity } from "./account.js";
 import { loadPaperConfig, loadStrategyProfile } from "../config/loader.js";
 import type { PaperTrade } from "./account.js";
 import fs from "fs";
@@ -136,12 +136,8 @@ function printSummary(): void {
       continue;
     }
     const account = loadAccount(s.initial_usdt, s.id);
-    const equity =
-      account.usdt +
-      Object.values(account.positions).reduce((sum, pos) => {
-        const px = prices[pos.symbol];
-        return px ? sum + pos.quantity * px : sum;
-      }, 0);
+    // 使用 calcTotalEquity 正确处理多头和空头持仓（空头：保证金 + 浮动盈亏）
+    const equity = calcTotalEquity(account, prices);
     const pnlPct = ((equity - account.initialUsdt) / account.initialUsdt) * 100;
     // 已平仓交易：sell（平多）+ cover（平空）均需计入统计
     const sells = account.trades.filter((t) => (t.side === "sell" || t.side === "cover") && t.pnl !== undefined);

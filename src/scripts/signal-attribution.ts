@@ -176,7 +176,7 @@ export function formatAttributionReport(stats: GroupStats[], records: SignalReco
     "═".repeat(56),
     `总信号数: ${total} | 已平仓: ${closed.length} | 待平仓: ${total - closed.length}`,
     `整体胜率: ${closed.length > 0 ? ((wins.length / closed.length) * 100).toFixed(1) : "--"}%`,
-    `累计盈亏: ${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}%`,
+    `累计盈亏: ${totalPnl >= 0 ? "+" : ""}${(totalPnl * 100).toFixed(2)}%`,
     "",
     "─".repeat(56),
     "🏆 信号组合排行榜（按累计盈亏）",
@@ -192,7 +192,7 @@ export function formatAttributionReport(stats: GroupStats[], records: SignalReco
     if (!s) continue;
     const rank = i + 1;
     const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `${rank}.`;
-    const pnlStr = `${s.totalPnlPct >= 0 ? "+" : ""}${s.totalPnlPct.toFixed(2)}%`;
+    const pnlStr = `${s.totalPnlPct >= 0 ? "+" : ""}${(s.totalPnlPct * 100).toFixed(2)}%`;
     const wrStr = s.closed > 0 ? `${(s.winRate * 100).toFixed(0)}%` : "--";
     const rrStr = s.rrRatio > 0 ? s.rrRatio.toFixed(2) : "--";
 

@@ -6,6 +6,7 @@ import { analyzeGroups, formatAttributionReport } from "../scripts/signal-attrib
 
 // ─── 测试辅助 ─────────────────────────────────────────
 
+// pnlPercent 使用比例格式（与 signal-history.ts 一致），如 0.10 = +10%
 function makeRecord(overrides: {
   id?: string;
   symbol?: string;
@@ -30,7 +31,7 @@ function makeRecord(overrides: {
     exitTime: Date.now() + 3600_000,
     exitReason: overrides.exitReason ?? "signal",
     pnl: 5,
-    pnlPercent: overrides.pnlPercent ?? 5,
+    pnlPercent: overrides.pnlPercent ?? 0.05,  // 默认 +5%（比例格式）
     holdingHours: overrides.holdingHours ?? 2,
     scenarioId: "test",
   };
@@ -44,24 +45,24 @@ describe("analyzeGroups()", () => {
   });
 
   it("单笔盈利信号统计正确", () => {
-    const records = [makeRecord({ rules: ["ma_bullish", "rsi_bullish"], pnlPercent: 10 })];
+    const records = [makeRecord({ rules: ["ma_bullish", "rsi_bullish"], pnlPercent: 0.10 })];
     const stats = analyzeGroups(records);
     expect(stats).toHaveLength(1);
     const s = stats[0]!;
     expect(s.wins).toBe(1);
     expect(s.losses).toBe(0);
     expect(s.winRate).toBe(1);
-    expect(s.avgPnlPct).toBeCloseTo(10);
-    expect(s.totalPnlPct).toBeCloseTo(10);
+    expect(s.avgPnlPct).toBeCloseTo(0.10);
+    expect(s.totalPnlPct).toBeCloseTo(0.10);
     expect(s.rules).toContain("ma_bullish");
     expect(s.rules).toContain("rsi_bullish");
   });
 
   it("多笔亏损计算胜率和亏损比", () => {
     const records = [
-      makeRecord({ rules: ["ma_bearish"], type: "short", pnlPercent: -5 }),
-      makeRecord({ rules: ["ma_bearish"], type: "short", pnlPercent: -8 }),
-      makeRecord({ rules: ["ma_bearish"], type: "short", pnlPercent: 10 }),
+      makeRecord({ rules: ["ma_bearish"], type: "short", pnlPercent: -0.05 }),
+      makeRecord({ rules: ["ma_bearish"], type: "short", pnlPercent: -0.08 }),
+      makeRecord({ rules: ["ma_bearish"], type: "short", pnlPercent: 0.10 }),
     ];
     const stats = analyzeGroups(records);
     const s = stats[0]!;
@@ -69,16 +70,16 @@ describe("analyzeGroups()", () => {
     expect(s.wins).toBe(1);
     expect(s.losses).toBe(2);
     expect(s.winRate).toBeCloseTo(1 / 3, 2);
-    expect(s.avgLossPct).toBeCloseTo(6.5, 1); // (5+8)/2
-    expect(s.avgWinPct).toBeCloseTo(10, 1);
-    expect(s.rrRatio).toBeCloseTo(10 / 6.5, 2);
+    expect(s.avgLossPct).toBeCloseTo(0.065, 4); // (0.05+0.08)/2
+    expect(s.avgWinPct).toBeCloseTo(0.10, 3);
+    expect(s.rrRatio).toBeCloseTo(0.10 / 0.065, 2);
   });
 
   it("不同信号组合分为不同 group", () => {
     const records = [
-      makeRecord({ rules: ["ma_bullish"], pnlPercent: 5 }),
-      makeRecord({ rules: ["ma_bullish", "cvd_bullish"], pnlPercent: 8 }),
-      makeRecord({ rules: ["ma_bullish"], pnlPercent: -2 }),
+      makeRecord({ rules: ["ma_bullish"], pnlPercent: 0.05 }),
+      makeRecord({ rules: ["ma_bullish", "cvd_bullish"], pnlPercent: 0.08 }),
+      makeRecord({ rules: ["ma_bullish"], pnlPercent: -0.02 }),
     ];
     const stats = analyzeGroups(records);
     expect(stats).toHaveLength(2);
@@ -91,7 +92,7 @@ describe("analyzeGroups()", () => {
   it("open 状态的信号不计入 closed 统计", () => {
     const records = [
       makeRecord({ status: "open" }),
-      makeRecord({ status: "closed", pnlPercent: 5 }),
+      makeRecord({ status: "closed", pnlPercent: 0.05 }),
     ];
     const stats = analyzeGroups(records);
     const s = stats[0]!;
@@ -103,9 +104,9 @@ describe("analyzeGroups()", () => {
 
   it("按累计盈亏降序排列", () => {
     const records = [
-      makeRecord({ id: "a", rules: ["ma_bullish"], pnlPercent: 2 }),
-      makeRecord({ id: "b", rules: ["ma_bearish"], type: "short", pnlPercent: 20 }),
-      makeRecord({ id: "c", rules: ["rsi_bullish"], pnlPercent: -5 }),
+      makeRecord({ id: "a", rules: ["ma_bullish"], pnlPercent: 0.02 }),
+      makeRecord({ id: "b", rules: ["ma_bearish"], type: "short", pnlPercent: 0.20 }),
+      makeRecord({ id: "c", rules: ["rsi_bullish"], pnlPercent: -0.05 }),
     ];
     const stats = analyzeGroups(records);
     expect(stats[0]?.rules).toContain("ma_bearish");
@@ -115,8 +116,8 @@ describe("analyzeGroups()", () => {
 
   it("止损计数正确", () => {
     const records = [
-      makeRecord({ rules: ["ma_bullish"], pnlPercent: -5, exitReason: "stop_loss" }),
-      makeRecord({ rules: ["ma_bullish"], pnlPercent: 8, exitReason: "signal" }),
+      makeRecord({ rules: ["ma_bullish"], pnlPercent: -0.05, exitReason: "stop_loss" }),
+      makeRecord({ rules: ["ma_bullish"], pnlPercent: 0.08, exitReason: "signal" }),
     ];
     const stats = analyzeGroups(records);
     expect(stats[0]?.stopLossCount).toBe(1);
@@ -124,8 +125,8 @@ describe("analyzeGroups()", () => {
 
   it("持仓时长平均正确", () => {
     const records = [
-      makeRecord({ rules: ["ma_bullish"], pnlPercent: 5, holdingHours: 4 }),
-      makeRecord({ rules: ["ma_bullish"], pnlPercent: 3, holdingHours: 6 }),
+      makeRecord({ rules: ["ma_bullish"], pnlPercent: 0.05, holdingHours: 4 }),
+      makeRecord({ rules: ["ma_bullish"], pnlPercent: 0.03, holdingHours: 6 }),
     ];
     const stats = analyzeGroups(records);
     expect(stats[0]?.avgHoldHours).toBeCloseTo(5);
@@ -133,8 +134,8 @@ describe("analyzeGroups()", () => {
 
   it("规则排序确保 key 一致（不同顺序 = 同一组合）", () => {
     const records = [
-      makeRecord({ rules: ["b_rule", "a_rule"], pnlPercent: 5 }),
-      makeRecord({ rules: ["a_rule", "b_rule"], pnlPercent: 3 }),
+      makeRecord({ rules: ["b_rule", "a_rule"], pnlPercent: 0.05 }),
+      makeRecord({ rules: ["a_rule", "b_rule"], pnlPercent: 0.03 }),
     ];
     const stats = analyzeGroups(records);
     expect(stats).toHaveLength(1);
@@ -152,8 +153,8 @@ describe("formatAttributionReport()", () => {
 
   it("包含胜率和盈亏信息", () => {
     const records = [
-      makeRecord({ pnlPercent: 10 }),
-      makeRecord({ pnlPercent: -5 }),
+      makeRecord({ pnlPercent: 0.10 }),
+      makeRecord({ pnlPercent: -0.05 }),
     ];
     const stats = analyzeGroups(records);
     const report = formatAttributionReport(stats, records);
