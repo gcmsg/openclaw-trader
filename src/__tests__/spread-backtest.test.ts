@@ -510,3 +510,133 @@ describe("CLI parseArgs：--spread 参数", () => {
     expect(args.save).toBe(false);
   });
 });
+
+// ─────────────────────────────────────────────────────
+// 11. signalToNextOpen — 信号延迟一根 K 线执行（消除前视偏差）
+// ─────────────────────────────────────────────────────
+
+describe("signalToNextOpen — 下一根 K 线开盘价成交", () => {
+  /**
+   * 构造：预热 16 根（价格平稳 @ 100）→ 触发 MA 多头信号 @ kline N（close=110）
+   *       → 下一根开盘价 = 115（跳空高开）
+   *
+   * 期望：
+   *   signalToNextOpen=false → entryPrice ≈ 110（含 slippage，当根收盘）
+   *   signalToNextOpen=true  → entryPrice ≈ 115（含 slippage，下一根开盘）
+   */
+  function makeNextOpenKlines(): Kline[] {
+    const WARMUP = 16;
+    const WARMUP_PRICE = 100;
+    const SIGNAL_CLOSE = 110; // MA 多头信号触发
+    const NEXT_OPEN = 115;    // 下一根开盘价（跳空高开）
+
+    const warmup = Array.from({ length: WARMUP }, (_, i) =>
+      makeKline(WARMUP_PRICE, i * 3600_000)
+    );
+
+    // 信号 K 线：close > warmup → 触发 MA 多头
+    const signalKline: Kline = {
+      openTime: WARMUP * 3600_000,
+      open: WARMUP_PRICE,
+      high: SIGNAL_CLOSE * 1.001,
+      low: WARMUP_PRICE * 0.999,
+      close: SIGNAL_CLOSE,
+      volume: 1000,
+      closeTime: WARMUP * 3600_000 + 3599_000,
+    };
+
+    // 下一根：开盘跳空到 115，收盘 120（持续上涨）
+    const nextKline: Kline = {
+      openTime: (WARMUP + 1) * 3600_000,
+      open: NEXT_OPEN,
+      high: 125,
+      low: 113,
+      close: 120,
+      volume: 1000,
+      closeTime: (WARMUP + 1) * 3600_000 + 3599_000,
+    };
+
+    // 再加几根让持仓有时间被 stop/take profit 处理
+    const trailing = Array.from({ length: 5 }, (_, i) =>
+      makeKline(120, (WARMUP + 2 + i) * 3600_000)
+    );
+
+    return [...warmup, signalKline, nextKline, ...trailing];
+  }
+
+  it("signalToNextOpen=false（默认）→ 买入使用当根收盘价（entryPrice ≈ close=110）", () => {
+    const klines = makeNextOpenKlines();
+    const cfg = makeLongCfg();
+    const result = runBacktest(
+      { BTCUSDT: klines },
+      cfg,
+      { ...ZERO_FEES, slippagePercent: 0 }
+    );
+
+    const buy = result.trades.find((t) => t.side === "buy");
+    expect(buy).toBeDefined();
+    // 无 signalToNextOpen → 当根 close=110 成交（BacktestTrade 字段为 entryPrice）
+    expect(buy!.entryPrice).toBeCloseTo(110, 1);
+    expect(result.config.signalToNextOpen).toBe(false);
+  });
+
+  it("signalToNextOpen=true → 买入使用下一根开盘价（entryPrice ≈ open=115）", () => {
+    const klines = makeNextOpenKlines();
+    const cfg = makeLongCfg();
+    const result = runBacktest(
+      { BTCUSDT: klines },
+      cfg,
+      { ...ZERO_FEES, slippagePercent: 0, signalToNextOpen: true }
+    );
+
+    const buy = result.trades.find((t) => t.side === "buy");
+    expect(buy).toBeDefined();
+    // signalToNextOpen=true → 下一根 open=115 成交（entryPrice 应接近 115）
+    expect(buy!.entryPrice).toBeGreaterThan(110);  // 不是当根 close
+    expect(buy!.entryPrice).toBeCloseTo(115, 0);   // 接近下一根 open
+    expect(result.config.signalToNextOpen).toBe(true);
+  });
+
+  it("signalToNextOpen=true → result.config.signalToNextOpen = true", () => {
+    const klines = makeNextOpenKlines();
+    const result = runBacktest(
+      { BTCUSDT: klines },
+      makeLongCfg(),
+      { ...ZERO_FEES, signalToNextOpen: true }
+    );
+    expect(result.config.signalToNextOpen).toBe(true);
+  });
+
+  it("signalToNextOpen=false → result.config.signalToNextOpen = false", () => {
+    const klines = makeNextOpenKlines();
+    const result = runBacktest(
+      { BTCUSDT: klines },
+      makeLongCfg(),
+      { ...ZERO_FEES, signalToNextOpen: false }
+    );
+    expect(result.config.signalToNextOpen).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// 12. CLI parseArgs --next-open 参数
+// ─────────────────────────────────────────────────────
+
+describe("CLI parseArgs：--next-open 参数", () => {
+  it("--next-open → signalToNextOpen = true", () => {
+    const args = parseBacktestArgs(["--next-open"]);
+    expect(args.signalToNextOpen).toBe(true);
+  });
+
+  it("无 --next-open → signalToNextOpen = false（默认）", () => {
+    const args = parseBacktestArgs([]);
+    expect(args.signalToNextOpen).toBe(false);
+  });
+
+  it("--next-open 与其他参数混合解析正确", () => {
+    const args = parseBacktestArgs(["--days", "30", "--next-open", "--spread", "5"]);
+    expect(args.days).toBe(30);
+    expect(args.signalToNextOpen).toBe(true);
+    expect(args.spreadBps).toBe(5);
+  });
+});

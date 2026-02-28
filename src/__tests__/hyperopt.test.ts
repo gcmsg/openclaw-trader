@@ -69,6 +69,7 @@ const mockReturnValue = {
     initialUsdt: 1000,
     fundingEnabled: false,
     spreadBps: 0,
+    signalToNextOpen: false,
   },
 };
 

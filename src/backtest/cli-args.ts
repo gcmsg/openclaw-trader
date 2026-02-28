@@ -19,6 +19,8 @@ export interface BacktestCliArgs {
   compare: boolean;
   slippageSweep: boolean;
   spreadBps: number;
+  /** 信号延迟一根 K 线执行（消除前视偏差）。CLI: --next-open */
+  signalToNextOpen: boolean;
 }
 
 // ─────────────────────────────────────────────────────
@@ -36,6 +38,7 @@ export function parseBacktestArgs(argv: string[]): BacktestCliArgs {
     compare: false,
     slippageSweep: false,
     spreadBps: 0,
+    signalToNextOpen: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -79,6 +82,9 @@ export function parseBacktestArgs(argv: string[]): BacktestCliArgs {
         break;
       case "--spread":
         args.spreadBps = parseFloat(nextArg());
+        break;
+      case "--next-open":
+        args.signalToNextOpen = true;
         break;
       case undefined:
       default:

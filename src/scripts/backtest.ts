@@ -135,12 +135,14 @@ async function runOne(strategyId: string | undefined, args: BacktestCliArgs): Pr
 
   // 运行回测
   const spreadInfo = args.spreadBps > 0 ? `  |  spread: ${args.spreadBps} bps` : "";
-  console.log(`\n🔄 运行回测${cfg.trend_timeframe ? `（含 ${cfg.trend_timeframe} MTF 过滤）` : ""}${spreadInfo}...`);
+  const nextOpenInfo = args.signalToNextOpen ? "  |  ⚡ 下一根开盘成交（无前视偏差）" : "";
+  console.log(`\n🔄 运行回测${cfg.trend_timeframe ? `（含 ${cfg.trend_timeframe} MTF 过滤）` : ""}${spreadInfo}${nextOpenInfo}...`);
   const result = runBacktest(klinesBySymbol, cfg, {
     initialUsdt: args.initialUsdt,
     feeRate: 0.001,
     slippagePercent: 0.05,
     spreadBps: args.spreadBps,
+    signalToNextOpen: args.signalToNextOpen,
   }, trendKlinesBySymbol);
 
   // 输出报告

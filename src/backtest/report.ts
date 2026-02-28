@@ -63,6 +63,11 @@ export function formatReport(result: BacktestResult): string {
   if ((c.spreadBps ?? 0) > 0) {
     lines.push(`📏  Spread    ${c.spreadBps} bps（${((c.spreadBps ?? 0) / 100).toFixed(3)}%，模拟 bid/ask 价差）`);
   }
+  if (c.signalToNextOpen) {
+    lines.push(`⚡  执行模式  下一根 K 线开盘成交（无前视偏差，更接近实盘）`);
+  } else {
+    lines.push(`⚠️  执行模式  当根 K 线收盘成交（存在前视偏差）— 建议加 --next-open`);
+  }
   lines.push("");
 
   // ── 收益 ──

@@ -98,6 +98,17 @@ export interface BacktestOptions {
    * 用于单测时传入 mock strategy 而无需注册到全局注册表。
    */
   strategyOverride?: Strategy;
+  /**
+   * 信号延迟一根 K 线执行（下一根开盘价成交）
+   *
+   * false（默认）：信号在当前 K 线收盘时触发，用当前收盘价成交。
+   *               存在前视偏差（Look-Ahead Bias）：实盘中收盘信号只能在下一根 K 线才能成交。
+   *
+   * true（推荐）：信号在当前 K 线收盘后记录，下一根 K 线开盘价成交。
+   *              更接近实盘执行逻辑，回测结果更保守、更真实。
+   *              注意：最后一根 K 线的信号会被丢弃（无下一根 K 线可成交）。
+   */
+  signalToNextOpen?: boolean;
 }
 
 export interface BacktestResult {
@@ -126,6 +137,8 @@ export interface BacktestResult {
     fundingEnabled: boolean;
     /** 回测使用的 spread（基点），默认 0 */
     spreadBps?: number;
+    /** 信号延迟一根 K 线执行（消除前视偏差），默认 false */
+    signalToNextOpen: boolean;
   };
 }
 
@@ -630,7 +643,8 @@ export function runBacktest(
   trendKlinesBySymbol?: Record<string, Kline[]>
 ): BacktestResult {
   const { initialUsdt = 1000, feeRate = 0.001, slippagePercent = 0.05,
-          avgFundingRatePer8h, fundingHistory, intracandle = true } = opts;
+          avgFundingRatePer8h, fundingHistory, intracandle = true,
+          signalToNextOpen = false } = opts;
   // spread_bps：opts 优先，其次 cfg.risk.spread_bps，默认 0
   const spreadBps = opts.spreadBps ?? cfg.risk.spread_bps ?? 0;
   const fundingEnabled = avgFundingRatePer8h !== undefined || fundingHistory !== undefined;
@@ -733,9 +747,36 @@ export function runBacktest(
     return ind.maShort > ind.maLong;
   }
 
+  // ── signalToNextOpen：待执行信号队列（上一根 K 线产生，下一根 K 线开盘执行）──
+  type PendingSignal = {
+    type: "buy" | "sell" | "short" | "cover";
+    reason: string[];
+    regimeCfg: StrategyConfig;
+  };
+  const pendingSignals: Record<string, PendingSignal> = {};
+
   // ── 主循环：逐根 K 线前进 ──
   for (const time of allTimes) {
     const currentPrices: Record<string, number> = {};
+
+    // Step 0（signalToNextOpen）：执行上一根 K 线产生的待处理信号，用本根 K 线开盘价成交
+    if (signalToNextOpen) {
+      for (const [sym, pending] of Object.entries(pendingSignals)) {
+        const kline = klineIndex[sym]?.[time];
+        if (!kline) { delete pendingSignals[sym]; continue; }
+        const execPrice = kline.open;
+        if (pending.type === "buy") {
+          doBuy(account, sym, execPrice, time, pending.regimeCfg, legacyOpts, pending.reason);
+        } else if (pending.type === "sell") {
+          doSell(account, sym, execPrice, time, "signal", legacyOpts);
+        } else if (pending.type === "short") {
+          doOpenShort(account, sym, execPrice, time, pending.regimeCfg, legacyOpts, pending.reason);
+        } else if (pending.type === "cover") {
+          doCoverShort(account, sym, execPrice, time, "signal", legacyOpts);
+        }
+        delete pendingSignals[sym];
+      }
+    }
 
     // Step 1：推进滑动窗口
     for (const sym of symbols) {
@@ -962,18 +1003,35 @@ export function runBacktest(
         // MTF 过滤：多头信号需高级别 MA 也是多头
         const trendBull = getTrendBull(sym, time);
         if (trendBull === false) continue;
-        doBuy(account, sym, kline.close, time, regimeCfg, legacyOpts, signal.reason);
+        if (signalToNextOpen) {
+          // 延迟到下一根 K 线开盘价成交（消除前视偏差）
+          pendingSignals[sym] = { type: "buy", reason: signal.reason, regimeCfg };
+        } else {
+          doBuy(account, sym, kline.close, time, regimeCfg, legacyOpts, signal.reason);
+        }
       } else if (signal.type === "sell") {
         // 平多（detectSignal 已确保只在持多时返回 sell）
-        doSell(account, sym, kline.close, time, "signal", legacyOpts);
+        if (signalToNextOpen) {
+          pendingSignals[sym] = { type: "sell", reason: signal.reason, regimeCfg };
+        } else {
+          doSell(account, sym, kline.close, time, "signal", legacyOpts);
+        }
       } else if (signal.type === "short") {
         // MTF 过滤：空头信号需高级别 MA 也是空头（反向过滤）
         const trendBull = getTrendBull(sym, time);
         if (trendBull === true) continue; // 大趋势多头，不开空
-        doOpenShort(account, sym, kline.close, time, regimeCfg, legacyOpts, signal.reason);
+        if (signalToNextOpen) {
+          pendingSignals[sym] = { type: "short", reason: signal.reason, regimeCfg };
+        } else {
+          doOpenShort(account, sym, kline.close, time, regimeCfg, legacyOpts, signal.reason);
+        }
       } else {
         // cover — 平空（detectSignal 已确保只在持空时返回 cover）
-        doCoverShort(account, sym, kline.close, time, "signal", legacyOpts);
+        if (signalToNextOpen) {
+          pendingSignals[sym] = { type: "cover", reason: signal.reason, regimeCfg };
+        } else {
+          doCoverShort(account, sym, kline.close, time, "signal", legacyOpts);
+        }
       }
     }
 
@@ -1079,6 +1137,7 @@ export function runBacktest(
       initialUsdt,
       fundingEnabled,
       spreadBps,
+      signalToNextOpen,
     },
   };
 }
