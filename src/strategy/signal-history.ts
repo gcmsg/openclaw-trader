@@ -96,7 +96,13 @@ function appendRecord(record: SignalRecord): void {
 function readAllRecords(): SignalRecord[] {
   if (!fs.existsSync(LOG_FILE)) return [];
   const lines = fs.readFileSync(LOG_FILE, "utf-8").split("\n").filter(Boolean);
-  return lines.map((l) => JSON.parse(l) as SignalRecord);
+  const records: SignalRecord[] = [];
+  for (const l of lines) {
+    try {
+      records.push(JSON.parse(l) as SignalRecord);
+    } catch { /* 跳过损坏行，避免单行错误导致整个历史不可读 */ }
+  }
+  return records;
 }
 
 function rewriteAll(records: SignalRecord[]): void {
