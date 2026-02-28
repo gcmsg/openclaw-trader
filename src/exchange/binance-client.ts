@@ -256,7 +256,7 @@ async function httpsRequestWithRetry(
       let waitMs: number;
       if (isRateLimit) {
         const match = /retry after (\d+)s/.exec(msg);
-        waitMs = match ? parseInt(match[1], 10) * 1000 : 5000;
+        waitMs = match?.[1] ? parseInt(match[1], 10) * 1000 : 5000;
       } else {
         waitMs = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
       }
@@ -291,8 +291,8 @@ export class BinanceClient {
     const parsed: unknown = JSON.parse(raw);
     if (
       typeof parsed !== "object" || parsed === null ||
-      typeof (parsed as Record<string, unknown>).apiKey !== "string" ||
-      typeof (parsed as Record<string, unknown>).secretKey !== "string"
+      typeof (parsed as Record<string, unknown>)["apiKey"] !== "string" ||
+      typeof (parsed as Record<string, unknown>)["secretKey"] !== "string"
     ) {
       throw new Error(`Invalid credentials file (missing apiKey/secretKey): ${credentialsPath}`);
     }
