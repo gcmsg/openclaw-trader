@@ -2,10 +2,16 @@
  * 统一信号引擎（F3）
  *
  * 将 monitor.ts 和 backtest/runner.ts 的核心信号处理逻辑抽取为共享模块：
- *   calculateIndicators → detectSignal → regime → R:R → correlation → protections
+ *   calculateIndicators → regime（P5.3 前置） → detectSignal → R:R → correlation → protections
  *
  * 实时模式 (monitor.ts)：传入 CVD / 资金费率 / BTC 主导率 / heldKlinesMap
  * 回测模式 (runner.ts)：只传 heldKlinesMap，不传实时外部数据
+ *
+ * P5.3 Regime 感知信号过滤（已前置到 detectSignal 之前）：
+ *   trend_signals_only     → 过滤掉 RSI 反转类条件，只保留 MA/MACD/CVD 趋势条件
+ *   reversal_signals_only  → 过滤掉 MA/MACD 趋势类条件，只保留 RSI/价格极值反转条件
+ *   breakout_watch         → 直接拒绝所有信号（等待突破确认）
+ *   reduced_size           → 允许所有信号，但仓位减半
  */
 
 import type { Kline, StrategyConfig, Signal, Indicators, RiskConfig } from "../types.js";
@@ -22,6 +28,99 @@ import type { TradeRecord } from "./protection-manager.js";
 import "../strategies/index.js";
 import { getStrategy } from "../strategies/registry.js";
 import type { StrategyContext } from "../strategies/types.js";
+
+// ─────────────────────────────────────────────────────
+// Regime 信号条件分类（P5.3）
+// ─────────────────────────────────────────────────────
+
+/**
+ * 趋势类信号条件（trend_signals_only 时保留）
+ *   这些条件依赖价格动量/方向，在趋势市有效，在震荡市会产生大量假信号
+ */
+const TREND_CONDITIONS = new Set([
+  "ma_bullish",
+  "ma_bearish",
+  "macd_bullish",
+  "macd_bearish",
+  "cvd_bullish",
+  "cvd_bearish",
+  "volume_spike",
+  // RSI 守卫条件：防止在超买超卖区域开趋势仓（趋势市仍然有用）
+  "rsi_not_overbought",
+  "rsi_not_oversold",
+  // 资金费率条件：成本管控，趋势市适用
+  "funding_rate_overlong",
+  "funding_rate_overshort",
+]);
+
+/**
+ * 反转类信号条件（reversal_signals_only 时保留）
+ *   这些条件依赖价格极值/均值回归，在震荡市有效，在趋势市会逆势操作
+ */
+const REVERSAL_CONDITIONS = new Set([
+  "rsi_oversold",
+  "rsi_overbought",
+  "rsi_bullish_zone",
+  "rsi_not_overbought",
+  "rsi_not_oversold",
+  "rsi_overbought_exit",
+  "rsi_oversold_exit",
+  // 资金费率：也是反转触发器（资金费率极端 → 拥挤交易反转）
+  "funding_rate_overlong",
+  "funding_rate_overshort",
+  // CVD：也可用于反转判断（卖压/买压极值）
+  "cvd_bullish",
+  "cvd_bearish",
+]);
+
+type SignalConditionSet = StrategyConfig["signals"];
+
+/**
+ * 根据 signalFilter 过滤信号条件集。
+ *
+ * - trend_signals_only：只保留 TREND_CONDITIONS 中的条件
+ * - reversal_signals_only：只保留 REVERSAL_CONDITIONS 中的条件
+ * - 其他：保持原样（返回原对象）
+ *
+ * 如果 cfg 配置了 regime_strategies[signalFilter]，则 YAML 显式覆盖优先。
+ */
+function applyRegimeSignalFilter(
+  cfg: StrategyConfig,
+  signalFilter: string
+): SignalConditionSet {
+  // YAML 显式覆盖优先（regime_strategies 配置了就直接用）
+  const explicit = cfg.regime_strategies?.[signalFilter];
+  if (explicit) {
+    return explicit.signals;
+  }
+
+  // 自动分类过滤（auto-categorization）
+  const filterFn = (keep: Set<string>) =>
+    (conditions: string[]): string[] => conditions.filter((c) => keep.has(c));
+
+  if (signalFilter === "trend_signals_only") {
+    const f = filterFn(TREND_CONDITIONS);
+    return {
+      buy: f(cfg.signals.buy),
+      sell: f(cfg.signals.sell),
+      short: cfg.signals.short ? f(cfg.signals.short) : [],
+      cover: cfg.signals.cover ? f(cfg.signals.cover) : [],
+    };
+  }
+
+  if (signalFilter === "reversal_signals_only") {
+    const f = filterFn(REVERSAL_CONDITIONS);
+    return {
+      buy: f(cfg.signals.buy),
+      sell: f(cfg.signals.sell),
+      short: cfg.signals.short ? f(cfg.signals.short) : [],
+      cover: cfg.signals.cover ? f(cfg.signals.cover) : [],
+    };
+  }
+
+  // all / reduced_size → 原样返回
+  return cfg.signals;
+}
 
 // ─────────────────────────────────────────────────────
 // Types
@@ -112,6 +211,28 @@ export function processSignal(
   if (external.btcDominance !== undefined) indicators.btcDominance = external.btcDominance;
   if (external.btcDomChange !== undefined) indicators.btcDomChange = external.btcDomChange;
 
+  // ── 2b. Regime 前置分类（P5.3）─────────────────────────
+  //
+  // 前置目的：让 regime.signalFilter 能在信号检测（步骤 3）之前过滤信号条件集。
+  // 以前 regime 在步骤 4 才检测，只能影响 risk 参数，无法过滤信号条件 —— 这是 Bug。
+  //
+  // 激活条件（保持向后兼容）：
+  //   cfg.regime_strategies 有显式映射 → 激活信号条件过滤
+  //   未配置时：regime 只影响 risk 参数（旧行为），不过滤信号条件。
+  //   （如需自动分类过滤，在 YAML 中配置 regime_strategies 任意一条即可）
+  const regime = classifyRegime(klines);
+  const regimeSigFilterEnabled =
+    cfg.regime_strategies !== undefined && Object.keys(cfg.regime_strategies).length > 0;
+  const effectiveSignals =
+    regimeSigFilterEnabled && regime.confidence >= 60
+      ? applyRegimeSignalFilter(cfg, regime.signalFilter)
+      : cfg.signals;
+  // 把过滤后的信号条件合并成新 cfg（只影响 signals 字段，其余不变）
+  const cfgWithRegimeSignals: StrategyConfig =
+    effectiveSignals !== cfg.signals
+      ? { ...cfg, signals: effectiveSignals }
+      : cfg;
+
   // ── 3. 信号检测 ───────────────────────────────────────
   //
   // F4 Strategy Plugin 支持：
@@ -126,7 +247,7 @@ export function processSignal(
     const plugin = getStrategy(strategyId);
     const ctx: StrategyContext = {
       klines,
-      cfg,
+      cfg: cfgWithRegimeSignals,   // 传入 regime 过滤后的信号条件
       indicators,
       ...(external.currentPosSide !== undefined ? { currentPosSide: external.currentPosSide } : {}),
     };
@@ -141,7 +262,7 @@ export function processSignal(
     };
   } else {
     // ── 默认路径（现有逻辑，完全不变）──────────────
-    signal = detectSignal(symbol, indicators, cfg, external.currentPosSide);
+    signal = detectSignal(symbol, indicators, cfgWithRegimeSignals, external.currentPosSide);
   }
 
   if (signal.type === "none" || signal.type === "sell" || signal.type === "cover") {
@@ -160,8 +281,8 @@ export function processSignal(
   let effectivePositionRatio: number | undefined;
   let regimeLabel: string | undefined;
 
-  // ── 4a. Regime 感知过滤 ────────────────────────────────
-  const regime = classifyRegime(klines);
+  // ── 4a. Regime 感知过滤 ─────────────────────────────────
+  // regime 已在步骤 2b 前置计算，此处直接复用（无需重复调用 classifyRegime）
   if (regime.confidence >= 60) {
     regimeLabel = regime.label;
 

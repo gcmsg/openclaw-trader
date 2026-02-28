@@ -309,6 +309,36 @@ export interface StrategyConfig {
    *         "30": 0.01
    */
   regime_overrides?: Partial<Record<string, Partial<RiskConfig>>>;
+  /**
+   * Regime 自适应信号条件覆盖（P5.3）
+   *
+   * 当检测到特定市场状态时，自动切换信号条件集。
+   * key = SignalFilter（"trend_signals_only" | "reversal_signals_only" | "reduced_size" | "all"）
+   * value = { signals: { buy, sell, short?, cover? } }（覆盖整个信号条件数组）
+   *
+   * 如果不配置，系统会自动分类：
+   *   trend_signals_only     → 只保留 MA/MACD/CVD 趋势信号，过滤 RSI 反转信号
+   *   reversal_signals_only  → 只保留 RSI/价格极值反转信号，过滤 MA/MACD 趋势信号
+   *
+   * 示例（趋势市用 MA，震荡市用 RSI）：
+   *   regime_strategies:
+   *     trend_signals_only:
+   *       signals:
+   *         buy: ["ma_bullish", "rsi_not_overbought"]
+   *         sell: ["ma_bearish"]
+   *     reversal_signals_only:
+   *       signals:
+   *         buy: ["rsi_oversold", "ma_bullish"]
+   *         sell: ["rsi_overbought"]
+   */
+  regime_strategies?: Partial<Record<string, {
+    signals: {
+      buy: string[];
+      sell: string[];
+      short?: string[];
+      cover?: string[];
+    };
+  }>>;
   /** 集成投票配置。strategy_id = "ensemble" 时使用 */
   ensemble?: EnsembleConfig;
 }
