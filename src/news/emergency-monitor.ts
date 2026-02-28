@@ -26,10 +26,10 @@ import { spawnSync } from "child_process";
 import { getLatestNews } from "./fetcher.js";
 import { writeSentimentCache } from "./sentiment-cache.js";
 import { ping } from "../health/heartbeat.js";
+import { createLogger } from "../logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EMERGENCY_PATH = path.resolve(__dirname, "../../logs/news-emergency.json");
-const LOG_PATH = path.resolve(__dirname, "../../logs/news-monitor.log");
 
 const OPENCLAW_BIN = process.env["OPENCLAW_BIN"] ?? "openclaw";
 const GATEWAY_TOKEN = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
@@ -110,11 +110,7 @@ export function scanEmergencyKeywords(text: string): string[] {
 
 // ─── 通知 ─────────────────────────────────────────────
 
-function log(msg: string): void {
-  const line = `[${new Date().toISOString()}] [emergency] ${msg}`;
-  console.log(line);
-  fs.appendFileSync(LOG_PATH, line + "\n");
-}
+const log = createLogger("emergency", path.resolve(__dirname, "../../logs/news-monitor.log"));
 
 function sendAlert(message: string): void {
   try {
@@ -138,7 +134,7 @@ export async function checkEmergencyNews(): Promise<EmergencyCheckResult> {
   // 检查现有 halt 状态（可能已过期）
   const existing = readEmergencyHalt();
   if (existing.halt) {
-    log(`⛔ 紧急暂停仍然有效：${existing.reason}`);
+    log.info(`⛔ 紧急暂停仍然有效：${existing.reason}`);
     return { halt: true, triggered: false, matchedKeywords: existing.keywords };
   }
 
@@ -147,7 +143,7 @@ export async function checkEmergencyNews(): Promise<EmergencyCheckResult> {
   try {
     news = await getLatestNews(30);
   } catch (err: unknown) {
-    log(`⚠️ 新闻拉取失败：${String(err)}`);
+    log.warn(`⚠️ 新闻拉取失败：${String(err)}`);
     return { halt: false, triggered: false, matchedKeywords: [] };
   }
 
@@ -159,7 +155,7 @@ export async function checkEmergencyNews(): Promise<EmergencyCheckResult> {
     const matched = scanEmergencyKeywords(item.title);
     if (matched.length >= 2) {  // 至少 2 个关键词才触发（减少误报）
       const reason = `突发高危事件：${item.title}`;
-      log(`🚨 紧急关键词匹配：${matched.join(", ")} | ${item.title}`);
+      log.warn(`🚨 紧急关键词匹配：${matched.join(", ")} | ${item.title}`);
 
       // 1. 写入 halt 状态
       writeEmergencyHalt(reason, matched, item.url);
@@ -189,7 +185,7 @@ export async function checkEmergencyNews(): Promise<EmergencyCheckResult> {
     }
   }
 
-  log(`✅ 无高危新闻（扫描 ${scanTargets.length} 条）`);
+  log.info(`✅ 无高危新闻（扫描 ${scanTargets.length} 条）`);
   return { halt: false, triggered: false, matchedKeywords: [] };
 }
 
@@ -198,21 +194,21 @@ export async function checkEmergencyNews(): Promise<EmergencyCheckResult> {
 if (process.argv[1]?.includes("emergency-monitor")) {
   const taskName = "news_emergency";
   const done = ping(taskName);
-  log("── 突发新闻监控开始 ──");
+  log.info("── 突发新闻监控开始 ──");
   checkEmergencyNews()
     .then((result) => {
       if (result.triggered) {
-        log(`🚨 触发紧急暂停！关键词：${result.matchedKeywords.join(", ")}`);
+        log.warn(`🚨 触发紧急暂停！关键词：${result.matchedKeywords.join(", ")}`);
       } else if (result.halt) {
-        log("⛔ 紧急暂停仍有效");
+        log.info("⛔ 紧急暂停仍有效");
       } else {
-        log("✅ 无异常");
+        log.info("✅ 无异常");
       }
       done();
     })
     .catch((err: unknown) => {
       const msg = String(err);
-      log(`❌ Fatal: ${msg}`);
+      log.error(`❌ Fatal: ${msg}`);
       done(msg);
       process.exit(1);
     });

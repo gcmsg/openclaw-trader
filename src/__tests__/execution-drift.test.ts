@@ -25,6 +25,7 @@ const LOGS_DIR = path.resolve(__dirname, "../../logs");
 const tempFiles: string[] = [];
 
 function writeTempScenario(scenarioId: string, trades: unknown[]): void {
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
   const filePath = path.join(LOGS_DIR, `paper-${scenarioId}.json`);
   const account = {
     initialUsdt: 10000,

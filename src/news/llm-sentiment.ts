@@ -23,7 +23,6 @@ import type { SentimentLabel, SentimentEntry } from "./sentiment-cache.js";
 // ─────────────────────────────────────────────────────
 
 const GATEWAY_URL = process.env["OPENCLAW_GATEWAY_URL"] ?? "http://127.0.0.1:18789";
-const GATEWAY_TOKEN = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
 const LLM_MODEL = "openclaw:main";
 const LLM_TIMEOUT_MS = 30_000;
 
@@ -103,7 +102,8 @@ export async function analyzeSentimentWithLLM(params: {
   btcDominance: number;
   marketCapChange: number;
 }): Promise<LLMSentimentResult | null> {
-  if (!GATEWAY_TOKEN) {
+  const token = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
+  if (!token) {
     console.warn("⚠️  OPENCLAW_GATEWAY_TOKEN 未配置，LLM 情绪分析跳过");
     return null;
   }
@@ -121,7 +121,7 @@ export async function analyzeSentimentWithLLM(params: {
       },
       {
         headers: {
-          Authorization: `Bearer ${GATEWAY_TOKEN}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         timeout: LLM_TIMEOUT_MS,

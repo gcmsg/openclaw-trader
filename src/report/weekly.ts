@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 import { loadAccount, type PaperTrade } from "../paper/account.js";
 import { loadPaperConfig, loadStrategyProfile } from "../config/loader.js";
 import { ping } from "../health/heartbeat.js";
+import { createLogger } from "../logger.js";
 
 // ─────────────────────────────────────────────────────
 // 轻量绩效指标（从 PaperTrade 直接计算，无需完整回测数据）
@@ -77,15 +78,9 @@ function calcPerformanceMetrics(
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPORT_DIR = path.resolve(__dirname, "../../logs/reports");
-const LOG_PATH = path.resolve(__dirname, "../../logs/weekly-report.log");
 const OPENCLAW_BIN = process.env["OPENCLAW_BIN"] ?? "openclaw";
 const GATEWAY_TOKEN = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
-
-function log(msg: string): void {
-  const line = `[${new Date().toISOString()}] ${msg}`;
-  console.log(line);
-  fs.appendFileSync(LOG_PATH, line + "\n");
-}
+const log = createLogger("weekly", path.resolve(__dirname, "../../logs/weekly-report.log"));
 
 // ─────────────────────────────────────────────────────
 // 统计计算
@@ -200,7 +195,7 @@ interface ScenarioReport {
 // ─────────────────────────────────────────────────────
 
 export function generateWeeklyReport(): ScenarioReport[] {
-  log("─── 开始生成周报 ───");
+  log.info("─── 开始生成周报 ───");
 
   const paperCfg = loadPaperConfig();
   const now = Date.now();
@@ -238,7 +233,7 @@ export function generateWeeklyReport(): ScenarioReport[] {
       metrics: calcPerformanceMetrics(account.trades.filter((t) => t.timestamp >= weekAgo), account.initialUsdt),
     });
 
-    log(
+    log.info(
       `场景 [${scenario.id}]: ${stats.totalTrades} 笔交易, 盈亏 ${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(2)}`
     );
   }
@@ -250,7 +245,7 @@ export function generateWeeklyReport(): ScenarioReport[] {
     path.join(REPORT_DIR, filename),
     JSON.stringify({ generatedAt: new Date().toISOString(), reports }, null, 2)
   );
-  log(`报告已保存: ${filename}`);
+  log.info(`报告已保存: ${filename}`);
 
   return reports;
 }
@@ -321,9 +316,9 @@ export function sendWeeklyReportToAgent(reports: ScenarioReport[]): void {
 
   const result = spawnSync(OPENCLAW_BIN, args, { encoding: "utf-8", timeout: 15000 });
   if (result.status !== 0) {
-    log(`❌ 发送失败: ${result.stderr}`);
+    log.error(`❌ 发送失败: ${result.stderr}`);
   } else {
-    log("✅ 周报已发送给 AI Agent");
+    log.info("✅ 周报已发送给 AI Agent");
   }
 }
 
@@ -335,4 +330,4 @@ const done = ping("weekly_report");
 const reports = generateWeeklyReport();
 sendWeeklyReportToAgent(reports);
 done();
-log("─── 周报生成完成 ───\n");
+log.info("─── 周报生成完成 ───\n");

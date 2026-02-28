@@ -11,19 +11,14 @@ import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
 import { getTaskHealth, type TaskStatus } from "./heartbeat.js";
 import type { StrategyConfig } from "../types.js";
+import { createLogger } from "../logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.resolve(__dirname, "../../config/strategy.yaml");
-const LOG_PATH = path.resolve(__dirname, "../../logs/health.log");
+const log = createLogger("health", path.resolve(__dirname, "../../logs/health.log"));
 
 const OPENCLAW_BIN = process.env["OPENCLAW_BIN"] ?? "openclaw";
 const GATEWAY_TOKEN = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
-
-function log(msg: string): void {
-  const line = `[${new Date().toISOString()}] ${msg}`;
-  console.log(line);
-  fs.appendFileSync(LOG_PATH, line + "\n");
-}
 
 function notify(message: string): void {
   const args = ["system", "event", "--mode", "now"];
@@ -40,7 +35,7 @@ const STATUS_EMOJI: Record<TaskStatus, string> = {
 };
 
 function main(): void {
-  log("─── 健康检查开始 ───");
+  log.info("─── 健康检查开始 ───");
 
   const cfg = parse(fs.readFileSync(CONFIG_PATH, "utf-8")) as StrategyConfig;
   const schedule = cfg.schedule ?? {};
@@ -65,7 +60,10 @@ function main(): void {
       enabled: taskCfg.enabled,
     });
 
-    log(`${STATUS_EMOJI[health.status]} ${taskName}: ${health.message}`);
+    const statusMsg = `${STATUS_EMOJI[health.status]} ${taskName}: ${health.message}`;
+    if (health.status === "error") log.error(statusMsg);
+    else if (health.status === "warn") log.warn(statusMsg);
+    else log.info(statusMsg);
   }
 
   const hasIssues = results.some((r) => r.status === "error" || r.status === "warn");
@@ -83,12 +81,12 @@ function main(): void {
 
     lines.push(``, `请检查对应日志文件排查原因。`);
     notify(lines.join("\n"));
-    log("⚠️ 已发送告警通知");
+    log.warn("⚠️ 已发送告警通知");
   } else if (hasNever) {
     // 从未运行的任务，只在日志里记录，不打扰主人
-    log("🔘 部分任务从未执行（可能是刚部署）");
+    log.info("🔘 部分任务从未执行（可能是刚部署）");
   } else {
-    log("✅ 所有任务运行正常");
+    log.info("✅ 所有任务运行正常");
   }
 
   // 保存健康报告快照
@@ -98,12 +96,12 @@ function main(): void {
     JSON.stringify({ checkedAt: new Date().toISOString(), results }, null, 2)
   );
 
-  log("─── 健康检查完成 ───\n");
+  log.info("─── 健康检查完成 ───\n");
 }
 
 try {
   main();
 } catch (err: unknown) {
-  log(`Fatal: ${String(err)}`);
+  log.error(`Fatal: ${String(err)}`);
   process.exit(1);
 }

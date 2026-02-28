@@ -30,23 +30,14 @@ import { checkCorrelation } from "../strategy/correlation.js";
 import { loadAccount } from "../paper/account.js";
 import { ping } from "../health/heartbeat.js";
 import { loadRuntimeConfigs } from "../config/loader.js";
+import { createLogger } from "../logger.js";
 import type { RuntimeConfig, Signal, Indicators, Kline } from "../types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOG_PATH = path.resolve(__dirname, "../../logs/ws-monitor.log");
+const log = createLogger("ws-monitor", path.resolve(__dirname, "../../logs/ws-monitor.log"));
 
 function getStatePath(scenarioId: string): string {
   return path.resolve(__dirname, `../logs/state-${scenarioId}.json`);
-}
-
-// ─────────────────────────────────────────────────────
-// 工具
-// ─────────────────────────────────────────────────────
-
-function log(msg: string): void {
-  const line = `[${new Date().toISOString()}] ${msg}`;
-  console.log(line);
-  fs.appendFileSync(LOG_PATH, line + "\n");
 }
 
 interface MonitorState {
@@ -102,9 +93,9 @@ async function preloadKlines(
         try {
           const klines = await getKlines(symbol, interval, limit);
           buffer.set(symbol, klines);
-          log(`预加载 ${symbol} K 线 ${klines.length} 根`);
+          log.info(`预加载 ${symbol} K 线 ${klines.length} 根`);
         } catch (err: unknown) {
-          log(`预加载 ${symbol} 失败: ${String(err)}`);
+          log.error(`预加载 ${symbol} 失败: ${String(err)}`);
         }
       })
     );
@@ -163,12 +154,12 @@ async function runStrategy(
       );
       if (trendInd) {
         mtfTrendBull = trendInd.maShort > trendInd.maLong;
-        log(
+        log.info(
           `[${cfg.paper.scenarioId}] ${symbol}: MTF(${cfg.trend_timeframe}) → ${mtfTrendBull ? "多头✅" : "空头🚫"}`
         );
       }
     } catch {
-      log(`[${cfg.paper.scenarioId}] ${symbol}: MTF 获取失败，跳过趋势过滤`);
+      log.warn(`[${cfg.paper.scenarioId}] ${symbol}: MTF 获取失败，跳过趋势过滤`);
     }
   }
 
@@ -178,20 +169,20 @@ async function runStrategy(
 
   // MTF 过滤
   if (signal.type === "buy" && mtfTrendBull === false) {
-    log(
+    log.info(
       `[${cfg.paper.scenarioId}] ${symbol}: 🚫 MTF 过滤（${cfg.trend_timeframe} 空头），忽略买入`
     );
     return;
   }
   if (signal.type === "short" && mtfTrendBull === true) {
-    log(
+    log.info(
       `[${cfg.paper.scenarioId}] ${symbol}: 🚫 MTF 过滤（${cfg.trend_timeframe} 多头），忽略开空`
     );
     return;
   }
 
   const trend = indicators.maShort > indicators.maLong ? "多头" : "空头";
-  log(
+  log.info(
     `[${cfg.paper.scenarioId}] ${symbol}: 价格=${indicators.price.toFixed(4)}, ` +
       `RSI=${indicators.rsi.toFixed(1)}, ${trend}, 信号=${signal.type}`
   );
@@ -223,7 +214,7 @@ async function runStrategy(
       );
       const corrResult = checkCorrelation(symbol, klines, heldKlines, corrCfg.threshold);
       if (corrResult.correlated) {
-        log(`[${cfg.paper.scenarioId}] ${symbol}: 🔗 相关性过滤 → ${corrResult.reason}`);
+        log.info(`[${cfg.paper.scenarioId}] ${symbol}: 🔗 相关性过滤 → ${corrResult.reason}`);
         return;
       }
     }
@@ -232,7 +223,7 @@ async function runStrategy(
   // 情绪门控
   const newsReport = loadNewsReport();
   const gate = evaluateSentimentGate(signal, newsReport, cfg.risk.position_ratio);
-  log(`[${cfg.paper.scenarioId}] ${symbol}: 情绪门控 → ${gate.action}（${gate.reason}）`);
+  log.info(`[${cfg.paper.scenarioId}] ${symbol}: 情绪门控 → ${gate.action}（${gate.reason}）`);
   if (gate.action === "skip") return;
 
   if (cfg.mode === "paper") {
@@ -244,11 +235,11 @@ async function runStrategy(
     const result = handleSignal(signal, adjustedCfg);
 
     if (result.skipped) {
-      log(`[${cfg.paper.scenarioId}] ${symbol}: ⏭️ 跳过 — ${result.skipped}`);
+      log.info(`[${cfg.paper.scenarioId}] ${symbol}: ⏭️ 跳过 — ${result.skipped}`);
     }
     if (result.trade) {
       const action = result.trade.side === "buy" ? "买入(开多)" : result.trade.side === "short" ? "开空" : result.trade.side === "cover" ? "平空" : "卖出(平多)";
-      log(
+      log.info(
         `[${cfg.paper.scenarioId}] ${symbol}: 📝 模拟${action} @${result.trade.price.toFixed(4)}`
       );
       notifyPaperTrade(result.trade, result.account);
@@ -286,7 +277,7 @@ async function checkExits(
       reason === "take_profit" ? "止盈" :
       reason === "trailing_stop" ? "追踪止损" :
       reason === "time_stop" ? "时间止损" : "止损";
-    log(`[${sid}] ${symbol}: ${emoji} ${label}触发（${pnlPercent.toFixed(2)}%）`);
+    log.info(`[${sid}] ${symbol}: ${emoji} ${label}触发（${pnlPercent.toFixed(2)}%）`);
     if (reason !== "take_profit") {
       // stop_loss / trailing_stop / time_stop 均发送止损通知
       notifyStopLoss(symbol, trade.price / (1 + pnlPercent / 100), trade.price, pnlPercent / 100);
@@ -311,11 +302,11 @@ async function checkExits(
   }
 
   if (checkDailyLossLimit(currentPrices, cfg)) {
-    log(`[${sid}] ⚠️ 今日亏损达 ${cfg.risk.daily_loss_limit_percent}%，暂停当日开仓`);
+    log.warn(`[${sid}] ⚠️ 今日亏损达 ${cfg.risk.daily_loss_limit_percent}%，暂停当日开仓`);
   }
 
   if (checkMaxDrawdown(currentPrices, cfg)) {
-    log(`[${sid}] 🚨 总亏损超限，场景已暂停！`);
+    log.error(`[${sid}] 🚨 总亏损超限，场景已暂停！`);
     state.paused = true;
     saveState(sid, state);
     notifyError(
@@ -327,7 +318,7 @@ async function checkExits(
   // 定期账户汇报
   const intervalMs = cfg.paper.report_interval_hours * 3600000;
   if (intervalMs > 0 && Date.now() - state.lastReportAt >= intervalMs) {
-    log(`[${sid}] 📊 发送定期账户汇报`);
+    log.info(`[${sid}] 📊 发送定期账户汇报`);
     const msg = formatSummaryMessage(currentPrices, cfg);
     const { spawnSync } = await import("child_process");
     const OPENCLAW_BIN = process.env["OPENCLAW_BIN"] ?? "openclaw";
@@ -346,13 +337,13 @@ async function checkExits(
 // ─────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  log("─── WebSocket 监控启动 ───");
+  log.info("─── WebSocket 监控启动 ───");
 
   const runtimes = loadRuntimeConfigs();
   const firstRuntime = runtimes[0];
-  if (!firstRuntime) { log("无可用策略配置"); return; }
+  if (!firstRuntime) { log.error("无可用策略配置"); return; }
   if (!firstRuntime.strategy.enabled) {
-    log("策略已禁用，退出");
+    log.info("策略已禁用，退出");
     return;
   }
 
@@ -368,8 +359,8 @@ async function main(): Promise<void> {
     })
   );
 
-  log(`场景: ${runtimes.map((r) => r.paper.scenarioId).join(", ")}`);
-  log(`监听 symbol: ${allSymbols.join(", ")} | 时间框架: ${timeframe} | 缓冲 ${maxLimit} 根`);
+  log.info(`场景: ${runtimes.map((r) => r.paper.scenarioId).join(", ")}`);
+  log.info(`监听 symbol: ${allSymbols.join(", ")} | 时间框架: ${timeframe} | 缓冲 ${maxLimit} 根`);
 
   // 预加载历史 K 线（REST）
   const buffer = await preloadKlines(allSymbols, timeframe, maxLimit);
@@ -383,7 +374,7 @@ async function main(): Promise<void> {
   }
 
   // ── WebSocket 连接 ──────────────────────────────────
-  const wsManager = new BinanceWsManager(allSymbols, timeframe, log);
+  const wsManager = new BinanceWsManager(allSymbols, timeframe, (msg: string) => log.info(msg));
 
   wsManager.subscribe(async ({ symbol, kline, isClosed }) => {
     // 无论是否收盘都更新价格（止损响应更快）
@@ -391,7 +382,7 @@ async function main(): Promise<void> {
 
     if (!isClosed) return; // 只在 K 线收盘时运行策略
 
-    log(`K 线收盘: ${symbol} close=${kline.close.toFixed(4)}`);
+    log.info(`K 线收盘: ${symbol} close=${kline.close.toFixed(4)}`);
     appendKline(buffer, symbol, kline, maxLimit);
 
     const klines = buffer.get(symbol);
@@ -407,7 +398,7 @@ async function main(): Promise<void> {
         saveState(cfg.paper.scenarioId, state);
       } catch (err: unknown) {
         const error = err instanceof Error ? err : new Error(String(err));
-        log(`[${cfg.paper.scenarioId}] ${symbol}: 策略错误 - ${error.message}`);
+        log.error(`[${cfg.paper.scenarioId}] ${symbol}: 策略错误 - ${error.message}`);
         if (cfg.notify.on_error) notifyError(symbol, error);
       }
     }
@@ -426,7 +417,7 @@ async function main(): Promise<void> {
 
   // ── 优雅退出 ─────────────────────────────────────────
   function shutdown(signal: string): void {
-    log(`收到 ${signal}，正在关闭...`);
+    log.info(`收到 ${signal}，正在关闭...`);
     wsManager.stop();
     process.exit(0);
   }
@@ -434,7 +425,7 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => { shutdown("SIGTERM"); });
   process.on("SIGINT", () => { shutdown("SIGINT"); });
 
-  log(`✅ WebSocket 监控运行中，等待 K 线收盘事件...`);
+  log.info(`✅ WebSocket 监控运行中，等待 K 线收盘事件...`);
 }
 
 process.on("unhandledRejection", (reason: unknown) => {

@@ -21,17 +21,12 @@ import { ping } from "../health/heartbeat.js";
 import { analyzeSentimentWithLLM, llmResultToEntry } from "./llm-sentiment.js";
 import { writeSentimentCache } from "./sentiment-cache.js";
 import type { StrategyConfig } from "../types.js";
+import { createLogger } from "../logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const log = createLogger("news", path.resolve(__dirname, "../../logs/news-monitor.log"));
 const CONFIG_PATH = path.resolve(__dirname, "../../config/strategy.yaml");
 const STATE_PATH = path.resolve(__dirname, "../../logs/news-state.json");
-const LOG_PATH = path.resolve(__dirname, "../../logs/news-monitor.log");
-
-function log(msg: string): void {
-  const line = `[${new Date().toISOString()}] ${msg}`;
-  console.log(line);
-  fs.appendFileSync(LOG_PATH, line + "\n");
-}
 
 function loadConfig(): StrategyConfig {
   return parse(fs.readFileSync(CONFIG_PATH, "utf-8")) as StrategyConfig;
@@ -115,7 +110,7 @@ function assessMarketSentiment(
 }
 
 async function main(): Promise<void> {
-  log("─── 新闻情绪扫描开始 ───");
+  log.info("─── 新闻情绪扫描开始 ───");
   const done = ping("news_collector");
 
   const cfg = loadConfig();
@@ -129,24 +124,24 @@ async function main(): Promise<void> {
     getPriceChanges(cfg.symbols),
   ]);
 
-  log(`恐惧贪婪指数: ${fearGreed.value} (${fearGreed.label})`);
-  log(`市值变化24h: ${globalMarket.marketCapChangePercent24h.toFixed(2)}%`);
-  log(`获取新闻: ${news.length} 条`);
+  log.info(`恐惧贪婪指数: ${fearGreed.value} (${fearGreed.label})`);
+  log.info(`市值变化24h: ${globalMarket.marketCapChangePercent24h.toFixed(2)}%`);
+  log.info(`获取新闻: ${news.length} 条`);
 
   const importantNews = filterImportantNews(news);
-  log(`重要新闻: ${importantNews.length} 条`);
+  log.info(`重要新闻: ${importantNews.length} 条`);
 
   // 检测价格异动（24h 涨跌超过 5%）
   const bigMovers = priceChanges.filter((p) => Math.abs(p.priceChangePercent) >= 5);
 
   const sentiment = assessMarketSentiment(fearGreed, globalMarket, priceChanges);
-  log(`市场情绪: ${sentiment}`);
+  log.info(`市场情绪: ${sentiment}`);
 
   // 恐惧贪婪指数变化超过 15 点，额外提醒
   const fgDelta = fearGreed.value - state.lastFearGreed;
   const fgAlert = Math.abs(fgDelta) >= 15;
   if (fgAlert) {
-    log(`⚠️ 恐惧贪婪指数大幅变化: ${state.lastFearGreed} → ${fearGreed.value}`);
+    log.warn(`⚠️ 恐惧贪婪指数大幅变化: ${state.lastFearGreed} → ${fearGreed.value}`);
   }
 
   // 将报告写入文件（由 OpenClaw Agent 读取分析）
@@ -163,7 +158,7 @@ async function main(): Promise<void> {
     fgDelta,
   };
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-  log(`报告已写入: ${reportPath}`);
+  log.info(`报告已写入: ${reportPath}`);
 
   // ── LLM 语义情绪分析（自动化，非阻塞失败）──────────────────
   // 每次 news_collector 跑完后自动分析，更新 6h 情绪缓存
@@ -180,13 +175,13 @@ async function main(): Promise<void> {
     if (llmResult) {
       const entry = llmResultToEntry(llmResult, headlines.length);
       writeSentimentCache(entry);
-      log(`🧠 LLM 情绪分析完成: ${entry.label} (${entry.score}/10)`);
+      log.info(`🧠 LLM 情绪分析完成: ${entry.label} (${entry.score}/10)`);
     } else {
-      log("⚠️ LLM 情绪分析跳过（未配置 Gateway Token 或返回空）");
+      log.warn("⚠️ LLM 情绪分析跳过（未配置 Gateway Token 或返回空）");
     }
   } catch (err: unknown) {
     // LLM 失败不阻断主流程，继续使用关键词降级
-    log(`⚠️ LLM 情绪分析失败（降级到关键词）: ${err instanceof Error ? err.message : String(err)}`);
+    log.warn(`⚠️ LLM 情绪分析失败（降级到关键词）: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // ── 更新状态 ────────────────────────────────────────
@@ -196,7 +191,7 @@ async function main(): Promise<void> {
   });
 
   done();
-  log("─── 新闻情绪扫描完成 ───\n");
+  log.info("─── 新闻情绪扫描完成 ───\n");
 
 
 }

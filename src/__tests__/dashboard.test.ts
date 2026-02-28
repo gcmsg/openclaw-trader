@@ -5,7 +5,7 @@
  * 使用 vitest mock 隔离文件系统和配置加载。
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   buildEquityCurve,
   buildPerfData,
@@ -89,48 +89,61 @@ vi.mock("../paper/account.js", () => ({
   })),
 }));
 
-// Mock fs (signal-history.jsonl 可能不存在)
-vi.mock("fs", async () => {
-  const actual = await vi.importActual<typeof import("fs")>("fs");
-  return {
-    ...actual,
-    readFileSync: vi.fn((filePath: unknown, ...args: unknown[]) => {
-      const fp = String(filePath);
-      if (fp.includes("signal-history.jsonl")) {
-        // 返回 2 条信号
-        return [
-          JSON.stringify({
-            id: "S001",
-            symbol: "BTCUSDT",
-            type: "buy",
-            entryPrice: 40000,
-            entryTime: Date.now() - 86400_000,
-            status: "closed",
-            pnl: 50,
-            pnlPercent: 2.5,
-          }),
-          JSON.stringify({
-            id: "S002",
-            symbol: "ETHUSDT",
-            type: "sell",
-            entryPrice: 2600,
-            entryTime: Date.now() - 3600_000,
-            status: "open",
-          }),
-        ].join("\n");
-      }
-      if (fp.includes("monitor.log")) {
-        return [
-          "2026-02-27 09:00:00 [INFO] monitor started",
-          "2026-02-27 09:01:00 [WARN] RSI approaching overbought",
-          "2026-02-27 09:02:00 [ERROR] Failed to fetch price for AVAXUSDT",
-          "2026-02-27 09:03:00 [INFO] signal: buy BTCUSDT",
-        ].join("\n");
-      }
-      // delegate to actual for other files
-      return (actual.readFileSync as (...a: unknown[]) => unknown)(filePath, ...args);
+// 写入临时测试数据文件（替代 vi.mock("fs")，避免 ESM mock 拦截不到 readFileSync）
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __test_dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOGS_DIR = path.resolve(__test_dirname, "../../logs");
+
+const SIGNAL_HISTORY_FILE = path.join(LOGS_DIR, "signal-history.jsonl");
+const MONITOR_LOG_FILE = path.join(LOGS_DIR, "monitor.log");
+const tempTestFiles: string[] = [];
+
+beforeEach(() => {
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+
+  // signal-history.jsonl
+  const signalData = [
+    JSON.stringify({
+      id: "S001",
+      symbol: "BTCUSDT",
+      type: "buy",
+      entryPrice: 40000,
+      entryTime: Date.now() - 86400_000,
+      status: "closed",
+      pnl: 50,
+      pnlPercent: 2.5,
     }),
-  };
+    JSON.stringify({
+      id: "S002",
+      symbol: "ETHUSDT",
+      type: "sell",
+      entryPrice: 2600,
+      entryTime: Date.now() - 3600_000,
+      status: "open",
+    }),
+  ].join("\n");
+  fs.writeFileSync(SIGNAL_HISTORY_FILE, signalData);
+  tempTestFiles.push(SIGNAL_HISTORY_FILE);
+
+  // monitor.log
+  const logData = [
+    "2026-02-27 09:00:00 [INFO] monitor started",
+    "2026-02-27 09:01:00 [WARN] RSI approaching overbought",
+    "2026-02-27 09:02:00 [ERROR] Failed to fetch price for AVAXUSDT",
+    "2026-02-27 09:03:00 [INFO] signal: buy BTCUSDT",
+  ].join("\n");
+  fs.writeFileSync(MONITOR_LOG_FILE, logData);
+  tempTestFiles.push(MONITOR_LOG_FILE);
+});
+
+afterEach(() => {
+  for (const f of tempTestFiles) {
+    try { fs.unlinkSync(f); } catch { /* ignore */ }
+  }
+  tempTestFiles.length = 0;
 });
 
 // ─────────────────────────────────────────────────────

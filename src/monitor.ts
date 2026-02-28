@@ -7,6 +7,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createLogger } from "./logger.js";
 import { getKlines } from "./exchange/binance.js";
 import { DataProvider } from "./exchange/data-provider.js";
 
@@ -37,7 +38,7 @@ import { loadRuntimeConfigs } from "./config/loader.js";
 import type { RuntimeConfig, Signal, Indicators, Kline } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOG_PATH = path.resolve(__dirname, "../logs/monitor.log");
+const log = createLogger("monitor", path.resolve(__dirname, "../logs/monitor.log"));
 // 每个场景独立暂停状态：logs/state-{scenarioId}.json
 function getStatePath(scenarioId: string): string {
   return path.resolve(__dirname, `../logs/state-${scenarioId}.json`);
@@ -46,12 +47,6 @@ function getStatePath(scenarioId: string): string {
 // ─────────────────────────────────────────────────────
 // 工具
 // ─────────────────────────────────────────────────────
-
-function log(msg: string): void {
-  const line = `[${new Date().toISOString()}] ${msg}`;
-  console.log(line);
-  fs.appendFileSync(LOG_PATH, line + "\n");
-}
 
 interface MonitorState {
   lastSignals: Record<string, { type: string; timestamp: number }>;
@@ -110,7 +105,7 @@ async function scanSymbol(
     const mtfCheck = await checkMtfFilter(symbol, "buy", cfg, provider);
     const mtfTrendBull = mtfCheck.trendBull;
     if (mtfCheck.trendBull !== null) {
-      log(`${scenarioPrefix}${symbol}: MTF(${cfg.trend_timeframe}) → ${mtfCheck.trendBull ? "多头✅" : "空头🚫"}`);
+      log.info(`${scenarioPrefix}${symbol}: MTF(${cfg.trend_timeframe}) → ${mtfCheck.trendBull ? "多头✅" : "空头🚫"}`);
     }
 
     // ── 构建外部上下文（CVD / 资金费率 / BTC 主导率 / 持仓方向 / 相关性 K 线）──
@@ -123,7 +118,7 @@ async function scanSymbol(
     try {
       const frPct = await fetchFundingRatePct(symbol);
       if (frPct !== undefined) externalFundingRate = frPct;
-    } catch (e: unknown) { log(`${scenarioPrefix}${symbol}: ⚠️ 资金费率获取失败: ${e instanceof Error ? e.message : String(e)}`); }
+    } catch (e: unknown) { log.warn(`${scenarioPrefix}${symbol}: ⚠️ 资金费率获取失败: ${e instanceof Error ? e.message : String(e)}`); }
 
     // BTC 主导率趋势（读历史文件，非阻塞）
     try {
@@ -132,7 +127,7 @@ async function scanSymbol(
         externalBtcDom = domTrend.latest;
         externalBtcDomChange = domTrend.change;
       }
-    } catch (e: unknown) { log(`${scenarioPrefix}${symbol}: ⚠️ BTC 主导率获取失败: ${e instanceof Error ? e.message : String(e)}`); }
+    } catch (e: unknown) { log.warn(`${scenarioPrefix}${symbol}: ⚠️ BTC 主导率获取失败: ${e instanceof Error ? e.message : String(e)}`); }
 
     // 真实 CVD（若 CvdManager 已运行并写入缓存，优先用真实数据）
     try {
@@ -142,7 +137,7 @@ async function scanSymbol(
           Date.now() - realCvd.updatedAt < maxAgeMs) {
         externalCvd = realCvd.cvd;
       }
-    } catch (e: unknown) { log(`${scenarioPrefix}${symbol}: ⚠️ CVD 缓存读取失败: ${e instanceof Error ? e.message : String(e)}`); }
+    } catch (e: unknown) { log.warn(`${scenarioPrefix}${symbol}: ⚠️ CVD 缓存读取失败: ${e instanceof Error ? e.message : String(e)}`); }
 
     // 当前持仓方向 + 持仓 K 线（用于 processSignal 内部的相关性检查）
     const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
@@ -157,7 +152,7 @@ async function scanSymbol(
             // 优先从 DataProvider 取缓存
             const cached = provider.get(sym, cfg.timeframe);
             heldKlinesMap[sym] = cached ?? await getKlines(sym, cfg.timeframe, corrLookback + 1);
-          } catch (e: unknown) { log(`${scenarioPrefix}${symbol}: ⚠️ 相关性K线(${sym})获取失败: ${e instanceof Error ? e.message : String(e)}`); }
+          } catch (e: unknown) { log.warn(`${scenarioPrefix}${symbol}: ⚠️ 相关性K线(${sym})获取失败: ${e instanceof Error ? e.message : String(e)}`); }
         })
       );
     }
@@ -188,7 +183,7 @@ async function scanSymbol(
     const volRatio =
       indicators.avgVolume > 0 ? (indicators.volume / indicators.avgVolume).toFixed(2) : "?";
 
-    log(
+    log.info(
       `${scenarioPrefix}${symbol}: 价格=${indicators.price.toFixed(4)}, ` +
         `MA短=${indicators.maShort.toFixed(4)}, MA长=${indicators.maLong.toFixed(4)}, ` +
         `RSI=${indicators.rsi.toFixed(1)},${macdInfo} 成交量=${volRatio}x, ${trend}, 信号=${signal.type}` +
@@ -196,7 +191,7 @@ async function scanSymbol(
     );
 
     if (rejected) {
-      log(`${scenarioPrefix}${symbol}: 🚫 ${rejectionReason ?? "filtered"}`);
+      log.info(`${scenarioPrefix}${symbol}: 🚫 ${rejectionReason ?? "filtered"}`);
       return;
     }
 
@@ -215,7 +210,7 @@ async function scanSymbol(
     if (signal.type === "buy" || signal.type === "short") {
       const emergencyState = readEmergencyHalt();
       if (emergencyState.halt) {
-        log(`${scenarioPrefix}${symbol}: ⛔ 紧急暂停：${emergencyState.reason ?? "突发高危新闻"}`);
+        log.warn(`${scenarioPrefix}${symbol}: ⛔ 紧急暂停：${emergencyState.reason ?? "突发高危新闻"}`);
         return;
       }
     }
@@ -225,26 +220,26 @@ async function scanSymbol(
       try {
         const eventRisk = checkEventRisk(loadCalendar());
         if (eventRisk.phase === "during") {
-          log(`${scenarioPrefix}${symbol}: ⏸ 事件窗口期（${eventRisk.eventName}），暂停开仓`);
+          log.info(`${scenarioPrefix}${symbol}: ⏸ 事件窗口期（${eventRisk.eventName}），暂停开仓`);
           return;
         }
         // pre / post 阶段：仅日志提示，sentiment gate 会在此基础上进一步调整
         if ((eventRisk.phase === "pre" || eventRisk.phase === "post") && eventRisk.positionRatioMultiplier < 1.0) {
           const baseRatio = portfolioRatioOverride ?? regimeEffectiveRisk.position_ratio;
           const approxRatio = baseRatio * eventRisk.positionRatioMultiplier;
-          log(`${scenarioPrefix}${symbol}: ⚠️ 事件风险期（${eventRisk.eventName}），建议仓位 ≈ ${(approxRatio * 100).toFixed(0)}%（×${eventRisk.positionRatioMultiplier}）`);
+          log.warn(`${scenarioPrefix}${symbol}: ⚠️ 事件风险期（${eventRisk.eventName}），建议仓位 ≈ ${(approxRatio * 100).toFixed(0)}%（×${eventRisk.positionRatioMultiplier}）`);
         }
-      } catch (e: unknown) { log(`${scenarioPrefix}${symbol}: ⚠️ 事件日历加载失败: ${e instanceof Error ? e.message : String(e)}`); }
+      } catch (e: unknown) { log.warn(`${scenarioPrefix}${symbol}: ⚠️ 事件日历加载失败: ${e instanceof Error ? e.message : String(e)}`); }
     }
 
     // MTF 过滤：买入信号且大趋势为空头 → 跳过
     if (signal.type === "buy" && mtfTrendBull === false) {
-      log(`${scenarioPrefix}${symbol}: 🚫 MTF 趋势过滤：${cfg.trend_timeframe} 空头，忽略 1h 买入信号`);
+      log.info(`${scenarioPrefix}${symbol}: 🚫 MTF 趋势过滤：${cfg.trend_timeframe} 空头，忽略 1h 买入信号`);
       return;
     }
     // MTF 过滤：开空信号且大趋势为多头 → 跳过
     if (signal.type === "short" && mtfTrendBull === true) {
-      log(`${scenarioPrefix}${symbol}: 🚫 MTF 趋势过滤：${cfg.trend_timeframe} 多头，忽略 1h 开空信号`);
+      log.info(`${scenarioPrefix}${symbol}: 🚫 MTF 趋势过滤：${cfg.trend_timeframe} 多头，忽略 1h 开空信号`);
       return;
     }
 
@@ -254,7 +249,7 @@ async function scanSymbol(
     const baseForGate = portfolioRatioOverride ?? regimeEffectiveRisk.position_ratio;
     const sentimentCache = readSentimentCache();  // 从磁盘读取 LLM 情绪缓存
     const gate = evaluateSentimentGate(signal, newsReport, baseForGate, sentimentCache);
-    log(`${scenarioPrefix}${symbol}: 情绪门控 → ${gate.action}（${gate.reason}）`);
+    log.info(`${scenarioPrefix}${symbol}: 情绪门控 → ${gate.action}（${gate.reason}）`);
     if (gate.action === "skip") return;
 
     if (cfg.mode === "paper") {
@@ -279,10 +274,10 @@ async function scanSymbol(
               ...(cfg.risk.kelly_max_ratio !== undefined ? { maxRatio: cfg.risk.kelly_max_ratio } : {}),
               fallback: cfg.risk.position_ratio,
             });
-            log(`${scenarioPrefix}${symbol}: 🎯 Kelly → ${kellyResult.reason}`);
+            log.info(`${scenarioPrefix}${symbol}: 🎯 Kelly → ${kellyResult.reason}`);
             effectiveRatio = kellyResult.ratio;
           }
-        } catch (e: unknown) { log(`${scenarioPrefix}${symbol}: ⚠️ Kelly 计算失败: ${e instanceof Error ? e.message : String(e)}`); }
+        } catch (e: unknown) { log.warn(`${scenarioPrefix}${symbol}: ⚠️ Kelly 计算失败: ${e instanceof Error ? e.message : String(e)}`); }
       }
 
       // P5.2: 合并 regime 参数覆盖（止盈/止损/ROI Table 等）+ 仓位比例调整
@@ -290,11 +285,11 @@ async function scanSymbol(
       const result = handleSignal(signal, adjustedCfg);
 
       if (result.skipped) {
-        log(`${scenarioPrefix}${symbol}: ⏭️ 跳过 — ${result.skipped}`);
+        log.info(`${scenarioPrefix}${symbol}: ⏭️ 跳过 — ${result.skipped}`);
       }
       if (result.trade) {
         const action = result.trade.side === "buy" ? "买入(开多)" : result.trade.side === "short" ? "开空" : result.trade.side === "cover" ? "平空" : "卖出(平多)";
-        log(
+        log.info(
           `${scenarioPrefix}${symbol}: 📝 模拟${action} @${result.trade.price.toFixed(4)}（仓位 ${(effectiveRatio * 100).toFixed(0)}%）`
         );
         notifyPaperTrade(result.trade, result.account);
@@ -307,7 +302,7 @@ async function scanSymbol(
     }
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
-    log(`${scenarioPrefix}${symbol}: 错误 - ${error.message}`);
+    log.error(`${scenarioPrefix}${symbol}: 错误 - ${error.message}`);
     if (cfg.notify.on_error) notifyError(symbol, error);
   }
 }
@@ -323,13 +318,13 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
   const state = loadState(sid);
 
   if (state.paused) {
-    log(`${prefix}⚠️ 策略已暂停（触发最大亏损上限）`);
+    log.warn(`${prefix}⚠️ 策略已暂停（触发最大亏损上限）`);
     return;
   }
 
   // P6.7: Kill Switch 熔断检查
   if (isKillSwitchActive()) {
-    log(`${prefix}⛔ Kill Switch 激活，跳过扫描`);
+    log.warn(`${prefix}⛔ Kill Switch 激活，跳过扫描`);
     return;
   }
 
@@ -364,7 +359,7 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
         reason === "take_profit" ? "止盈" :
         reason === "trailing_stop" ? "追踪止损" :
         reason === "time_stop" ? "时间止损" : "止损";
-      log(`${prefix}${symbol}: ${emoji} ${label}触发（${pnlPercent.toFixed(2)}%）`);
+      log.info(`${prefix}${symbol}: ${emoji} ${label}触发（${pnlPercent.toFixed(2)}%）`);
       if (reason !== "take_profit") {
         // stop_loss / trailing_stop / time_stop 均发送止损通知
         notifyStopLoss(symbol, trade.price / (1 + pnlPercent / 100), trade.price, pnlPercent / 100);
@@ -393,17 +388,17 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
     if (cfg.risk.dca?.enabled) {
       const dcaResults = checkDcaTranches(currentPrices, cfg);
       for (const { symbol, trade, tranche, totalTranches } of dcaResults) {
-        log(`${prefix}${symbol}: 💰 DCA 第 ${tranche}/${totalTranches} 批 @${trade.price.toFixed(4)} (${trade.usdtAmount.toFixed(2)} USDT)`);
+        log.info(`${prefix}${symbol}: 💰 DCA 第 ${tranche}/${totalTranches} 批 @${trade.price.toFixed(4)} (${trade.usdtAmount.toFixed(2)} USDT)`);
         notifyPaperTrade(trade, loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId));
       }
     }
 
     if (checkDailyLossLimit(currentPrices, cfg)) {
-      log(`${prefix}⚠️ 今日亏损已达 ${cfg.risk.daily_loss_limit_percent}%，暂停当日开仓`);
+      log.warn(`${prefix}⚠️ 今日亏损已达 ${cfg.risk.daily_loss_limit_percent}%，暂停当日开仓`);
     }
 
     if (checkMaxDrawdown(currentPrices, cfg)) {
-      log(`${prefix}🚨 总亏损超过上限，场景已暂停！`);
+      log.error(`${prefix}🚨 总亏损超过上限，场景已暂停！`);
       state.paused = true;
       notifyError(
         `${marketLabel} 风控`,
@@ -416,7 +411,7 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
     // 定期账户汇报
     const intervalMs = cfg.paper.report_interval_hours * 3600000;
     if (intervalMs > 0 && Date.now() - state.lastReportAt >= intervalMs) {
-      log(`${prefix}📊 发送定期账户汇报`);
+      log.info(`${prefix}📊 发送定期账户汇报`);
       const msg = formatSummaryMessage(currentPrices, cfg);
       const { spawnSync } = await import("child_process");
       const OPENCLAW_BIN = process.env["OPENCLAW_BIN"] ?? "openclaw";
@@ -437,30 +432,30 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
 // ─────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  log("─── 监控扫描开始 ───");
+  log.info("─── 监控扫描开始 ───");
   if (!process.env["OPENCLAW_GATEWAY_TOKEN"]) {
-    log("⚠️ 环境变量 OPENCLAW_GATEWAY_TOKEN 未设置，通知功能将不可用");
+    log.warn("⚠️ 环境变量 OPENCLAW_GATEWAY_TOKEN 未设置，通知功能将不可用");
   }
   const done = ping("price_monitor");
 
   const runtimes = loadRuntimeConfigs();
   const firstRuntime = runtimes[0];
-  if (!firstRuntime) { log("无可用策略配置"); return; }
+  if (!firstRuntime) { log.warn("无可用策略配置"); return; }
   if (!firstRuntime.strategy.enabled) {
-    log("策略已禁用");
+    log.info("策略已禁用");
     done();
     return;
   }
 
   const mode = firstRuntime.mode;
   const scenarioNames = runtimes.map((r) => r.paper.scenarioId).join(", ");
-  log(`模式: ${mode} | 场景: ${scenarioNames} | 默认币种: ${firstRuntime.symbols.join(", ")}`);
+  log.info(`模式: ${mode} | 场景: ${scenarioNames} | 默认币种: ${firstRuntime.symbols.join(", ")}`);
 
   // 所有场景并行运行
   await Promise.all(runtimes.map((cfg) => runScenario(cfg)));
 
   done();
-  log("─── 监控扫描完成 ───\n");
+  log.info("─── 监控扫描完成 ───\n");
 }
 
 process.on("unhandledRejection", (reason: unknown) => {

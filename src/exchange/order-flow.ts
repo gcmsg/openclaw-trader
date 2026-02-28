@@ -26,9 +26,11 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createLogger } from "../logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CVD_CACHE_PATH = path.resolve(__dirname, "../../logs/cvd-state.json");
+const log = createLogger("cvd");
 
 // ─── 类型 ──────────────────────────────────────────────
 
@@ -113,14 +115,14 @@ export class CvdManager {
     this._connect();
     // 每 30 秒持久化一次
     this.flushIntervalId = setInterval(() => { this._flush(); }, 30_000);
-    console.log(`[CVD] 订阅 aggTrade: ${this.symbols.join(", ")} (窗口 ${this.windowMs / 60_000}min)`);
+    log.info(`订阅 aggTrade: ${this.symbols.join(", ")} (窗口 ${this.windowMs / 60_000}min)`);
   }
 
   stop(): void {
     if (this.flushIntervalId) clearInterval(this.flushIntervalId);
     if (this.ws) this.ws.close();
     this._flush();
-    console.log("[CVD] 已停止");
+    log.info("已停止");
   }
 
   /** 获取当前 symbol CVD（原始数值） */
@@ -160,11 +162,11 @@ export class CvdManager {
     });
 
     this.ws.addEventListener("error", () => {
-      console.error(`[CVD] WebSocket 错误，3s 后重连...`);
+      log.error("WebSocket 错误，3s 后重连...");
     });
 
     this.ws.addEventListener("close", () => {
-      console.warn("[CVD] 连接断开，5s 后重连...");
+      log.warn("连接断开，5s 后重连...");
       setTimeout(() => { this._connect(); }, 5_000);
     });
   }

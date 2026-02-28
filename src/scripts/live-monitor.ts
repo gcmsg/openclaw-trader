@@ -40,6 +40,7 @@ import {
   checkBtcCrash,
 } from "../health/kill-switch.js";
 import type { RuntimeConfig, Kline, Indicators } from "../types.js";
+import { createLogger } from "../logger.js";
 
 const POLL_INTERVAL_MS = 60 * 1000; // 1 分钟轮询
 const BTC_CRASH_THRESHOLD_PCT = 8;  // BTC 1小时跌幅触发阈值（默认 8%）
@@ -51,9 +52,7 @@ const btcPriceBuffer: number[] = [];
 // ── 优雅退出标志（用对象包裹，避免 no-unnecessary-condition 误报）──
 const _state = { shuttingDown: false };
 
-function log(msg: string): void {
-  console.log(`[${new Date().toLocaleString("zh-CN")}] ${msg}`);
-}
+const log = createLogger("live-monitor");
 
 // ─────────────────────────────────────────────────────
 // 单轮信号检测 + 执行（一个场景所有 symbol）
@@ -75,7 +74,7 @@ async function processSymbol(
   if (!klines || klines.length < limit) {
     klines = await getKlines(symbol, cfg.timeframe, limit + 1);
     if (klines.length < limit) {
-      log(`${label} ${symbol}: K 线数量不足（${klines.length}/${limit}），跳过`);
+      log.info(`${label} ${symbol}: K 线数量不足（${klines.length}/${limit}），跳过`);
       return;
     }
   }
@@ -141,13 +140,13 @@ async function processSymbol(
   const engineResult = processSignal(symbol, klines, cfg, externalCtx, recentTrades);
 
   if (!engineResult.indicators) {
-    log(`${label} ${symbol}: 指标计算失败，跳过`);
+    log.info(`${label} ${symbol}: 指标计算失败，跳过`);
     return;
   }
 
   const { indicators, signal, effectiveRisk, effectivePositionRatio, rejected, rejectionReason, regimeLabel } = engineResult;
 
-  log(
+  log.info(
     `${label} ${symbol}: RSI=${indicators.rsi.toFixed(1)} ` +
     `EMA${cfg.strategy.ma.short}=$${indicators.maShort.toFixed(2)} ` +
     `EMA${cfg.strategy.ma.long}=$${indicators.maLong.toFixed(2)} ` +
@@ -157,7 +156,7 @@ async function processSymbol(
   );
 
   if (rejected) {
-    log(`${label} ${symbol}: 🚫 ${rejectionReason ?? "filtered"}`);
+    log.info(`${label} ${symbol}: 🚫 ${rejectionReason ?? "filtered"}`);
     return;
   }
 
@@ -168,7 +167,7 @@ async function processSymbol(
     // 紧急暂停
     const emergency = readEmergencyHalt();
     if (emergency.halt) {
-      log(`${label} ${symbol}: ⛔ 紧急暂停 — ${emergency.reason ?? "突发高危新闻"}`);
+      log.warn(`${label} ${symbol}: ⛔ 紧急暂停 — ${emergency.reason ?? "突发高危新闻"}`);
       return;
     }
 
@@ -176,21 +175,21 @@ async function processSymbol(
     try {
       const eventRisk = checkEventRisk(loadCalendar());
       if (eventRisk.phase === "during") {
-        log(`${label} ${symbol}: ⏸ 事件窗口期（${eventRisk.eventName}），暂停开仓`);
+        log.info(`${label} ${symbol}: ⏸ 事件窗口期（${eventRisk.eventName}），暂停开仓`);
         return;
       }
       if ((eventRisk.phase === "pre" || eventRisk.phase === "post") && eventRisk.positionRatioMultiplier < 1.0) {
-        log(`${label} ${symbol}: ⚠️ 事件风险期（${eventRisk.eventName}），仓位 ×${eventRisk.positionRatioMultiplier}`);
+        log.warn(`${label} ${symbol}: ⚠️ 事件风险期（${eventRisk.eventName}），仓位 ×${eventRisk.positionRatioMultiplier}`);
       }
     } catch { /* 日历加载失败静默跳过 */ }
 
     // MTF 趋势过滤 — 使用共享函数（A-001 fix）
     const mtfCheck = await checkMtfFilter(symbol, signal.type, cfg, provider);
     if (mtfCheck.trendBull !== null) {
-      log(`${label} ${symbol}: MTF(${cfg.trend_timeframe}) → ${mtfCheck.trendBull ? "多头✅" : "空头🚫"}`);
+      log.info(`${label} ${symbol}: MTF(${cfg.trend_timeframe}) → ${mtfCheck.trendBull ? "多头✅" : "空头🚫"}`);
     }
     if (mtfCheck.filtered) {
-      log(`${label} ${symbol}: 🚫 ${mtfCheck.reason}`);
+      log.info(`${label} ${symbol}: 🚫 ${mtfCheck.reason}`);
       return;
     }
 
@@ -199,7 +198,7 @@ async function processSymbol(
     const baseForGate = effectivePositionRatio ?? effectiveRisk.position_ratio;
     const sentimentCache = readSentimentCache();
     const gate = evaluateSentimentGate(signal, newsReport, baseForGate, sentimentCache);
-    log(`${label} ${symbol}: 情绪门控 → ${gate.action}（${gate.reason}）`);
+    log.info(`${label} ${symbol}: 情绪门控 → ${gate.action}（${gate.reason}）`);
     if (gate.action === "skip") return;
 
     // Kelly 动态仓位
@@ -222,7 +221,7 @@ async function processSymbol(
             ...(cfg.risk.kelly_max_ratio !== undefined ? { maxRatio: cfg.risk.kelly_max_ratio } : {}),
             fallback: cfg.risk.position_ratio,
           });
-          log(`${label} ${symbol}: 🎯 Kelly → ${kellyResult.reason}`);
+          log.info(`${label} ${symbol}: 🎯 Kelly → ${kellyResult.reason}`);
           effectiveRatio = kellyResult.ratio;
         }
       } catch { /* Kelly 计算失败不影响主流程 */ }
@@ -237,17 +236,17 @@ async function processSymbol(
     if (signal.type === "buy") {
       const result = await liveExecutor.handleBuy(signal);
       if (result.skipped) {
-        log(`${label} ${symbol}: 跳过 — ${result.skipped}`);
+        log.info(`${label} ${symbol}: 跳过 — ${result.skipped}`);
       } else if (result.trade) {
-        log(`${label} ${symbol}: 买入成功 @${result.trade.price.toFixed(4)}（仓位 ${(effectiveRatio * 100).toFixed(0)}%），orderId=${result.orderId ?? "N/A"}`);
+        log.info(`${label} ${symbol}: 买入成功 @${result.trade.price.toFixed(4)}（仓位 ${(effectiveRatio * 100).toFixed(0)}%），orderId=${result.orderId ?? "N/A"}`);
         recordSignalHistory(symbol, "buy", result.trade.price, indicators, signal, cfg);
       }
     } else if (signal.type === "short") {
       const result = await liveExecutor.handleShort(signal);
       if (result.skipped) {
-        log(`${label} ${symbol}: 跳过开空 — ${result.skipped}`);
+        log.info(`${label} ${symbol}: 跳过开空 — ${result.skipped}`);
       } else if (result.trade) {
-        log(`${label} ${symbol}: 开空成功 @${result.trade.price.toFixed(4)}（仓位 ${(effectiveRatio * 100).toFixed(0)}%），orderId=${result.orderId ?? "N/A"}`);
+        log.info(`${label} ${symbol}: 开空成功 @${result.trade.price.toFixed(4)}（仓位 ${(effectiveRatio * 100).toFixed(0)}%），orderId=${result.orderId ?? "N/A"}`);
         recordSignalHistory(symbol, "short", result.trade.price, indicators, signal, cfg);
       }
     }
@@ -259,7 +258,7 @@ async function processSymbol(
       const liveExecutor = createLiveExecutor(cfg);
       const result = await liveExecutor.handleSell(symbol, signal.price, signal.reason.join(", "));
       if (result.trade) {
-        log(`${label} ${symbol}: 卖出成功，orderId=${result.orderId ?? "N/A"}`);
+        log.info(`${label} ${symbol}: 卖出成功，orderId=${result.orderId ?? "N/A"}`);
         if (sigHistId) {
           try { closeSignal(sigHistId, result.trade.price, "signal", result.trade.pnl); } catch { /* skip */ }
         }
@@ -273,7 +272,7 @@ async function processSymbol(
       const liveExecutor = createLiveExecutor(cfg);
       const result = await liveExecutor.handleCover(symbol, signal.price, signal.reason.join(", "));
       if (result.trade) {
-        log(`${label} ${symbol}: 平空成功，orderId=${result.orderId ?? "N/A"}`);
+        log.info(`${label} ${symbol}: 平空成功，orderId=${result.orderId ?? "N/A"}`);
         if (sigHistId) {
           try { closeSignal(sigHistId, result.trade.price, "signal", result.trade.pnl); } catch { /* skip */ }
         }
@@ -337,7 +336,7 @@ async function checkExits(cfg: RuntimeConfig): Promise<void> {
   // G3: 每轮检查超时订单（孤儿入场单取消，孤儿出场单取消后下轮重触发）
   await executor.checkOrderTimeouts(account);
   for (const e of exits) {
-    log(`${label} ${e.symbol}: 触发出场 — ${e.reason} (${e.pnlPercent.toFixed(2)}%)`);
+    log.info(`${label} ${e.symbol}: 触发出场 — ${e.reason} (${e.pnlPercent.toFixed(2)}%)`);
     // 关闭信号历史记录
     const sigHistId = account.positions[e.symbol]?.signalHistoryId;
     if (sigHistId) {
@@ -389,8 +388,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  log(`🚀 启动实盘监控，共 ${scenarios.length} 个场景`);
-  log(`📋 统一信号引擎：processSignal() + MTF + 情绪门控 + Kelly + 事件日历 + 相关性过滤`);
+  log.info(`🚀 启动实盘监控，共 ${scenarios.length} 个场景`);
+  log.info(`📋 统一信号引擎：processSignal() + MTF + 情绪门控 + Kelly + 事件日历 + 相关性过滤`);
 
   // ── 真实 CVD — aggTrade WebSocket ────────────────────
   const cvdSymbols = scenarios[0]
@@ -399,7 +398,7 @@ async function main(): Promise<void> {
   const cvdManager = cvdSymbols.length > 0 ? new CvdManager(cvdSymbols, { windowMs: 3_600_000 }) : null;
   if (cvdManager) {
     cvdManager.start();
-    log(`📊 真实 CVD 已启动，监控 ${cvdSymbols.length} 个 symbol`);
+    log.info(`📊 真实 CVD 已启动，监控 ${cvdSymbols.length} 个 symbol`);
   }
 
   // 测试连接
@@ -413,7 +412,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const balance = await executor.syncBalance();
-    log(`✅ ${scenario.id} [${label}]: 连接正常，USDT 余额 = $${balance.toFixed(2)}`);
+    log.info(`✅ ${scenario.id} [${label}]: 连接正常，USDT 余额 = $${balance.toFixed(2)}`);
 
     // ── 启动对账（P3.3）──────────────────────────────
     try {
@@ -421,23 +420,23 @@ async function main(): Promise<void> {
       const exchangePositions = await executor.getExchangePositions();
       const reconcile = reconcilePositions(account, exchangePositions);
       const report = formatReconcileReport(reconcile);
-      log(report.replace(/\*\*/g, ""));
+      log.info(report.replace(/\*\*/g, ""));
       if (reconcile.status === "critical") {
         console.error(`\n⛔ 对账发现严重差异，暂停启动，请人工确认后重启！`);
         process.exit(1);
       }
     } catch (err: unknown) {
-      log(`⚠️ 对账跳过：${String(err)}`);
+      log.warn(`⚠️ 对账跳过：${String(err)}`);
     }
 
     // ── F2/F5: 孤儿订单扫描 ─────────────────────────
     try {
       const cancelled = await executor.scanOpenOrders();
       if (cancelled > 0) {
-        log(`🧹 ${scenario.id}: 已取消 ${cancelled} 个孤儿挂单`);
+        log.info(`🧹 ${scenario.id}: 已取消 ${cancelled} 个孤儿挂单`);
       }
     } catch (err: unknown) {
-      log(`⚠️ 孤儿订单扫描跳过：${String(err)}`);
+      log.warn(`⚠️ 孤儿订单扫描跳过：${String(err)}`);
     }
   }
 
@@ -445,7 +444,7 @@ async function main(): Promise<void> {
   const handleShutdown = (sig: string) => {
     if (_state.shuttingDown) return;
     _state.shuttingDown = true;
-    log(`\n🛑 收到 ${sig}，完成当前轮次后退出...`);
+    log.info(`\n🛑 收到 ${sig}，完成当前轮次后退出...`);
   };
   process.on("SIGTERM", () => { handleShutdown("SIGTERM"); });
   process.on("SIGINT", () => { handleShutdown("SIGINT"); });
@@ -467,7 +466,7 @@ async function main(): Promise<void> {
           const { crash, dropPct } = checkBtcCrash(btcPriceBuffer, BTC_CRASH_THRESHOLD_PCT);
           if (crash) {
             const reason = `BTC 近期跌幅 ${dropPct.toFixed(2)}% 超过阈值 ${BTC_CRASH_THRESHOLD_PCT}%`;
-            log(`⛔ 自动触发 Kill Switch: ${reason}`);
+            log.warn(`⛔ 自动触发 Kill Switch: ${reason}`);
             activateKillSwitch(reason);
             notifyError("KILL_SWITCH", new Error(`⛔ Kill Switch 自动激活: ${reason}`));
           }
@@ -482,7 +481,7 @@ async function main(): Promise<void> {
 
       // P6.7: Kill Switch 检查
       if (isKillSwitchActive()) {
-        log(`⛔ Kill Switch 激活，跳过场景 ${scenario.id}`);
+        log.warn(`⛔ Kill Switch 激活，跳过场景 ${scenario.id}`);
         continue;
       }
 
@@ -510,7 +509,7 @@ async function main(): Promise<void> {
           if (_state.shuttingDown) break; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
           await processSymbol(symbol, cfg, provider).catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
-            log(`❌ ${scenario.id} ${symbol}: ${msg}`);
+            log.error(`❌ ${scenario.id} ${symbol}: ${msg}`);
             if (cfg.notify.on_error) notifyError(symbol, new Error(msg));
           });
           // 每个 symbol 间短暂等待，避免触发 Binance 限频
@@ -518,17 +517,17 @@ async function main(): Promise<void> {
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        log(`❌ 场景 ${scenario.id} 运行异常: ${msg}`);
+        log.error(`❌ 场景 ${scenario.id} 运行异常: ${msg}`);
       }
     }
 
     if (_state.shuttingDown) break; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
-    log(`⏰ 等待 ${POLL_INTERVAL_MS / 1000}s 后下一轮...`);
+    log.info(`⏰ 等待 ${POLL_INTERVAL_MS / 1000}s 后下一轮...`);
     await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
 
   cvdManager?.stop();
-  log("✅ Live monitor 已安全退出。");
+  log.info("✅ Live monitor 已安全退出。");
   process.exit(0);
 }
 

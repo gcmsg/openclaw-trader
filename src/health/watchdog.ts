@@ -20,10 +20,11 @@ import path from "path";
 import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { loadHeartbeats } from "./heartbeat.js";
+import { createLogger } from "../logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STATE_PATH = path.resolve(__dirname, "../../logs/watchdog-state.json");
-const LOG_PATH = path.resolve(__dirname, "../../logs/health_check.log");
+const log = createLogger("watchdog", path.resolve(__dirname, "../../logs/health_check.log"));
 
 const OPENCLAW_BIN = process.env["OPENCLAW_BIN"] ?? "openclaw";
 const GATEWAY_TOKEN = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
@@ -56,12 +57,6 @@ function saveState(state: WatchdogState): void {
 }
 
 // ─── 通知 ────────────────────────────────────────────
-
-function log(msg: string): void {
-  const line = `[${new Date().toISOString()}] [watchdog] ${msg}`;
-  console.log(line);
-  fs.appendFileSync(LOG_PATH, line + "\n");
-}
 
 function sendAlert(message: string): boolean {
   try {
@@ -134,7 +129,7 @@ export function runWatchdog(): WatchdogResult[] {
     ].join("\n");
 
     const sent = sendAlert(alertMsg);
-    log(`⚠️ ${name} 超时 ${minutesSince.toFixed(0)}min，告警 ${sent ? "已发" : "失败"}`);
+    log.warn(`⚠️ ${name} 超时 ${minutesSince.toFixed(0)}min，告警 ${sent ? "已发" : "失败"}`);
 
     if (sent) {
       state.lastAlertAt[name] = now;
@@ -155,11 +150,11 @@ export function runWatchdog(): WatchdogResult[] {
 // ─── CLI 入口 ─────────────────────────────────────────
 
 if (process.argv[1]?.includes("watchdog")) {
-  log("── Watchdog 检查开始 ──");
+  log.info("── Watchdog 检查开始 ──");
   const results = runWatchdog();
   for (const r of results) {
     const icon = r.status === "ok" ? "✅" : r.status === "cooldown" ? "⏳" : "🚨";
-    log(`${icon} ${r.task}: ${r.message}`);
+    log.info(`${icon} ${r.task}: ${r.message}`);
   }
-  log("── Watchdog 检查完成 ──");
+  log.info("── Watchdog 检查完成 ──");
 }
