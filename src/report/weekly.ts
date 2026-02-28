@@ -28,7 +28,8 @@ function calcPerformanceMetrics(
   trades: PaperTrade[],
   initialUsdt: number
 ): PerformanceMetrics | null {
-  const sells = trades.filter((t) => t.side === "sell" && t.pnl !== undefined);
+  // 已平仓交易：sell（平多）+ cover（平空）均需计入统计
+  const sells = trades.filter((t) => (t.side === "sell" || t.side === "cover") && t.pnl !== undefined);
   if (sells.length < 3) return null; // 数据太少，指标没有统计意义
 
   const pnls = sells.map((t) => t.pnl ?? 0);
@@ -109,8 +110,10 @@ interface TradeStats {
 
 function calcTradeStats(trades: PaperTrade[], since: number): TradeStats {
   const periodTrades = trades.filter((t) => t.timestamp >= since);
-  const sells = periodTrades.filter((t) => t.side === "sell" && t.pnl !== undefined);
-  const buys = periodTrades.filter((t) => t.side === "buy");
+  // 已平仓交易：sell（平多）+ cover（平空）均需计入统计
+  const sells = periodTrades.filter((t) => (t.side === "sell" || t.side === "cover") && t.pnl !== undefined);
+  // 开仓交易：buy（开多）+ short（开空）均需计入（用于计算平均持仓时长）
+  const buys = periodTrades.filter((t) => t.side === "buy" || t.side === "short");
 
   if (sells.length === 0) {
     return {

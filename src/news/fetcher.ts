@@ -41,9 +41,9 @@ export async function getFearGreedIndex(): Promise<FearGreedData> {
   const item = data.data[0];
   if (!item) throw new Error("Fear & Greed API 返回空数据");
   return {
-    value: parseInt(item.value),
+    value: parseInt(item.value, 10),
     label: item.value_classification,
-    timestamp: parseInt(item.timestamp) * 1000,
+    timestamp: parseInt(item.timestamp, 10) * 1000,
   };
 }
 

@@ -116,7 +116,8 @@ async function collectStats(): Promise<ScenarioStats[]> {
     // 用实时价格计算总资产（持仓按当前市价估值）
     const equity = calcTotalEquity(account, prices);
 
-    const closedSells = account.trades.filter((t) => t.side === "sell" && t.pnl !== undefined);
+    // 已平仓交易：sell（平多）+ cover（平空）均需计入统计
+    const closedSells = account.trades.filter((t) => (t.side === "sell" || t.side === "cover") && t.pnl !== undefined);
     const winners = closedSells.filter((t) => (t.pnl ?? 0) > 0);
     const losers = closedSells.filter((t) => (t.pnl ?? 0) <= 0);
     const winRate = closedSells.length > 0 ? winners.length / closedSells.length : 0;

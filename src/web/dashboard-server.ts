@@ -215,7 +215,8 @@ export function buildDashboardData(): DashboardData {
         price: trade.price,
         usdtAmount: trade.usdtAmount,
         pnl: trade.pnl ?? null,
-        pnlPercent: trade.pnlPercent ?? null,
+        // pnlPercent 在 PaperTrade 中存储为比例（如 0.038），转换为百分比（3.8）供前端直接显示
+        pnlPercent: trade.pnlPercent != null ? trade.pnlPercent * 100 : null,
         timestamp: trade.timestamp,
         reason: trade.reason,
       });
@@ -244,8 +245,14 @@ export function buildEquityCurve(accounts: AccountSummary[], trades: TradeRecord
     )
     .sort((a, b) => a.timestamp - b.timestamp);
 
+  // 起始点：若有交易记录，从第一笔交易前 1 小时开始；否则默认 7 天前
+  // （避免账户刚创建时图表出现数十天空白线）
+  const startTs =
+    closedTrades.length > 0
+      ? closedTrades[0]!.timestamp - 3_600_000
+      : Date.now() - 7 * 24 * 3600_000;
   const curve: EquityPoint[] = [
-    { timestamp: Date.now() - 30 * 24 * 3600_000, equity, label: fmtLabel(Date.now() - 30 * 24 * 3600_000) },
+    { timestamp: startTs, equity, label: fmtLabel(startTs) },
   ];
 
   for (const trade of closedTrades) {
@@ -288,7 +295,7 @@ export function buildPerfData(): PerfData {
           price: t.price,
           usdtAmount: t.usdtAmount,
           pnl: t.pnl ?? null,
-          pnlPercent: t.pnlPercent ?? null,
+          pnlPercent: t.pnlPercent != null ? t.pnlPercent * 100 : null,
           timestamp: t.timestamp,
           reason: t.reason,
         });
@@ -430,7 +437,8 @@ function loadSignalHistory(limit = 50): SignalRecord[] {
         timestamp: Number(r?.["entryTime"] ?? 0),
         status: String(r?.["status"] ?? ""),
         pnl: r?.["pnl"] != null ? Number(r["pnl"]) : null,
-        pnlPercent: r?.["pnlPercent"] != null ? Number(r["pnlPercent"]) : null,
+        // signal-history.jsonl 中 pnlPercent 存储为比例（如 0.038），转换为百分比（3.8）供前端显示
+        pnlPercent: r?.["pnlPercent"] != null ? Number(r["pnlPercent"]) * 100 : null,
       }));
   } catch {
     return [];
@@ -440,6 +448,28 @@ function loadSignalHistory(limit = 50): SignalRecord[] {
 function fmtLabel(ts: number): string {
   const d = new Date(ts);
   return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+}
+
+/**
+ * 轻量获取当前所有持仓的交易对列表，用于 /api/prices
+ * 避免为获取 symbols 而调用 buildDashboardData()（后者会加载完整账户数据）
+ */
+export function getActiveSymbols(): string[] {
+  try {
+    const cfg = loadPaperConfig();
+    const syms = new Set<string>();
+    for (const s of cfg.scenarios.filter((sc) => sc.enabled)) {
+      try {
+        const acct = loadAccount(s.initial_usdt, s.id);
+        for (const sym of Object.keys(acct.positions)) syms.add(sym);
+      } catch {
+        /* skip failed scenarios */
+      }
+    }
+    return Array.from(syms);
+  } catch {
+    return [];
+  }
 }
 
 // ─────────────────────────────────────────────────────
@@ -789,7 +819,7 @@ function renderPosCards() {
   }
   wrap.innerHTML = d.positions.map(function(p) {
     var curPrice = state.prices[p.symbol] || p.entryPrice;
-    var costBasis = p.side === 'short' ? p.entryPrice * p.quantity : p.entryPrice * p.quantity;
+    var costBasis = p.entryPrice * p.quantity; // 多头/空头名义价值（费率极小时≈保证金）
     var upnl = p.side === 'short' ? (p.entryPrice - curPrice) * p.quantity : (curPrice - p.entryPrice) * p.quantity;
     var upnlPct = costBasis > 0 ? (upnl / costBasis * 100) : 0;
     var slDist = curPrice > 0 ? Math.abs(curPrice - p.stopLoss) / curPrice * 100 : 0;
@@ -1152,17 +1182,11 @@ export function startDashboardServer(port = 8080): void {
     }
 
     if (pathname === "/api/prices") {
-      // 从 /api/data 获取持仓币种，然后批量拉价格
-      let symbols: string[] = [];
-      try {
-        const d = buildDashboardData();
-        symbols = [...new Set(d.positions.map((p) => p.symbol))];
-      } catch { /* ignore */ }
-
+      // 轻量获取当前持仓的交易对，批量拉 Binance 实时价格
+      const symbols = getActiveSymbols();
       if (symbols.length === 0) {
         sendJson(res, {}); return;
       }
-
       fetchBinancePrices(symbols)
         .then((prices) => sendJson(res, prices))
         .catch(() => sendJson(res, {}));
@@ -1219,9 +1243,11 @@ export function startDashboardServer(port = 8080): void {
     res.writeHead(404); res.end("Not Found");
   });
 
-  server.listen(port, () => {
+  // 安全：仅绑定本地回环地址，防止外网直接访问（无认证）
+  server.listen(port, "127.0.0.1", () => {
     console.log(`[dashboard] 🚀 仪表盘运行中: http://localhost:${port}`);
     console.log(`[dashboard]    页面导航: Overview / Positions / Trades / Performance / Signals / Logs`);
+    console.log(`[dashboard]    ⚠️  仅限本机访问。远程请使用 SSH 隧道: ssh -L ${port}:localhost:${port} user@server`);
   });
 
   server.on("error", (err) => {

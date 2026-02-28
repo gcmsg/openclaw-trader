@@ -79,7 +79,8 @@ vi.mock("../paper/account.js", () => ({
         timestamp: Date.now() - 3600_000,
         reason: "Take profit",
         pnl: 9.49,
-        pnlPercent: 3.8,
+        // paperSell() 存储为比例（ratio），不是百分比：9.49/250 ≈ 0.038
+        pnlPercent: 0.038,
       },
     ],
     createdAt: Date.now() - 86400_000,

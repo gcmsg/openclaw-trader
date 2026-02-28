@@ -143,7 +143,8 @@ function printSummary(): void {
         return px ? sum + pos.quantity * px : sum;
       }, 0);
     const pnlPct = ((equity - account.initialUsdt) / account.initialUsdt) * 100;
-    const sells = account.trades.filter((t) => t.side === "sell" && t.pnl !== undefined);
+    // 已平仓交易：sell（平多）+ cover（平空）均需计入统计
+    const sells = account.trades.filter((t) => (t.side === "sell" || t.side === "cover") && t.pnl !== undefined);
     const wins = sells.filter((t) => (t.pnl ?? 0) > 0).length;
     const wr = sells.length > 0 ? `${((wins / sells.length) * 100).toFixed(0)}%` : "--";
     const pnlStr = `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%`;

@@ -1,6 +1,55 @@
 {
-  "generatedAt": "2026-02-27T16:12:43.660Z",
+  "generatedAt": "2026-02-28T00:41:44.774Z",
   "stats": [
+    {
+      "key": "buy:strategy:rsi-reversal",
+      "rules": [
+        "strategy:rsi-reversal"
+      ],
+      "signalType": "buy",
+      "total": 3,
+      "closed": 0,
+      "open": 3,
+      "wins": 0,
+      "losses": 0,
+      "winRate": 0,
+      "avgPnlPct": 0,
+      "avgWinPct": 0,
+      "avgLossPct": 0,
+      "rrRatio": 0,
+      "avgHoldHours": 0,
+      "totalPnlPct": 0,
+      "symbols": [
+        "SOLUSDT",
+        "ETHUSDT",
+        "AVAXUSDT"
+      ],
+      "stopLossCount": 0
+    },
+    {
+      "key": "buy:macd_golden_cross+rsi_oversold",
+      "rules": [
+        "macd_golden_cross",
+        "rsi_oversold"
+      ],
+      "signalType": "buy",
+      "total": 1,
+      "closed": 0,
+      "open": 1,
+      "wins": 0,
+      "losses": 0,
+      "winRate": 0,
+      "avgPnlPct": 0,
+      "avgWinPct": 0,
+      "avgLossPct": 0,
+      "rrRatio": 0,
+      "avgHoldHours": 0,
+      "totalPnlPct": 0,
+      "symbols": [
+        "ETHUSDT"
+      ],
+      "stopLossCount": 0
+    },
     {
       "key": "buy:ma_bullish+macd_bullish+rsi_not_overbought",
       "rules": [

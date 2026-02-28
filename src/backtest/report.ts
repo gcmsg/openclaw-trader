@@ -188,8 +188,8 @@ export function saveReport(result: BacktestResult, label?: string): string {
       ...result.metrics,
       equityCurve: sampledCurve,
     },
-    // 只保留卖出记录（完整交易）
-    trades: result.trades.filter((t) => t.side === "sell"),
+    // 只保留平仓记录（完整交易）：sell（平多）+ cover（平空）
+    trades: result.trades.filter((t) => t.side === "sell" || t.side === "cover"),
   };
 
   fs.writeFileSync(filePath, JSON.stringify(reportData, null, 2));
