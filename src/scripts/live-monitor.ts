@@ -33,6 +33,7 @@ import { CvdManager, readCvdCache } from "../exchange/order-flow.js";
 import { fetchFundingRatePct } from "../strategy/funding-rate-signal.js";
 import { getBtcDominanceTrend } from "../strategy/btc-dominance.js";
 import { calcKellyRatio } from "../strategy/kelly.js";
+import { getOnChainContext } from "../exchange/onchain-data.js";
 import { DataProvider } from "../exchange/data-provider.js";
 import {
   isKillSwitchActive,
@@ -45,12 +46,72 @@ import { createLogger } from "../logger.js";
 const POLL_INTERVAL_MS = 60 * 1000; // 1 分钟轮询
 const BTC_CRASH_THRESHOLD_PCT = 8;  // BTC 1小时跌幅触发阈值（默认 8%）
 const MAX_BTC_PRICE_BUFFER = 60;    // 保留最近 60 个价格点（约 1 小时，1分钟一个）
+const PAIRLIST_MAX_AGE_MS = 25 * 60 * 60 * 1000; // pairlist 文件超过 25h 视为过期
+const PAIRLIST_PATH = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname),
+  "../../logs/current-pairlist.json"
+);
+
+/**
+ * 从动态 pairlist 文件加载币种列表（P6.2）。
+ * 若文件不存在或已过期（>25h），返回 null 使调用方回退到配置里的静态列表。
+ * @param heldSymbols 当前持仓的 symbol，强制保留（不能因为 pairlist 丢失持仓监控）
+ */
+function loadPairlistSymbols(heldSymbols: string[]): string[] | null {
+  try {
+    const raw = fs.readFileSync(PAIRLIST_PATH, "utf-8");
+    const data = JSON.parse(raw) as { symbols: string[]; updatedAt: number };
+    if (Date.now() - data.updatedAt > PAIRLIST_MAX_AGE_MS) return null; // 过期
+    // 合并持仓 symbol（确保已开仓的币种始终被监控，即使跌出 pairlist）
+    const merged = [...new Set([...data.symbols, ...heldSymbols])];
+    return merged;
+  } catch {
+    return null; // 文件不存在或解析失败时静默回退
+  }
+}
 
 // ── 最近 BTC 价格缓冲（用于崩盘检测）──
 const btcPriceBuffer: number[] = [];
 
 // ── 优雅退出标志（用对象包裹，避免 no-unnecessary-condition 误报）──
 const _state = { shuttingDown: false };
+
+// ── P6.2 链上稳定币流量缓存（每小时刷新，写入文件供 monitor.ts 读取）──
+const ONCHAIN_CACHE_PATH = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname),
+  "../../logs/onchain-cache.json"
+);
+const STABLECOIN_REFRESH_MS = 60 * 60 * 1000; // 每 60 分钟刷新
+
+let _stablecoinSignal: "accumulation" | "distribution" | "neutral" | undefined;
+let _stablecoinSignalFetchedAt = 0;
+
+function readOnchainCache(): "accumulation" | "distribution" | "neutral" | undefined {
+  try {
+    const raw = fs.readFileSync(ONCHAIN_CACHE_PATH, "utf-8");
+    const d = JSON.parse(raw) as { stablecoinSignal: string; fetchedAt: number };
+    if (Date.now() - d.fetchedAt > STABLECOIN_REFRESH_MS * 2) return undefined; // 超过 2h 视为过期
+    return d.stablecoinSignal as "accumulation" | "distribution" | "neutral";
+  } catch { return undefined; }
+}
+
+async function refreshStablecoinSignal(): Promise<void> {
+  if (Date.now() - _stablecoinSignalFetchedAt < STABLECOIN_REFRESH_MS) return;
+  try {
+    const ctx = await getOnChainContext();
+    _stablecoinSignal = ctx.stablecoinSignal;
+    _stablecoinSignalFetchedAt = Date.now();
+    // 写入文件供 monitor.ts（cron 进程）读取
+    fs.writeFileSync(ONCHAIN_CACHE_PATH, JSON.stringify({
+      stablecoinSignal: _stablecoinSignal,
+      fetchedAt: _stablecoinSignalFetchedAt,
+    }));
+    log.info(`🔗 链上稳定币信号已刷新: ${_stablecoinSignal}`);
+  } catch {
+    // 网络失败时从文件读上次值
+    if (!_stablecoinSignal) _stablecoinSignal = readOnchainCache();
+  }
+}
 
 const log = createLogger("live-monitor");
 
@@ -135,6 +196,7 @@ async function processSymbol(
     ...(externalBtcDomChange !== undefined ? { btcDomChange: externalBtcDomChange } : {}),
     ...(currentPosSide !== undefined ? { currentPosSide } : {}),
     ...(Object.keys(heldKlinesMap).length > 0 ? { heldKlinesMap } : {}),
+    ...(_stablecoinSignal !== undefined ? { stablecoinSignal: _stablecoinSignal } : {}),
   };
   const recentTrades = loadRecentTrades();
   const engineResult = processSignal(symbol, klines, cfg, externalCtx, recentTrades);
@@ -476,6 +538,9 @@ async function main(): Promise<void> {
       // BTC 价格获取失败不影响主流程
     }
 
+    // P6.2 链上稳定币信号刷新（每小时，失败静默跳过）
+    await refreshStablecoinSignal().catch(() => {});
+
     for (const scenario of scenarios) {
       if (_state.shuttingDown) break; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 
@@ -486,6 +551,12 @@ async function main(): Promise<void> {
       }
 
       const cfg = buildPaperRuntime(base, paperCfg, scenario);
+
+      // ── P6.2 动态 pairlist：若有效则覆盖配置里的静态 symbols ──
+      const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+      const heldSymbols = Object.keys(account.positions);
+      const pairlistSymbols = loadPairlistSymbols(heldSymbols);
+      if (pairlistSymbols) cfg.symbols = pairlistSymbols;
 
       // ── DataProvider：预拉所有 symbol K 线，减少重复 API 请求 ──
       const macdMinBars = cfg.strategy.macd.enabled

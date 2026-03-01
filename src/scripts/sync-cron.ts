@@ -63,9 +63,10 @@ function syncCron(): void {
   let enabledCount = 0;
 
   for (const [taskName, taskCfg] of Object.entries(schedule)) {
-    const scriptFile = TASK_SCRIPTS[taskName];
+    // 优先使用 yaml 中的 script 字段，其次查 TASK_SCRIPTS 硬编码映射
+    const scriptFile = (taskCfg as { script?: string }).script ?? TASK_SCRIPTS[taskName];
     if (!scriptFile) {
-      console.warn(`  ⚠️  未知任务: ${taskName}，跳过`);
+      console.warn(`  ⚠️  未知任务: ${taskName}（无 script 字段也不在映射表），跳过`);
       continue;
     }
 

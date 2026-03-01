@@ -158,6 +158,7 @@ async function scanSymbol(
     }
 
     // ── 统一信号引擎（F3）────────────────────────────────
+    const onchainSignal = readOnchainSignal();
     const externalCtx = {
       ...(externalCvd !== undefined ? { cvd: externalCvd } : {}),
       ...(externalFundingRate !== undefined ? { fundingRate: externalFundingRate } : {}),
@@ -165,6 +166,7 @@ async function scanSymbol(
       ...(externalBtcDomChange !== undefined ? { btcDomChange: externalBtcDomChange } : {}),
       ...(currentPosSide !== undefined ? { currentPosSide } : {}),
       ...(Object.keys(heldKlinesMap).length > 0 ? { heldKlinesMap } : {}),
+      ...(onchainSignal !== undefined ? { stablecoinSignal: onchainSignal } : {}),
     };
     const recentTrades = loadRecentTrades();
     const engineResult = processSignal(symbol, klines, cfg, externalCtx, recentTrades);
@@ -311,11 +313,41 @@ async function scanSymbol(
 // 单个场景完整运行
 // ─────────────────────────────────────────────────────
 
+// P6.2 动态 pairlist：读取 logs/current-pairlist.json，若有效则覆盖配置里的静态 symbols
+const PAIRLIST_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../logs/current-pairlist.json");
+const PAIRLIST_MAX_AGE_MS = 25 * 60 * 60 * 1000;
+
+// P6.2 链上稳定币流量缓存（由 live-monitor 写入，monitor.ts 只读）
+const ONCHAIN_CACHE_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../logs/onchain-cache.json");
+function readOnchainSignal(): "accumulation" | "distribution" | "neutral" | undefined {
+  try {
+    const d = JSON.parse(fs.readFileSync(ONCHAIN_CACHE_PATH, "utf-8")) as { stablecoinSignal: string; fetchedAt: number };
+    if (Date.now() - d.fetchedAt > 2 * 60 * 60 * 1000) return undefined;
+    return d.stablecoinSignal as "accumulation" | "distribution" | "neutral";
+  } catch { return undefined; }
+}
+
+function loadPairlistSymbols(heldSymbols: string[]): string[] | null {
+  try {
+    const raw = fs.readFileSync(PAIRLIST_PATH, "utf-8");
+    const data = JSON.parse(raw) as { symbols: string[]; updatedAt: number };
+    if (Date.now() - data.updatedAt > PAIRLIST_MAX_AGE_MS) return null;
+    return [...new Set([...data.symbols, ...heldSymbols])];
+  } catch {
+    return null;
+  }
+}
+
 async function runScenario(cfg: RuntimeConfig): Promise<void> {
   const sid = cfg.paper.scenarioId;
   const marketLabel = `[${cfg.exchange.market.toUpperCase()}${cfg.exchange.leverage?.enabled ? ` ${cfg.exchange.leverage.default}x` : ""}]`;
   const prefix = `${marketLabel} `;
   const state = loadState(sid);
+
+  // P6.2 pairlist 覆盖
+  const heldSymbols = Object.keys(loadAccount(cfg.paper.initial_usdt, sid).positions);
+  const pairlistSymbols = loadPairlistSymbols(heldSymbols);
+  if (pairlistSymbols) cfg.symbols = pairlistSymbols;
 
   if (state.paused) {
     log.warn(`${prefix}⚠️ 策略已暂停（触发最大亏损上限）`);

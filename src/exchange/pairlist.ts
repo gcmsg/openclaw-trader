@@ -43,17 +43,16 @@ export interface BinanceTicker24h {
 
 /** 稳定币 base 名称（排除这些作为 base 资产的 USDT 对） */
 const STABLECOIN_BASES = new Set([
-  "USDT",
-  "BUSD",
-  "USDC",
-  "DAI",
-  "TUSD",
-  "USDP",
-  "FDUSD",
-  "USDD",
-  "FRAX",
-  "PYUSD",
-  "SUSD",
+  "USDT", "BUSD", "USDC", "DAI", "TUSD", "USDP",
+  "FDUSD", "USDD", "FRAX", "PYUSD", "SUSD",
+  "USD1", "USDX", "USDE", "USDJ", // 新增：USD1(Circle)等新稳定币
+]);
+
+/** 资产支撑代币（黄金/商品等，不是加密资产）*/
+const NON_CRYPTO_BASES = new Set([
+  "PAXG",  // 黄金代币 (Paxos Gold)
+  "XAUT",  // Tether Gold
+  "DGLD",  // DigitGold
 ]);
 
 /** 杠杆代币后缀 */
@@ -71,6 +70,13 @@ function isLeveragedToken(symbol: string): boolean {
   if (!symbol.endsWith("USDT")) return false;
   const base = symbol.slice(0, -4);
   return LEVERAGED_SUFFIXES.some((suffix) => base.endsWith(suffix));
+}
+
+/** 判断是否是非加密资产（黄金/商品代币等） */
+function isNonCryptoAsset(symbol: string): boolean {
+  if (!symbol.endsWith("USDT")) return false;
+  const base = symbol.slice(0, -4);
+  return NON_CRYPTO_BASES.has(base);
 }
 
 // ─────────────────────────────────────────────────────
@@ -123,6 +129,8 @@ export async function fetchDynamicPairlist(cfg?: PairlistConfig): Promise<Ranked
     if (isStablecoinPair(t.symbol)) return false;
     // 排除杠杆代币
     if (isLeveragedToken(t.symbol)) return false;
+    // 排除非加密资产（黄金/商品代币等）
+    if (isNonCryptoAsset(t.symbol)) return false;
     // 排除 blacklist
     if (blacklist.includes(t.symbol)) return false;
     // 成交量过滤

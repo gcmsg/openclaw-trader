@@ -294,6 +294,7 @@ export interface StrategyConfig {
       enabled: boolean;
       cron: string;
       timeout_minutes: number;
+      script?: string; // 可选：直接指定脚本路径（优先于 TASK_SCRIPTS 硬编码映射）
     }
   >;
   mode: TradeMode;
