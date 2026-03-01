@@ -26,6 +26,13 @@ import { loadNewsReport, evaluateSentimentGate } from "../news/sentiment-gate.js
 import { readSentimentCache } from "../news/sentiment-cache.js";
 import { notifySignal, notifyError } from "../notify/openclaw.js";
 import { loadAccount, saveAccount } from "../paper/account.js";
+import type { PaperAccount } from "../paper/account.js";
+import {
+  calcCorrelationAdjustedSize,
+  calcPortfolioExposure,
+  formatPortfolioExposure,
+} from "../strategy/portfolio-risk.js";
+import type { PositionWeight } from "../strategy/portfolio-risk.js";
 import { logSignal, closeSignal } from "../strategy/signal-history.js";
 import { readEmergencyHalt } from "../news/emergency-monitor.js";
 import { checkEventRisk, loadCalendar } from "../strategy/events-calendar.js";
@@ -68,6 +75,28 @@ function loadPairlistSymbols(heldSymbols: string[]): string[] | null {
   } catch {
     return null; // 文件不存在或解析失败时静默回退
   }
+}
+
+/**
+ * 将 paper 账户持仓转换为 PositionWeight[]（供 portfolio-risk 使用）
+ * @param account   当前账户快照
+ * @param priceMap  symbol → 最新价格（找不到则回退到入场价）
+ */
+function buildPositionWeights(
+  account: PaperAccount,
+  priceMap: Record<string, number>,
+): PositionWeight[] {
+  const entries = Object.entries(account.positions);
+  if (entries.length === 0) return [];
+  const notionals = entries.map(([sym, pos]) => pos.quantity * (priceMap[sym] ?? pos.entryPrice));
+  const totalEquity = account.usdt + notionals.reduce((s, v) => s + v, 0);
+  if (totalEquity <= 0) return [];
+  return entries.map(([sym, pos], i) => ({
+    symbol: sym,
+    side: pos.side ?? "long",
+    notionalUsdt: notionals[i] ?? 0,
+    weight: (notionals[i] ?? 0) / totalEquity,
+  }));
 }
 
 // ── 最近 BTC 价格缓冲（用于崩盘检测）──
@@ -288,6 +317,38 @@ async function processSymbol(
         }
       } catch { /* Kelly 计算失败不影响主流程 */ }
     }
+
+    // ── Portfolio Risk：相关性热度连续缩仓（P7.1）────────────────────
+    // 在 Kelly 之后、开仓之前，用持仓组合的相关性热度进一步调整仓位比例
+    // 与 signal-engine 内的二值相关性过滤互补：signal-engine 拒绝强相关，
+    // 本处对中等相关进行连续缩减（热度越高，仓位越小）
+    try {
+      const priceMap: Record<string, number> = { [symbol]: indicators.price };
+      for (const [sym, klns] of Object.entries(heldKlinesMap)) {
+        const last = klns.at(-1);
+        if (last) priceMap[sym] = last.close;
+      }
+      const posWeights = buildPositionWeights(currentAccount, priceMap)
+        .filter((pw) => pw.symbol !== symbol); // 排除自身
+      if (posWeights.length > 0) {
+        const klinesBySymbol: Record<string, Kline[]> = { [symbol]: klines, ...heldKlinesMap };
+        const portfolioHeat = calcCorrelationAdjustedSize(
+          symbol,
+          signal.type === "buy" ? "long" : "short",
+          effectiveRatio,
+          posWeights,
+          klinesBySymbol,
+        );
+        log.info(
+          `${label} ${symbol}: 📊 组合热度 ${(portfolioHeat.heat * 100).toFixed(0)}% → ${portfolioHeat.decision}（${portfolioHeat.reason}）`
+        );
+        if (portfolioHeat.decision === "blocked") {
+          log.info(`${label} ${symbol}: 🚫 组合热度过高，拒绝开仓`);
+          return;
+        }
+        effectiveRatio = portfolioHeat.adjustedPositionRatio;
+      }
+    } catch { /* portfolio heat 计算失败不阻断主流程 */ }
 
     // ── 构建最终配置 → 执行 ──────────────────────────
     const adjustedCfg = { ...cfg, risk: { ...effectiveRisk, position_ratio: effectiveRatio } };
@@ -574,6 +635,28 @@ async function main(): Promise<void> {
       try {
         // 先检查止损/止盈
         await checkExits(cfg);
+
+        // P7.1 组合暴露度摘要日志（有持仓时输出，辅助监控风险）
+        try {
+          const accForExp = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+          if (Object.keys(accForExp.positions).length > 0) {
+            const priceMap: Record<string, number> = {};
+            for (const sym of cfg.symbols) {
+              const kl = provider.get(sym, cfg.timeframe);
+              const last = kl?.at(-1);
+              if (last) priceMap[sym] = last.close;
+            }
+            const posWeights = buildPositionWeights(accForExp, priceMap);
+            const totalEquity = accForExp.usdt + posWeights.reduce((s, pw) => s + pw.notionalUsdt, 0);
+            const klinesBySymbol: Record<string, Kline[]> = {};
+            for (const sym of cfg.symbols) {
+              const kl = provider.get(sym, cfg.timeframe);
+              if (kl) klinesBySymbol[sym] = kl;
+            }
+            const exposure = calcPortfolioExposure(posWeights, totalEquity, klinesBySymbol);
+            log.info(`[${scenario.id}] ${formatPortfolioExposure(exposure).replace(/\*\*/g, "")}`);
+          }
+        } catch { /* exposure summary 失败不影响主流程 */ }
 
         // 再检测买卖信号
         for (const symbol of cfg.symbols) {

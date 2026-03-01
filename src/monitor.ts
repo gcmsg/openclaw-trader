@@ -32,6 +32,13 @@ import { checkEventRisk, loadCalendar } from "./strategy/events-calendar.js";
 import { readCvdCache } from "./exchange/order-flow.js";
 import { calcKellyRatio } from "./strategy/kelly.js";
 import { loadAccount } from "./paper/account.js";
+import type { PaperAccount } from "./paper/account.js";
+import {
+  calcCorrelationAdjustedSize,
+  calcPortfolioExposure,
+  formatPortfolioExposure,
+} from "./strategy/portfolio-risk.js";
+import type { PositionWeight } from "./strategy/portfolio-risk.js";
 import { ping } from "./health/heartbeat.js";
 import { isKillSwitchActive } from "./health/kill-switch.js";
 import { loadRuntimeConfigs } from "./config/loader.js";
@@ -282,6 +289,33 @@ async function scanSymbol(
         } catch (e: unknown) { log.warn(`${scenarioPrefix}${symbol}: ⚠️ Kelly 计算失败: ${e instanceof Error ? e.message : String(e)}`); }
       }
 
+      // P7.1 Portfolio Risk：相关性热度连续缩仓（仅开仓信号）
+      // 与 signal-engine 内的二值过滤互补：中等相关时按热度连续缩减仓位
+      if (signal.type === "buy" || signal.type === "short") {
+        try {
+          const priceMap: Record<string, number> = { [symbol]: indicators.price };
+          for (const [sym, klns] of Object.entries(heldKlinesMap)) {
+            const last = klns.at(-1);
+            if (last) priceMap[sym] = last.close;
+          }
+          const posWeights = buildPositionWeights(currentAccount, priceMap)
+            .filter((pw) => pw.symbol !== symbol);
+          if (posWeights.length > 0) {
+            const klinesBySymbol: Record<string, Kline[]> = { [symbol]: klines, ...heldKlinesMap };
+            const portfolioHeat = calcCorrelationAdjustedSize(
+              symbol,
+              signal.type === "buy" ? "long" : "short",
+              effectiveRatio,
+              posWeights,
+              klinesBySymbol,
+            );
+            log.info(`${scenarioPrefix}${symbol}: 📊 组合热度 ${(portfolioHeat.heat * 100).toFixed(0)}% → ${portfolioHeat.decision}（${portfolioHeat.reason}）`);
+            if (portfolioHeat.decision === "blocked") return;
+            effectiveRatio = portfolioHeat.adjustedPositionRatio;
+          }
+        } catch (e: unknown) { log.warn(`${scenarioPrefix}${symbol}: ⚠️ 组合热度计算失败: ${e instanceof Error ? e.message : String(e)}`); }
+      }
+
       // P5.2: 合并 regime 参数覆盖（止盈/止损/ROI Table 等）+ 仓位比例调整
       const adjustedCfg = { ...cfg, risk: { ...regimeEffectiveRisk, position_ratio: effectiveRatio } };
       const result = handleSignal(signal, adjustedCfg);
@@ -307,6 +341,27 @@ async function scanSymbol(
     log.error(`${scenarioPrefix}${symbol}: 错误 - ${error.message}`);
     if (cfg.notify.on_error) notifyError(symbol, error);
   }
+}
+
+// ─────────────────────────────────────────────────────
+// Portfolio Risk 辅助（P7.1）
+// ─────────────────────────────────────────────────────
+
+function buildPositionWeights(
+  account: PaperAccount,
+  priceMap: Record<string, number>,
+): PositionWeight[] {
+  const entries = Object.entries(account.positions);
+  if (entries.length === 0) return [];
+  const notionals = entries.map(([sym, pos]) => pos.quantity * (priceMap[sym] ?? pos.entryPrice));
+  const totalEquity = account.usdt + notionals.reduce((s, v) => s + v, 0);
+  if (totalEquity <= 0) return [];
+  return entries.map(([sym, pos], i) => ({
+    symbol: sym,
+    side: pos.side ?? "long",
+    notionalUsdt: notionals[i] ?? 0,
+    weight: (notionals[i] ?? 0) / totalEquity,
+  }));
 }
 
 // ─────────────────────────────────────────────────────
@@ -455,6 +510,23 @@ async function runScenario(cfg: RuntimeConfig): Promise<void> {
       state.lastReportAt = Date.now();
     }
   }
+
+  // P7.1 组合暴露度摘要日志（有持仓时输出，辅助风险监控）
+  try {
+    const accForExp = loadAccount(cfg.paper.initial_usdt, sid);
+    if (Object.keys(accForExp.positions).length > 0) {
+      const priceMap: Record<string, number> = { ...currentPrices };
+      const posWeights = buildPositionWeights(accForExp, priceMap);
+      const totalEquity = accForExp.usdt + posWeights.reduce((s, pw) => s + pw.notionalUsdt, 0);
+      const klinesBySymbol: Record<string, Kline[]> = {};
+      for (const sym of cfg.symbols) {
+        const kl = provider.get(sym, cfg.timeframe);
+        if (kl) klinesBySymbol[sym] = kl;
+      }
+      const exposure = calcPortfolioExposure(posWeights, totalEquity, klinesBySymbol);
+      log.info(`[${sid}] ${formatPortfolioExposure(exposure).replace(/\*\*/g, "")}`);
+    }
+  } catch { /* exposure summary 失败不影响主流程 */ }
 
   saveState(sid, state);
 }
