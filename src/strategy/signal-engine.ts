@@ -139,6 +139,19 @@ export interface ExternalContext {
   currentPosSide?: "long" | "short";
   /** 已持仓各 symbol 的 K 线（用于相关性检查）*/
   heldKlinesMap?: Record<string, Kline[]>;
+  /**
+   * BTC 期权 PCR（Put/Call Ratio），由 derivatives-data 获取
+   * > 1.5 = 极度看空（市场恐惧），可用作反转买入信号
+   * < 0.5 = 极度看涨（市场贪婪），可用作反转卖出信号
+   */
+  putCallRatio?: number;
+  /**
+   * 链上稳定币流量信号，由 onchain-data 计算
+   * accumulation = 净流入交易所（潜在买压） → 偏多
+   * distribution = 净流出交易所（潜在卖压）  → 偏空
+   * neutral = 无明显方向
+   */
+  stablecoinSignal?: "accumulation" | "distribution" | "neutral";
 }
 
 export interface SignalEngineResult {
@@ -210,6 +223,8 @@ export function processSignal(
   if (external.fundingRate !== undefined) indicators.fundingRate = external.fundingRate;
   if (external.btcDominance !== undefined) indicators.btcDominance = external.btcDominance;
   if (external.btcDomChange !== undefined) indicators.btcDomChange = external.btcDomChange;
+  if (external.putCallRatio !== undefined) indicators.putCallRatio = external.putCallRatio;
+  if (external.stablecoinSignal !== undefined) indicators.stablecoinSignal = external.stablecoinSignal;
 
   // ── 2b. Regime 前置分类（P5.3）─────────────────────────
   //

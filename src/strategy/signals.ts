@@ -206,6 +206,65 @@ const SIGNAL_CHECKERS: Record<string, SignalChecker> = {
     const threshold = cfg.strategy.volume?.low_ratio ?? 0.5;
     return ind.avgVolume > 0 && ind.volume <= ind.avgVolume * threshold;
   },
+
+  // ── 衍生品/链上数据 ────────────────────────────────
+
+  /**
+   * PCR 极度看空（期权 Put > Call，市场情绪悲观到极值）
+   *
+   * 当 Put/Call Ratio > 阈值（默认 1.5），表示市场极度悲观。
+   * 反转逻辑：极度悲观 → 做空力量耗尽 → 潜在反弹。
+   * 用法：配合 rsi_oversold / ma_bullish 作为多头确认条件之一。
+   *
+   * 可通过 strategy.pcr.bearish_threshold 配置（默认 1.5）
+   */
+  pcr_extreme_bearish: (ind, cfg) => {
+    if (ind.putCallRatio === undefined) return false;
+    const threshold = (cfg.strategy as unknown as { pcr?: { bearish_threshold?: number } })
+      .pcr?.bearish_threshold ?? 1.5;
+    return ind.putCallRatio > threshold;
+  },
+
+  /**
+   * PCR 极度看涨（期权 Put < Call，市场情绪乐观到极值）
+   *
+   * 当 Put/Call Ratio < 阈值（默认 0.5），表示市场极度贪婪。
+   * 反转逻辑：极度贪婪 → 做多力量耗尽 → 潜在回调。
+   * 用法：配合 rsi_overbought / ma_bearish 作为空头确认条件之一。
+   *
+   * 可通过 strategy.pcr.bullish_threshold 配置（默认 0.5）
+   */
+  pcr_extreme_bullish: (ind, cfg) => {
+    if (ind.putCallRatio === undefined) return false;
+    const threshold = (cfg.strategy as unknown as { pcr?: { bullish_threshold?: number } })
+      .pcr?.bullish_threshold ?? 0.5;
+    return ind.putCallRatio < threshold;
+  },
+
+  /**
+   * 链上稳定币净流入（积累信号）
+   *
+   * 稳定币流入交易所 = 准备买入的资金增加 → 潜在买压。
+   * 用作多头过滤器：价格信号 + 链上资金流入 = 更高可信度。
+   * 数据源：DefiLlama Stablecoins API（onchain-data.ts）
+   */
+  stablecoin_accumulation: (ind) => ind.stablecoinSignal === "accumulation",
+
+  /**
+   * 链上稳定币净流出（分发信号）
+   *
+   * 稳定币流出交易所 = 持有者获利了结或规避风险。
+   * 用作空头过滤器：价格下跌 + 链上资金流出 = 下跌动力更强。
+   */
+  stablecoin_distribution: (ind) => ind.stablecoinSignal === "distribution",
+
+  /**
+   * 无明确链上方向（排除过滤器）
+   * 当链上数据方向不明确时（中性），不作为信号触发依据。
+   * 通常用在 sell 信号数组中表示"链上不看多时才卖"。
+   */
+  stablecoin_not_accumulation: (ind) =>
+    ind.stablecoinSignal === undefined || ind.stablecoinSignal !== "accumulation",
 };
 
 /** 内部辅助：检查一组条件是否全部满足，返回 [是否满足, 满足的条件名列表] */

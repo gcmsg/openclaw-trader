@@ -58,6 +58,10 @@ export interface Indicators {
   prevPrice?: number;   // 前一根 K 线收盘价（用于 vwap_bounce 等跨 K 信号）
   btcDominance?: number; // BTC 市值主导率百分比（如 54.3），由 market-analysis 注入
   btcDomChange?: number; // 7 日主导率变化量（正=上升=山寨风险；负=下降=山寨机会）
+  // ── 衍生品 / 链上数据（market-analysis/monitor 注入）───────────────
+  putCallRatio?: number;  // 期权 PCR（> 1.5 = 极度看空/反转买入机会，< 0.5 = 极度看涨/反转卖出机会）
+  /** 链上稳定币流量信号 */
+  stablecoinSignal?: "accumulation" | "distribution" | "neutral";
 }
 
 export interface Signal {

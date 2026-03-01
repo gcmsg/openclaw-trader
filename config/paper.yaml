@@ -205,9 +205,9 @@ scenarios:
   # ══════════════════════════════════════════
 
   - id: "testnet-default"
-    name: "Testnet × 默认策略"
+    name: "Testnet × 现货多头"
     enabled: true               # ✅ 已配置 .secrets/binance-testnet.json
-    strategy_id: "long-short"   # 多空双向策略（替代纯多头 default）
+    strategy_id: "long-short"   # 注意：spot 市场只有做多信号生效，short/cover 信号被自动跳过
     initial_usdt: 10000         # 与 Testnet 账户实际余额保持一致
     fee_rate: 0.001
     slippage_percent: 0.05       # 市价单典型滑点（0 会产生虚假乐观结果）
@@ -281,7 +281,7 @@ scenarios:
   # ─── Futures Testnet 双向场景 ────────────────────────────────
   - id: futures-long-short
     name: "Futures Testnet 双向测试"
-    enabled: false               # 先跑空头场景，稳定后再启用双向
+    enabled: true                # ✅ 2026-03-01 启用：支持做空，期货 testnet
     strategy_id: "long-short"   # config/strategies/long-short.yaml
     initial_usdt: 5000
     fee_rate: 0.0004
@@ -290,6 +290,28 @@ scenarios:
       market: futures
       testnet: true
       credentials_path: ".secrets/binance-futures-testnet.json"
+    risk:
+      stop_loss_percent: 5
+      take_profit_percent: 15
+      trailing_stop:
+        enabled: true
+        activation_percent: 7
+        callback_percent: 2.5
+      position_ratio: 0.18
+      max_positions: 4
+      max_position_per_symbol: 0.25
+      max_total_loss_percent: 20
+      daily_loss_limit_percent: 8
+      atr_position:
+        enabled: true
+        risk_per_trade_percent: 2
+        atr_multiplier: 1.5
+        max_position_ratio: 0.25
+    symbols:
+      - BTCUSDT
+      - ETHUSDT
+      - SOLUSDT
+      - BNBUSDT
 
   # ══════════════════════════════════════════
   # DCA 分批建仓场景（极度恐惧时逐步抄底）
