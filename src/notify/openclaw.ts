@@ -37,6 +37,10 @@ function markSignalSent(symbol: string, type: string): void {
   } catch { /* ignore write errors */ }
 }
 
+// ── notifyError 冷却（同一 context 30 分钟内只发一次）────────────
+const ERROR_COOLDOWN_MS = 30 * 60_000;
+const _errorLastNotified = new Map<string, number>();
+
 /** 向 OpenClaw 主会话注入系统事件，触发 Mia 决策 */
 function sendToAgent(message: string): void {
   try {
@@ -138,8 +142,16 @@ export function notifyStopLoss(
   sendToAgent(msg);
 }
 
-/** 错误通知 */
+/** 错误通知（同一 context 30 分钟内只发一次，防止持续故障轰炸）*/
 export function notifyError(context: string, error: Error): void {
+  const now = Date.now();
+  const last = _errorLastNotified.get(context) ?? 0;
+  if (now - last < ERROR_COOLDOWN_MS) {
+    console.warn(`[notifyError] cooldown: ${context} (${Math.round((now - last) / 60000)}min ago)`);
+    return;
+  }
+  _errorLastNotified.set(context, now);
+
   const msg = [
     `⚠️ **[监控脚本错误]**`,
     ``,
