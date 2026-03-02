@@ -49,6 +49,7 @@ import {
 } from "../health/kill-switch.js";
 import type { RuntimeConfig, Kline, Indicators } from "../types.js";
 import { createLogger } from "../logger.js";
+import { ping } from "../health/heartbeat.js";
 
 const POLL_INTERVAL_MS = 60 * 1000; // 1 分钟轮询
 const BTC_CRASH_THRESHOLD_PCT = 8;  // BTC 1小时跌幅触发阈值（默认 8%）
@@ -625,6 +626,9 @@ async function main(): Promise<void> {
   // 轮询循环
   for (;;) {
     if (_state.shuttingDown) break;
+
+    // Watchdog 心跳：每轮触发一次，watchdog 可监控 live-monitor 存活状态
+    ping("live_monitor")();
 
     // P6.7: BTC 崩盘检测
     try {

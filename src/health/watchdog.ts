@@ -34,6 +34,7 @@ const GATEWAY_TOKEN = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
 const TASKS_TO_WATCH = [
   { name: "price_monitor", alertAfterMinutes: 3 },
   { name: "health_check", alertAfterMinutes: 65 },
+  { name: "live_monitor", alertAfterMinutes: 5 }, // live-monitor 每 60s ping 一次，超 5min 视为崩溃
 ];
 const COOLDOWN_MINUTES = 30; // 同一任务最少间隔 30 分钟才再告警
 
