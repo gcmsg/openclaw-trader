@@ -555,8 +555,14 @@ async function main(): Promise<void> {
   const scenarioNames = runtimes.map((r) => r.paper.scenarioId).join(", ");
   log.info(`模式: ${mode} | 场景: ${scenarioNames} | 默认币种: ${firstRuntime.symbols.join(", ")}`);
 
-  // 所有场景并行运行
-  await Promise.all(runtimes.map((cfg) => runScenario(cfg)));
+  // 跳过 testnet 场景（由 live-monitor.ts 专属处理，避免 paper 账户文件冲突）
+  const paperOnly = runtimes.filter((cfg) => !cfg.exchange.testnet);
+  const skipped = runtimes.filter((cfg) => cfg.exchange.testnet).map((c) => c.paper.scenarioId);
+  if (skipped.length > 0) {
+    log.info(`⏭ 跳过 testnet 场景（由 live-monitor.ts 管理）：${skipped.join(", ")}`);
+  }
+  // 所有 paper 场景并行运行
+  await Promise.all(paperOnly.map((cfg) => runScenario(cfg)));
 
   done();
   log.info("─── 监控扫描完成 ───\n");
