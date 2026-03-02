@@ -105,6 +105,26 @@ const btcPriceBuffer: number[] = [];
 // ── 优雅退出标志（用对象包裹，避免 no-unnecessary-condition 误报）──
 const _state = { shuttingDown: false };
 
+// ── 重复过滤信号去重（同 symbol+signal 5 分钟内只打一次日志）────────────
+const _filteredCooldown = new Map<string, number>(); // "${symbol}:${signalType}" → lastLogMs
+const FILTERED_LOG_COOLDOWN_MS = 5 * 60 * 1000;
+
+/** 返回 true = 应该打日志（首次 or 已超过冷却期），同时更新时间戳 */
+function shouldLogFiltered(symbol: string, signalType: string): boolean {
+  const key = `${symbol}:${signalType}`;
+  const last = _filteredCooldown.get(key) ?? 0;
+  if (Date.now() - last < FILTERED_LOG_COOLDOWN_MS) return false;
+  _filteredCooldown.set(key, Date.now());
+  return true;
+}
+
+/** 当信号变为 NONE 或通过过滤时，清除该 symbol 的冷却状态 */
+function clearFilteredCooldown(symbol: string): void {
+  for (const key of _filteredCooldown.keys()) {
+    if (key.startsWith(`${symbol}:`)) _filteredCooldown.delete(key);
+  }
+}
+
 // ── P6.2 链上稳定币流量缓存（每小时刷新，写入文件供 monitor.ts 读取）──
 const ONCHAIN_CACHE_PATH = path.resolve(
   path.dirname(new URL(import.meta.url).pathname),
@@ -143,6 +163,20 @@ async function refreshStablecoinSignal(): Promise<void> {
 }
 
 const log = createLogger("live-monitor");
+
+// ── 时间框架 → 缓存有效期（staleSec）──────────────────────────────────
+// staleSec = 蜡烛时长 - 90s，确保新蜡烛形成后 60s 内必定刷新
+const TF_STALE_MAP: Record<string, number> = {
+  "1m":  30,     // 1 分钟蜡烛 → 30s 缓存
+  "5m":  210,    // 5m → 3.5min
+  "15m": 810,    // 15m → 13.5min
+  "1h":  3510,   // 1h → 58.5min
+  "4h":  14310,  // 4h → 3h 58.5min
+  "1d":  86310,  // 1d → 23h 59.5min
+};
+function tfStaleSec(tf: string): number {
+  return TF_STALE_MAP[tf] ?? 3510; // 未知 TF 降级到 1h
+}
 
 // ─────────────────────────────────────────────────────
 // 单轮信号检测 + 执行（一个场景所有 symbol）
@@ -237,6 +271,9 @@ async function processSymbol(
 
   const { indicators, signal, effectiveRisk, effectivePositionRatio, rejected, rejectionReason, regimeLabel } = engineResult;
 
+  // ── 重复 rejected 信号去重：5 分钟内不重复打同一过滤原因 ──
+  if (rejected && !shouldLogFiltered(symbol, signal.type)) return;
+
   log.info(
     `${label} ${symbol}: RSI=${indicators.rsi.toFixed(1)} ` +
     `EMA${cfg.strategy.ma.short}=$${indicators.maShort.toFixed(2)} ` +
@@ -251,7 +288,10 @@ async function processSymbol(
     return;
   }
 
-  if (signal.type === "none") return;
+  if (signal.type === "none") {
+    clearFilteredCooldown(symbol); // 信号消失 → 重置，下次再出现时正常打日志
+    return;
+  }
 
   // ── 以下为开仓信号额外过滤（买入/开空）─────────────
   if (signal.type === "buy" || signal.type === "short") {
@@ -572,6 +612,16 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => { handleShutdown("SIGTERM"); });
   process.on("SIGINT", () => { handleShutdown("SIGINT"); });
 
+  // ── 持久化 DataProvider（每场景一个，跨轮复用，避免 4h K 线每 60s 重拉）──
+  // staleSec 按时间框架设置，确保新蜡烛形成后 <60s 内必定刷新数据
+  const dataProviders = new Map<string, DataProvider>();
+  for (const scenario of scenarios) {
+    const cfg = buildPaperRuntime(base, paperCfg, scenario);
+    const stale = tfStaleSec(cfg.timeframe);
+    dataProviders.set(scenario.id, new DataProvider(stale));
+    log.info(`📦 ${scenario.id}: DataProvider 缓存有效期 ${stale}s（timeframe=${cfg.timeframe}）`);
+  }
+
   // 轮询循环
   for (;;) {
     if (_state.shuttingDown) break;
@@ -619,12 +669,12 @@ async function main(): Promise<void> {
       const pairlistSymbols = loadPairlistSymbols(heldSymbols);
       if (pairlistSymbols) cfg.symbols = pairlistSymbols;
 
-      // ── DataProvider：预拉所有 symbol K 线，减少重复 API 请求 ──
+      // ── DataProvider：复用持久化实例，只在 staleSec 到期后才重拉 ──
       const macdMinBars = cfg.strategy.macd.enabled
         ? cfg.strategy.macd.slow + cfg.strategy.macd.signal + 1
         : 0;
       const klineLimit = Math.max(cfg.strategy.ma.long, cfg.strategy.rsi.period, macdMinBars) + 11;
-      const provider = new DataProvider(30);
+      const provider = dataProviders.get(scenario.id) ?? new DataProvider(tfStaleSec(cfg.timeframe));
       await provider.refresh(cfg.symbols, cfg.timeframe, klineLimit);
       // MTF 预拉
       if (cfg.trend_timeframe && cfg.trend_timeframe !== cfg.timeframe) {

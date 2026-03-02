@@ -12,6 +12,14 @@
 
 import type { Kline } from "../types.js";
 
+/** 根据价格量级自动选择小数位，避免微价币显示 "$0" */
+function fmtPrice(value: number): string {
+  if (value >= 100) return value.toFixed(0);
+  if (value >= 1)   return value.toFixed(2);
+  if (value >= 0.01) return value.toFixed(4);
+  return value.toFixed(6);
+}
+
 // ─── 类型 ──────────────────────────────────────────────
 
 export interface RrCheckResult {
@@ -81,7 +89,7 @@ export function checkRiskReward(
       passed: false,
       support,
       resistance,
-      reason: `价格 $${price.toFixed(2)} 已超出近期区间（支撑 $${support.toFixed(2)}–阻力 $${resistance.toFixed(2)}）`,
+      reason: `价格 $${fmtPrice(price)} 已超出近期区间（支撑 $${fmtPrice(support)}–阻力 $${fmtPrice(resistance)}）`,
     };
   }
 
@@ -90,8 +98,8 @@ export function checkRiskReward(
   const dirLabel = side === "long" ? "多" : "空";
 
   const reason = passed
-    ? `R:R=${ratio.toFixed(2)} ≥ ${minRr}（${dirLabel}），阻力 $${resistance.toFixed(0)} / 支撑 $${support.toFixed(0)}`
-    : `R:R=${ratio.toFixed(2)} < ${minRr}（${dirLabel}），盈利空间不足（距阻力 $${distUp.toFixed(0)} / 距支撑 $${distDown.toFixed(0)}）`;
+    ? `R:R=${ratio.toFixed(2)} ≥ ${minRr}（${dirLabel}），阻力 $${fmtPrice(resistance)} / 支撑 $${fmtPrice(support)}`
+    : `R:R=${ratio.toFixed(2)} < ${minRr}（${dirLabel}），盈利空间不足（距阻力 $${fmtPrice(distUp)} / 距支撑 $${fmtPrice(distDown)}）`;
 
   return { ratio, passed, support, resistance, reason };
 }
