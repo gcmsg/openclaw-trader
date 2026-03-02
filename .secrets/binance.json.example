@@ -1,0 +1,4 @@
+{
+  "apiKey": "your_binance_api_key_here",
+  "secretKey": "your_binance_secret_key_here"
+}
