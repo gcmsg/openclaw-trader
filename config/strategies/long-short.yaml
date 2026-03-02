@@ -4,8 +4,8 @@
 name: "双向趋势策略"
 description: "MA 趋势多空两用：多头时做多，空头时做空"
 
-timeframe: "1h"
-trend_timeframe: "4h"
+timeframe: "4h"
+trend_timeframe: "1d"
 
 strategy:
   ma:
@@ -13,8 +13,8 @@ strategy:
     long: 60
   rsi:
     period: 14
-    oversold: 35
-    overbought: 65
+    oversold: 30          # 4h 时间框架放宽：避免在超卖区间把空单信号也挡掉
+    overbought: 70        # 4h 时间框架放宽：更大趋势才算超买
   macd:
     enabled: true
     fast: 12
@@ -31,14 +31,14 @@ strategy:
 signals:
   buy:
     - ma_bullish           # EMA20 > EMA60
-    - macd_golden_cross    # MACD 金叉（精准入场）
-    - rsi_not_overbought   # RSI < 65
+    - macd_bullish         # MACD 线 > 信号线 + 柱状图为正（4h 持续状态，而非仅金叉瞬间）
+    - rsi_not_overbought   # RSI < 70
   sell:
     - ma_bearish           # 趋势反转，平多
   short:
     - ma_bearish           # EMA20 < EMA60
-    - macd_death_cross     # MACD 死叉（精准做空入场）
-    - rsi_not_oversold     # RSI > 35（避免底部追空）
+    - macd_bearish         # MACD 线 < 信号线 + 柱状图为负（4h 持续状态，捕捉进行中的空头趋势）
+    - rsi_not_oversold     # RSI > 30（4h 时间框架放宽，避免底部追空）
   cover:
     - ma_bullish           # 趋势反转，平空
 
