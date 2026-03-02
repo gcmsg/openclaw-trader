@@ -15,10 +15,25 @@ import { createLogger } from "../logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.resolve(__dirname, "../../config/strategy.yaml");
+const NOTIFY_STATE_PATH = path.resolve(__dirname, "../../logs/health-notify-state.json");
+const NOTIFY_COOLDOWN_MS = 2 * 60 * 60 * 1000; // 同类告警 2 小时内只发一次
 const log = createLogger("health", path.resolve(__dirname, "../../logs/health.log"));
 
 const OPENCLAW_BIN = process.env["OPENCLAW_BIN"] ?? "openclaw";
 const GATEWAY_TOKEN = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
+
+/** 读取上次告警时间，用于冷却判断 */
+function loadNotifyState(): { lastNotifiedAt: number } {
+  try {
+    return JSON.parse(fs.readFileSync(NOTIFY_STATE_PATH, "utf-8")) as { lastNotifiedAt: number };
+  } catch {
+    return { lastNotifiedAt: 0 };
+  }
+}
+
+function saveNotifyState(state: { lastNotifiedAt: number }): void {
+  fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify(state, null, 2));
+}
 
 function notify(message: string): void {
   const args = ["system", "event", "--mode", "now"];
@@ -70,19 +85,27 @@ function main(): void {
   const hasIssues = results.some((r) => r.status === "error" || r.status === "warn");
   const hasNever = results.some((r) => r.status === "never");
 
-  // 只有有问题时才发通知（正常时静默）
+  // 只有有问题时才发通知（正常时静默）；同类告警 2h 冷却，避免每 30min 轰炸
   if (hasIssues) {
-    const lines = [`🩺 **[健康检查告警]** ${new Date().toLocaleString("zh-CN")}`, ``];
+    const notifyState = loadNotifyState();
+    const sinceLastMs = Date.now() - notifyState.lastNotifiedAt;
+    if (sinceLastMs >= NOTIFY_COOLDOWN_MS) {
+      const lines = [`🩺 **[健康检查告警]** ${new Date().toLocaleString("zh-CN")}`, ``];
 
-    for (const r of results) {
-      if (r.status !== "ok") {
-        lines.push(`${STATUS_EMOJI[r.status]} **${r.name}**: ${r.message}`);
+      for (const r of results) {
+        if (r.status !== "ok") {
+          lines.push(`${STATUS_EMOJI[r.status]} **${r.name}**: ${r.message}`);
+        }
       }
-    }
 
-    lines.push(``, `请检查对应日志文件排查原因。`);
-    notify(lines.join("\n"));
-    log.warn("⚠️ 已发送告警通知");
+      lines.push(``, `请检查对应日志文件排查原因。`);
+      notify(lines.join("\n"));
+      saveNotifyState({ lastNotifiedAt: Date.now() });
+      log.warn("⚠️ 已发送告警通知");
+    } else {
+      const cooldownMin = Math.ceil((NOTIFY_COOLDOWN_MS - sinceLastMs) / 60000);
+      log.warn(`⚠️ 有问题但冷却中（还需 ${cooldownMin} 分钟），跳过通知`);
+    }
   } else if (hasNever) {
     // 从未运行的任务，只在日志里记录，不打扰主人
     log.info("🔘 部分任务从未执行（可能是刚部署）");
