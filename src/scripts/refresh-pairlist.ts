@@ -11,6 +11,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
 import { fetchDynamicPairlist, diffPairlist, formatPairlistReport } from "../exchange/pairlist.js";
+import { ping } from "../health/heartbeat.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOGS_DIR = path.resolve(__dirname, "../../logs");
@@ -57,6 +58,7 @@ function notify(message: string): void {
 }
 
 async function main(): Promise<void> {
+  const done = ping("pairlist_refresh");
   console.log("[pairlist] 🔄 刷新动态币种列表...");
 
   // 拉取最新列表
@@ -110,6 +112,7 @@ async function main(): Promise<void> {
   });
 
   console.log("[pairlist] 💾 已保存至", PAIRLIST_PATH);
+  done();
 }
 
 process.on("unhandledRejection", (reason: unknown) => {

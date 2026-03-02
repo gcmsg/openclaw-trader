@@ -9,7 +9,7 @@ import path from "path";
 import { parse } from "yaml";
 import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
-import { getTaskHealth, type TaskStatus } from "./heartbeat.js";
+import { ping, getTaskHealth, type TaskStatus } from "./heartbeat.js";
 import type { StrategyConfig } from "../types.js";
 import { createLogger } from "../logger.js";
 
@@ -35,6 +35,7 @@ const STATUS_EMOJI: Record<TaskStatus, string> = {
 };
 
 function main(): void {
+  const done = ping("health_check");
   log.info("─── 健康检查开始 ───");
 
   const cfg = parse(fs.readFileSync(CONFIG_PATH, "utf-8")) as StrategyConfig;
@@ -97,6 +98,7 @@ function main(): void {
   );
 
   log.info("─── 健康检查完成 ───\n");
+  done();
 }
 
 try {

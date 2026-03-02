@@ -146,7 +146,7 @@ schedule:
   weekly_report:
     enabled: true
     cron: "0 14 * * 0"       # 周日 14:00 UTC = 22:00 CST
-    timeout_minutes: 10
+    timeout_minutes: 10500   # 周级任务：7天 + 1h 缓冲
   health_check:
     enabled: true
     cron: "*/30 * * * *"
@@ -158,16 +158,16 @@ schedule:
   log_rotate:
     enabled: true
     cron: "0 0 * * *"     # 每天凌晨 0 点日志轮转 + 备份清理
-    timeout_minutes: 10
+    timeout_minutes: 1500  # 日级任务：24h + 1h 缓冲
   news_emergency:
     enabled: true
     cron: "*/10 * * * *"  # 每 10 分钟检查突发高危新闻
-    timeout_minutes: 5
+    timeout_minutes: 15   # 10min cron + 5min 缓冲
   pairlist_refresh:
     script: "src/scripts/refresh-pairlist.ts"
     enabled: true
     cron: "0 0 * * *"    # 每天凌晨 0:00 刷新动态币种列表（P6.2）
-    timeout_minutes: 5
+    timeout_minutes: 1500  # 日级任务：24h + 1h 缓冲
 
 # ───────────────────────────────────────
 # 运行模式

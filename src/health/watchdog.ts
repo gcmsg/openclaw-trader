@@ -19,12 +19,12 @@ import fs from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
-import { loadHeartbeats } from "./heartbeat.js";
+import { loadHeartbeats, ping } from "./heartbeat.js";
 import { createLogger } from "../logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STATE_PATH = path.resolve(__dirname, "../../logs/watchdog-state.json");
-const log = createLogger("watchdog", path.resolve(__dirname, "../../logs/health_check.log"));
+const log = createLogger("watchdog", path.resolve(__dirname, "../../logs/watchdog.log"));
 
 const OPENCLAW_BIN = process.env["OPENCLAW_BIN"] ?? "openclaw";
 const GATEWAY_TOKEN = process.env["OPENCLAW_GATEWAY_TOKEN"] ?? "";
@@ -150,6 +150,7 @@ export function runWatchdog(): WatchdogResult[] {
 // ─── CLI 入口 ─────────────────────────────────────────
 
 if (process.argv[1]?.includes("watchdog")) {
+  const done = ping("watchdog");
   log.info("── Watchdog 检查开始 ──");
   const results = runWatchdog();
   for (const r of results) {
@@ -157,4 +158,5 @@ if (process.argv[1]?.includes("watchdog")) {
     log.info(`${icon} ${r.task}: ${r.message}`);
   }
   log.info("── Watchdog 检查完成 ──");
+  done();
 }
