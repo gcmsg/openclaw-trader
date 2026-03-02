@@ -102,6 +102,9 @@ function buildPositionWeights(
 
 // ── 最近 BTC 价格缓冲（用于崩盘检测）──
 const btcPriceBuffer: number[] = [];
+/** 总亏损告警冷却（scenarioId → 上次通知时间戳），30 分钟内只通知一次 */
+const _totalLossNotifyAt = new Map<string, number>();
+const TOTAL_LOSS_NOTIFY_COOLDOWN_MS = 30 * 60_000;
 
 // ── 优雅退出标志（用对象包裹，避免 no-unnecessary-condition 误报）──
 const _state = { shuttingDown: false };
@@ -714,9 +717,14 @@ async function main(): Promise<void> {
           log.warn(
             `⛔ [${scenario.id}] 总亏损 ${lossPct.toFixed(2)}% 超过上限 ${cfg.risk.max_total_loss_percent}%，暂停开仓（仍执行平仓）`
           );
-          notifyError(scenario.id, new Error(
-            `⛔ 总亏损 ${lossPct.toFixed(2)}% 超过 ${cfg.risk.max_total_loss_percent}% 上限，已自动暂停开仓`
-          ));
+          // 30 分钟冷却，避免每轮都发通知
+          const lastNotify = _totalLossNotifyAt.get(scenario.id) ?? 0;
+          if (Date.now() - lastNotify >= TOTAL_LOSS_NOTIFY_COOLDOWN_MS) {
+            notifyError(scenario.id, new Error(
+              `⛔ 总亏损 ${lossPct.toFixed(2)}% 超过 ${cfg.risk.max_total_loss_percent}% 上限，已自动暂停开仓`
+            ));
+            _totalLossNotifyAt.set(scenario.id, Date.now());
+          }
         }
       }
 
