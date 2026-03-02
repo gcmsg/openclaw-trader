@@ -47,7 +47,7 @@ function buildCronLine(taskName: string, cronExpr: string, scriptFile: string): 
   return [
     cronExpr,
     ` cd ${PROJECT_ROOT}`,
-    ` && [ -f ${envFile} ] && source ${envFile}`,
+    ` && [ -f ${envFile} ] && { set -a; source ${envFile}; set +a; }`,
     ` && ${NODE_BIN} ${TSX_BIN} ${script}`,
     ` >> ${PROJECT_ROOT}/logs/${taskName}.log 2>&1`,
   ].join("");
