@@ -24,7 +24,7 @@ import https from "https";
 const FAPI_HOST = "fapi.binance.com";
 
 /** HTTP GET 工具（复用 Binance 请求模式） */
-function fetchJson<T>(hostname: string, path: string): Promise<T> {
+function fetchJson<T>(hostname: string, path: string, timeoutMs = 10_000): Promise<T> {
   return new Promise((resolve, reject) => {
     const req = https.request(
       { hostname, path, method: "GET", headers: { "Content-Type": "application/json" } },
@@ -40,6 +40,7 @@ function fetchJson<T>(hostname: string, path: string): Promise<T> {
         });
       }
     );
+    req.setTimeout(timeoutMs, () => { req.destroy(); reject(new Error(`futures-data timeout: ${hostname}${path}`)); });
     req.on("error", reject);
     req.end();
   });

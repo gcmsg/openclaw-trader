@@ -12,6 +12,7 @@ import { getPrice } from "../exchange/binance.js";
 import {
   loadAccount as _loadAccount,
   saveAccount as _saveAccount,
+  type PaperAccount,
   type PaperPosition as Position,
 } from "../paper/account.js";
 
@@ -43,11 +44,13 @@ interface MiaAccount {
 
 // 委托给 account.ts，使用原子写（.tmp → rename），防止进程意外退出时账户文件损坏
 function loadAccount(scenarioId: string): MiaAccount {
+  // MiaAccount 是 PaperAccount 的宽松超集（多 holdMs 等展示字段），结构兼容
   return _loadAccount(10000, scenarioId) as unknown as MiaAccount;
 }
 
 function saveAccount(scenarioId: string, account: MiaAccount): void {
-  _saveAccount(account as never, scenarioId);
+  // MiaAccount.trades 比 PaperTrade 多几个展示字段，JSON 结构兼容
+  _saveAccount(account as unknown as PaperAccount, scenarioId);
 }
 
 // ── 价格获取（复用 exchange/binance.ts 的 getPrice）───────
