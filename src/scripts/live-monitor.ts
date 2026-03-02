@@ -240,7 +240,9 @@ async function processSymbol(
 
   // 当前持仓方向 + 相关性 K 线
   const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
-  const currentPosSide = currentAccount.positions[symbol]?.side;
+  // side 是可选字段（旧数据兼容），有持仓但 side 未定义时默认 "long"，防止当成"无仓"处理
+  const _pos = currentAccount.positions[symbol];
+  const currentPosSide: "long" | "short" | undefined = _pos ? (_pos.side ?? "long") : undefined;
   const heldKlinesMap: Record<string, Kline[]> = {};
   if (cfg.risk.correlation_filter?.enabled) {
     const heldSymbols = Object.keys(currentAccount.positions).filter((s) => s !== symbol);
