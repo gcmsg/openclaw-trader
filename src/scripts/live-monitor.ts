@@ -494,15 +494,18 @@ async function checkExits(cfg: RuntimeConfig, executor?: LiveExecutor): Promise<
     } catch (_e: unknown) { /* 忽略单个 symbol 的价格获取失败 */ }
   }
 
-  const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+  // 先快照当前账户（用于事后读 signalHistoryId，此时持仓仍存在）
+  const accountSnapshot = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
   const exits = await execInstance.checkExitConditions(prices);
 
   // G3: 每轮检查超时订单（孤儿入场单取消，孤儿出场单取消后下轮重触发）
-  await execInstance.checkOrderTimeouts(account);
+  // 必须在 checkExitConditions 之后重新加载账户，避免用过期快照覆盖已平仓状态
+  const freshAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
+  await execInstance.checkOrderTimeouts(freshAccount);
   for (const e of exits) {
     log.info(`${label} ${e.symbol}: 触发出场 — ${e.reason} (${e.pnlPercent.toFixed(2)}%)`);
-    // 关闭信号历史记录
-    const sigHistId = account.positions[e.symbol]?.signalHistoryId;
+    // 关闭信号历史记录（用 accountSnapshot 读 signalHistoryId，平仓前的持仓快照）
+    const sigHistId = accountSnapshot.positions[e.symbol]?.signalHistoryId;
     if (sigHistId) {
       try {
         const exitReason = e.reason.includes("止损") ? "stop_loss"
