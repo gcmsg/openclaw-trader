@@ -148,7 +148,9 @@ async function scanSymbol(
 
     // 当前持仓方向 + 持仓 K 线（用于 processSignal 内部的相关性检查）
     const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
-    const currentPosSide = currentAccount.positions[symbol]?.side;
+    // side 可选字段兼容旧数据：有持仓但 side 未定义时默认 "long"
+    const _monPos = currentAccount.positions[symbol];
+    const currentPosSide: "long" | "short" | undefined = _monPos ? (_monPos.side ?? "long") : undefined;
     const heldKlinesMap: Record<string, Kline[]> = {};
     if (cfg.risk.correlation_filter?.enabled) {
       const heldSymbols = Object.keys(currentAccount.positions).filter((s) => s !== symbol);

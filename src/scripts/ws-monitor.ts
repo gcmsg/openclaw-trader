@@ -164,7 +164,9 @@ async function runStrategy(
   }
 
   const currentAccount = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
-  const currentPosSide = currentAccount.positions[symbol]?.side;
+  // side 可选字段兼容旧数据：有持仓但 side 未定义时默认 "long"
+  const _wsPos = currentAccount.positions[symbol];
+  const currentPosSide: "long" | "short" | undefined = _wsPos ? (_wsPos.side ?? "long") : undefined;
   const signal = detectSignal(symbol, indicators, cfg, currentPosSide);
 
   // MTF 过滤
