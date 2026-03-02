@@ -64,6 +64,8 @@ export interface EmergencyState {
   keywords: string[];
   source?: string;
   autoCleared?: boolean;
+  /** 已触发过 halt 的文章 URL → 过期时间戳（24h），防止同一文章循环触发 */
+  seenUrls?: Record<string, number>;
 }
 
 // ─── 文件 IO ──────────────────────────────────────────
@@ -84,12 +86,29 @@ export function readEmergencyHalt(): EmergencyState {
 }
 
 export function writeEmergencyHalt(reason: string, keywords: string[], source?: string): void {
+  // 读取现有 seenUrls（跨 halt 周期持久化，防止同一文章循环触发）
+  let seenUrls: Record<string, number> = {};
+  try {
+    const existing = JSON.parse(fs.readFileSync(EMERGENCY_PATH, "utf-8")) as EmergencyState;
+    if (existing.seenUrls) seenUrls = existing.seenUrls;
+  } catch { /* 首次触发，无历史 */ }
+
+  // 将触发文章的 URL 记录为 24h 冷却
+  if (source) seenUrls[source] = Date.now() + 24 * 3_600_000;
+
+  // 清理过期 seenUrls
+  const now = Date.now();
+  for (const url of Object.keys(seenUrls)) {
+    if ((seenUrls[url] ?? 0) < now) delete seenUrls[url];
+  }
+
   const state: EmergencyState = {
     halt: true,
     triggeredAt: Date.now(),
     expiresAt: Date.now() + 2 * 3_600_000, // 2 小时后自动解除
     reason,
     keywords,
+    seenUrls,
     ...(source !== undefined ? { source } : {}),
   };
   fs.mkdirSync(path.dirname(EMERGENCY_PATH), { recursive: true });
@@ -151,7 +170,16 @@ export async function checkEmergencyNews(): Promise<EmergencyCheckResult> {
   const importantNews = news.filter((n) => n.important);
   const scanTargets = importantNews.length > 0 ? importantNews : news.slice(0, 10);
 
+  // 读取已见 URL 冷却表（持续跨 halt 周期，防止同一文章循环触发）
+  const seenUrls: Record<string, number> = existing.seenUrls ?? {};
+  const nowMs = Date.now();
+
   for (const item of scanTargets) {
+    // 如果该文章 URL 在 24h 冷却内已触发过 halt，跳过
+    if (item.url && seenUrls[item.url] !== undefined && (seenUrls[item.url] ?? 0) > nowMs) {
+      log.info(`⏭ 跳过已触发过的文章（24h 冷却）：${item.title.slice(0, 60)}`);
+      continue;
+    }
     const matched = scanEmergencyKeywords(item.title);
     if (matched.length >= 2) {  // 至少 2 个关键词才触发（减少误报）
       const reason = `突发高危事件：${item.title}`;
