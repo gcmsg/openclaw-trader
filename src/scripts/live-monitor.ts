@@ -20,7 +20,7 @@ import { checkMtfFilter } from "../strategy/mtf-filter.js";
 import { loadRecentTrades } from "../strategy/recent-trades.js";
 import { processSignal } from "../strategy/signal-engine.js";
 import { loadStrategyConfig, loadPaperConfig, buildPaperRuntime } from "../config/loader.js";
-import { createLiveExecutor } from "../live/executor.js";
+import { createLiveExecutor, LiveExecutor } from "../live/executor.js";
 import { reconcilePositions, formatReconcileReport } from "../live/reconcile.js";
 import { loadNewsReport, evaluateSentimentGate } from "../news/sentiment-gate.js";
 import { readSentimentCache } from "../news/sentiment-cache.js";
@@ -481,8 +481,8 @@ function recordSignalHistory(
 // 止损/止盈轮询
 // ─────────────────────────────────────────────────────
 
-async function checkExits(cfg: RuntimeConfig): Promise<void> {
-  const executor = createLiveExecutor(cfg);
+async function checkExits(cfg: RuntimeConfig, executor?: LiveExecutor): Promise<void> {
+  const execInstance = executor ?? createLiveExecutor(cfg);
   const label = cfg.exchange.testnet ? "[TESTNET]" : "[LIVE]";
 
   // 获取当前价格
@@ -495,10 +495,10 @@ async function checkExits(cfg: RuntimeConfig): Promise<void> {
   }
 
   const account = loadAccount(cfg.paper.initial_usdt, cfg.paper.scenarioId);
-  const exits = await executor.checkExitConditions(prices);
+  const exits = await execInstance.checkExitConditions(prices);
 
   // G3: 每轮检查超时订单（孤儿入场单取消，孤儿出场单取消后下轮重触发）
-  await executor.checkOrderTimeouts(account);
+  await execInstance.checkOrderTimeouts(account);
   for (const e of exits) {
     log.info(`${label} ${e.symbol}: 触发出场 — ${e.reason} (${e.pnlPercent.toFixed(2)}%)`);
     // 关闭信号历史记录
@@ -623,6 +623,13 @@ async function main(): Promise<void> {
     log.info(`📦 ${scenario.id}: DataProvider 缓存有效期 ${stale}s（timeframe=${cfg.timeframe}）`);
   }
 
+  // ── 持久化 LiveExecutor（每场景一个，跨轮复用，保留 _exitRejectionLog 冷却状态）──
+  const liveExecutors = new Map<string, LiveExecutor>();
+  for (const scenario of scenarios) {
+    const cfg = buildPaperRuntime(base, paperCfg, scenario);
+    liveExecutors.set(scenario.id, createLiveExecutor(cfg));
+  }
+
   // 轮询循环
   for (;;) {
     if (_state.shuttingDown) break;
@@ -687,8 +694,8 @@ async function main(): Promise<void> {
       }
 
       try {
-        // 先检查止损/止盈
-        await checkExits(cfg);
+        // 先检查止损/止盈（传入持久化 executor，保留 _exitRejectionLog 跨轮冷却状态）
+        await checkExits(cfg, liveExecutors.get(scenario.id));
 
         // P7.1 组合暴露度摘要日志（有持仓时输出，辅助监控风险）
         try {
