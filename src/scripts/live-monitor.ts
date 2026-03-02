@@ -696,6 +696,30 @@ async function main(): Promise<void> {
         await provider.refresh(cfg.symbols, cfg.trend_timeframe, trendLimit);
       }
 
+      // ── 总亏损保护（max_total_loss_percent）──
+      // daily_loss_limit 在 handleBuy/handleShort 内已检查；但总亏损没有检查，补上
+      let totalLossBreached = false;
+      if ((cfg.risk.max_total_loss_percent ?? 0) > 0) {
+        const priceMap: Record<string, number> = {};
+        for (const sym of cfg.symbols) {
+          const kl = provider.get(sym, cfg.timeframe);
+          const last = kl?.at(-1);
+          if (last) priceMap[sym] = last.close;
+        }
+        const posWeightsForLoss = buildPositionWeights(account, priceMap);
+        const currentEquity = account.usdt + posWeightsForLoss.reduce((s, pw) => s + pw.notionalUsdt, 0);
+        const lossPct = ((account.initialUsdt - currentEquity) / account.initialUsdt) * 100;
+        if (lossPct >= cfg.risk.max_total_loss_percent) {
+          totalLossBreached = true;
+          log.warn(
+            `⛔ [${scenario.id}] 总亏损 ${lossPct.toFixed(2)}% 超过上限 ${cfg.risk.max_total_loss_percent}%，暂停开仓（仍执行平仓）`
+          );
+          notifyError(scenario.id, new Error(
+            `⛔ 总亏损 ${lossPct.toFixed(2)}% 超过 ${cfg.risk.max_total_loss_percent}% 上限，已自动暂停开仓`
+          ));
+        }
+      }
+
       try {
         // 先检查止损/止盈（传入持久化 executor，保留 _exitRejectionLog 跨轮冷却状态）
         await checkExits(cfg, liveExecutors.get(scenario.id));
@@ -722,7 +746,8 @@ async function main(): Promise<void> {
           }
         } catch { /* exposure summary 失败不影响主流程 */ }
 
-        // 再检测买卖信号
+        // 再检测买卖信号（总亏损超限时跳过开仓）
+        if (totalLossBreached) continue;
         for (const symbol of cfg.symbols) {
           if (_state.shuttingDown) break; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
           await processSymbol(symbol, cfg, provider).catch((err: unknown) => {
