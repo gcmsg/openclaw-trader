@@ -7,27 +7,17 @@
  *   npx tsx src/scripts/mia-trade.ts status testnet-default
  */
 
-import * as fs from "fs";
-import * as path from "path";
-import { fileURLToPath } from "url";
 import { logSignal, closeSignal } from "../strategy/signal-history.js";
 import { getPrice } from "../exchange/binance.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOGS_DIR = path.resolve(__dirname, "../../logs");
+import {
+  loadAccount as _loadAccount,
+  saveAccount as _saveAccount,
+  type PaperPosition as Position,
+} from "../paper/account.js";
 
 // ── 账户 ───────────────────────────────────────────────
-interface Position {
-  symbol: string;
-  side: "long" | "short";
-  quantity: number;
-  entryPrice: number;
-  entryTime: number;
-  stopLoss: number;
-  takeProfit: number;
-  signalHistoryId?: string;
-}
-
+// mia-trade 的 Trade 保留 entryPrice/holdMs 用于可读性展示，
+// 不强制对齐 PaperTrade（后者要求 slippage 字段，此处不适用）
 interface Trade {
   id: string;
   symbol: string;
@@ -44,25 +34,20 @@ interface Trade {
   timestamp: number;
 }
 
-interface PaperAccount {
+interface MiaAccount {
   initialUsdt: number;
   usdt: number;
   positions: Record<string, Position>;
   trades: Trade[];
 }
 
-function loadAccount(scenarioId: string): PaperAccount {
-  const p = path.join(LOGS_DIR, `paper-${scenarioId}.json`);
-  try {
-    return JSON.parse(fs.readFileSync(p, "utf-8")) as PaperAccount;
-  } catch {
-    return { initialUsdt: 10000, usdt: 10000, positions: {}, trades: [] };
-  }
+// 委托给 account.ts，使用原子写（.tmp → rename），防止进程意外退出时账户文件损坏
+function loadAccount(scenarioId: string): MiaAccount {
+  return _loadAccount(10000, scenarioId) as unknown as MiaAccount;
 }
 
-function saveAccount(scenarioId: string, account: PaperAccount): void {
-  const p = path.join(LOGS_DIR, `paper-${scenarioId}.json`);
-  fs.writeFileSync(p, JSON.stringify(account, null, 2));
+function saveAccount(scenarioId: string, account: MiaAccount): void {
+  _saveAccount(account as never, scenarioId);
 }
 
 // ── 价格获取（复用 exchange/binance.ts 的 getPrice）───────
