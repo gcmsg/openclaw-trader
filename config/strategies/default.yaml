@@ -1,0 +1,107 @@
+# 默认策略：趋势跟随（MA + RSI + MACD 三重确认）
+# 适合：主流币、中等波动市场
+name: "默认策略"
+description: "EMA(20/60) + MACD 动能 + RSI 未超买，趋势跟随"
+
+timeframe: "1h"
+trend_timeframe: "4h"
+
+strategy:
+  ma:
+    short: 20
+    long: 60
+  rsi:
+    period: 14
+    oversold: 35
+    overbought: 65
+  macd:
+    enabled: true
+    fast: 12
+    slow: 26
+    signal: 9
+  volume:
+    surge_ratio: 1.5
+    low_ratio: 0.5
+
+# 趋势跟随：MA 多头 + MACD 动能向上 + RSI 未超买
+signals:
+  buy:
+    - ma_bullish           # EMA20 > EMA60（上升趋势）
+    - macd_bullish         # MACD > 信号线，柱状图为正（动能向上）
+    - rsi_not_overbought   # RSI < 65（未超买，避免追高）
+  sell:
+    - ma_bearish           # EMA20 < EMA60（趋势反转，离场）
+
+risk:
+  min_rr: 1.5               # R:R ≥ 1.5 才开仓（盈利空间 ≥ 1.5× 止损空间）
+  stop_loss_percent: 2.5    # 1h 图快进快出用紧止损（原5% → 2.5%，减少震荡市回撤）
+  take_profit_percent: 15
+  # ROI Table 时间衰减止盈（启用后优先于 take_profit_percent）
+  # 持仓越久目标越低，避免"涨了又跌回来"。参考 Freqtrade minimal_roi 设计。
+  # minimal_roi:
+  #   "0":   0.08   # 0min：等 8% 再走
+  #   "60":  0.04   # 1h：4% 就走
+  #   "120": 0.02   # 2h：2% 就走
+  #   "480": 0.00   # 8h：保本就走（0 = 任意正盈利即出场）
+
+# P5.2 Regime 自适应参数（检测到震荡市/等待突破市时自动切换参数）
+# 当 classifyRegime() 检测到对应市场状态（confidence >= 60%），自动覆盖 risk 参数
+# regime_overrides:
+#   reduced_size:          # 震荡高波动市（reduced_size）：快进快出
+#     take_profit_percent: 5   # 目标降低：2.5→5%
+#     stop_loss_percent: 1.5   # 止损收紧
+#     minimal_roi:
+#       "0":   0.03        # 刚开仓等 3%
+#       "30":  0.015       # 30min 等 1.5%
+#       "60":  0.005       # 1h 等 0.5%
+  trailing_stop:
+    enabled: true
+    activation_percent: 8
+    callback_percent: 2.5
+  position_ratio: 0.2
+  max_positions: 4
+  max_position_per_symbol: 0.3
+  max_total_loss_percent: 20
+  daily_loss_limit_percent: 8
+  correlation_filter:
+    enabled: true
+    threshold: 0.75
+    lookback: 60
+
+# G1 Protection Manager（仿 Freqtrade）
+# 在开仓前检查近期交易记录，触发时暂停开仓一段时间
+# protections:
+#   cooldown:
+#     enabled: true
+#     stop_duration_candles: 5        # 止损后冷却 5 根 K 线
+#   stoploss_guard:
+#     enabled: true
+#     lookback_period_candles: 48     # 回看 48 根 K 线
+#     trade_limit: 3                  # 窗口内止损次数上限
+#     stop_duration_candles: 12       # 暂停 12 根 K 线
+#     only_per_pair: false            # false=全局止损计数
+#   max_drawdown:
+#     enabled: true
+#     lookback_period_candles: 48
+#     trade_limit: 3
+#     max_allowed_drawdown: 0.15      # 总亏损超过 15% 时暂停
+#     stop_duration_candles: 12
+#   low_profit_pairs:
+#     enabled: true
+#     lookback_period_candles: 48
+#     trade_limit: 3
+#     required_profit: 0.0            # 平均不亏损才允许
+#     stop_duration_candles: 12
+
+# G4 增强型 Trailing Stop（仿 Freqtrade trailing_stop_positive_offset）
+# trailing_stop 基础配置在上方 risk 节中已有
+# 以下为 positive trailing offset 扩展配置（可选）：
+#
+# risk:
+#   trailing_stop:
+#     enabled: true
+#     activation_percent: 2       # 盈利 2% 后激活追踪
+#     callback_percent: 5         # 基础回撤幅度 5%
+#   trailing_stop_positive: 0.02          # 激活后切换为 2% 更紧 trailing
+#   trailing_stop_positive_offset: 0.03  # 盈利超过 3% 时激活 positive trailing
+#   trailing_only_offset_is_reached: true # offset 达到前不激活 trailing（Freqtrade 默认行为）

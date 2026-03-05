@@ -1,0 +1,58 @@
+# 数据积累策略 — 阶段一专用
+# 目的：放宽条件获取足够交易样本，而非追求最优参数
+# 适用：testnet 模拟盘数据收集期（目标：4周内 50+ 笔交易）
+#
+# 与 long-short 的区别：
+#   - 1h 时间框架（信号更频繁）
+#   - MA 10/30（更快响应）
+#   - MACD 关闭（降低三重确认门槛）
+#   - RSI 阈值放宽（oversold 35 / overbought 65）
+#   - 仅做多（spot testnet，简化验证）
+name: "数据积累策略（阶段一）"
+description: "放宽参数收集交易样本；不代表最终策略参数"
+
+timeframe: "1h"
+trend_timeframe: "4h"       # MTF 用 4h 做方向过滤，避免 1h 噪声
+
+strategy:
+  ma:
+    short: 10
+    long: 30
+  rsi:
+    period: 14
+    oversold: 35             # 比 long-short 放宽 5 个点
+    overbought: 65           # 比 long-short 收紧 5 个点
+  macd:
+    enabled: false           # 关闭，只用 MA + RSI 两重确认
+  volume:
+    surge_ratio: 1.3         # 成交量放宽（1.5→1.3）
+    low_ratio: 0.5
+
+# 买入：EMA10 > EMA30（多头排列）+ RSI < 65（未超买）
+# 卖出：EMA10 < EMA30（趋势反转）
+signals:
+  buy:
+    - ma_bullish             # EMA10 > EMA30
+    - rsi_not_overbought     # RSI < 65
+  sell:
+    - ma_bearish             # 趋势反转平多
+  # short / cover 不配置 → spot 市场自动跳过
+
+risk:
+  stop_loss_percent: 3       # 小止损，单笔控制损失
+  take_profit_percent: 9     # R:R = 1:3
+  trailing_stop:
+    enabled: true
+    activation_percent: 5
+    callback_percent: 1.5
+  position_ratio: 0.1        # 轻仓（10%），降低单笔风险
+  max_positions: 0              # 0 = 不限制持仓数
+  max_position_per_symbol: 0.15
+  max_total_loss_percent: 15  # 总亏损 15% 自动暂停
+  daily_loss_limit_percent: 5
+  atr_position:
+    enabled: true
+    risk_per_trade_percent: 1.5   # 比正式策略更保守
+    atr_multiplier: 1.5
+    max_position_ratio: 0.15
+  time_stop_hours: 48        # 48h 无盈利强制出场（1h 框架持仓不宜太久）

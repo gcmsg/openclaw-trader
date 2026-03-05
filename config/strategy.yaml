@@ -1,0 +1,176 @@
+# openclaw-trader 核心策略配置
+# 与交易模式无关的设置放这里：指标/信号/风控/调度
+# 交易所/市场/杠杆设置在 paper.yaml（模拟）或 live.yaml（实盘）
+
+# ───────────────────────────────────────
+# 默认监控币种（各场景可单独覆盖）
+# ───────────────────────────────────────
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - ADAUSDT
+  - AVAXUSDT
+
+# ───────────────────────────────────────
+# K 线时间框架
+# 可选: 1m 5m 15m 1h 4h 1d
+# ───────────────────────────────────────
+timeframe: "1h"
+
+# ───────────────────────────────────────
+# 多时间框架趋势过滤（MTF）
+# 可选。设置后，买入信号只在该时间框架 MA 多头时执行。
+# 推荐：主策略 1h → trend_timeframe: "4h"（用 4h 大趋势过滤 1h 入场）
+# ───────────────────────────────────────
+trend_timeframe: "4h"
+
+# ───────────────────────────────────────
+# 技术指标
+# ───────────────────────────────────────
+strategy:
+  name: "ma_rsi_macd"
+  enabled: true
+  ma:
+    short: 20
+    long: 60
+  rsi:
+    period: 14
+    oversold: 30
+    overbought: 65
+  macd:
+    enabled: true
+    fast: 12
+    slow: 26
+    signal: 9
+  volume:
+    surge_ratio: 1.5
+    low_ratio: 0.5
+
+# ───────────────────────────────────────
+# 信号触发条件（需同时满足）
+# ───────────────────────────────────────
+# 默认策略：趋势跟随
+#   买入：均线多头（EMA20 > EMA60）+ MACD 多头动能 + RSI 未超买
+#   卖出：均线空头（EMA20 < EMA60）
+# 注：不要求 rsi_oversold，避免与 ma_bullish 矛盾
+signals:
+  buy:
+    - ma_bullish           # EMA20 > EMA60（上升趋势）
+    - macd_bullish         # MACD > 信号线，柱状图为正（动能向上）
+    - rsi_not_overbought   # RSI < 65（未超买，避免追高）
+  sell:
+    - ma_bearish           # EMA20 < EMA60（趋势反转，离场）
+    # 可选出场条件（P0.2 动量衰竭出场）：
+    # - macd_histogram_shrinking  # MACD 柱状图连续 3 根收缩（趋势减弱）
+    # - rsi_overbought_exit       # RSI > 75 超买止盈（默认75，可设 rsi.overbought_exit）
+  # Kelly 动态仓位（P2.2，需积累 10+ 笔历史再启用）：
+  # position_sizing: "kelly"  # "fixed"（默认）| "kelly"
+  # kelly_lookback: 30        # 参考最近 30 笔平仓
+  # kelly_half: true          # 半 Kelly 降低方差
+  # kelly_min_ratio: 0.05     # 仓位下限 5%
+  # kelly_max_ratio: 0.40     # 仓位上限 40%
+
+  # 可选开空辅助条件（P1.5 资金费率逆向）：
+  # short:
+  #   - funding_rate_overlong     # 资金费率 > +0.30%（多头极度拥挤）→ 逆向做空
+
+# ───────────────────────────────────────
+# 风险控制（各场景可单独覆盖部分字段）
+# ───────────────────────────────────────
+risk:
+  min_rr: 1.5              # 最低风险/回报比（盈利空间 ≥ 止损空间×1.5），0 = 禁用
+  stop_loss_percent: 5
+  take_profit_percent: 15
+  trailing_stop:
+    enabled: false
+    activation_percent: 5
+    callback_percent: 2
+  position_ratio: 0.2
+  max_positions: 4
+  max_position_per_symbol: 0.3
+  max_total_loss_percent: 20
+  daily_loss_limit_percent: 8
+
+  # 相关性过滤（可选）
+  # 开启后，新买入信号若与已持仓资产皮尔逊相关系数 > threshold，跳过买入
+  # BTC/ETH/BNB/SOL 相关性通常 0.8+，建议阈值 0.7
+  correlation_filter:
+    enabled: true
+    threshold: 0.75   # 皮尔逊相关系数阈值（BTC/ETH/BNB/SOL 通常 >0.85，需过滤）
+    lookback: 60      # 用最近 60 根 K 线计算相关性
+
+# ───────────────────────────────────────
+# 订单执行（实盘生效，paper 中仅模拟）
+# ───────────────────────────────────────
+execution:
+  order_type: "market"
+  limit_order_offset_percent: 0.1
+  min_order_usdt: 10
+  limit_order_timeout_seconds: 300
+
+# ───────────────────────────────────────
+# 通知
+# ───────────────────────────────────────
+notify:
+  on_signal: true
+  on_trade: true
+  on_stop_loss: true
+  on_take_profit: true
+  on_error: true
+  on_daily_summary: true
+  min_interval_minutes: 30
+
+# ───────────────────────────────────────
+# 新闻与情绪分析
+# ───────────────────────────────────────
+news:
+  enabled: true
+  interval_hours: 4
+  price_alert_threshold: 5
+  fear_greed_alert: 15
+
+# ───────────────────────────────────────
+# 定时任务（修改后运行 npm run cron:sync 生效）
+# ───────────────────────────────────────
+schedule:
+  price_monitor:
+    enabled: true
+    cron: "* * * * *"
+    timeout_minutes: 3
+  news_collector:
+    enabled: true
+    cron: "0 */4 * * *"
+    timeout_minutes: 260
+  weekly_report:
+    enabled: true
+    cron: "0 14 * * 0"       # 周日 14:00 UTC = 22:00 CST
+    timeout_minutes: 10500   # 周级任务：7天 + 1h 缓冲
+  health_check:
+    enabled: true
+    cron: "*/30 * * * *"
+    timeout_minutes: 35
+  watchdog:
+    enabled: true
+    cron: "*/5 * * * *"   # 每 5 分钟检查一次 price_monitor 是否还活着
+    timeout_minutes: 10
+  log_rotate:
+    enabled: true
+    cron: "0 0 * * *"     # 每天凌晨 0 点日志轮转 + 备份清理
+    timeout_minutes: 1500  # 日级任务：24h + 1h 缓冲
+  news_emergency:
+    enabled: true
+    cron: "*/10 * * * *"  # 每 10 分钟检查突发高危新闻
+    timeout_minutes: 15   # 10min cron + 5min 缓冲
+  pairlist_refresh:
+    script: "src/scripts/refresh-pairlist.ts"
+    enabled: true
+    cron: "0 0 * * *"    # 每天凌晨 0:00 刷新动态币种列表（P6.2）
+    timeout_minutes: 1500  # 日级任务：24h + 1h 缓冲
+
+# ───────────────────────────────────────
+# 运行模式
+# notify_only | paper | auto
+# ───────────────────────────────────────
+mode: "paper"

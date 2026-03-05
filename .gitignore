@@ -1,0 +1,18 @@
+node_modules/
+dist/
+logs/
+.env
+*.log
+
+# API credentials (keep .example files only)
+.secrets/*.json
+!.secrets/*.json.example
+
+# Generated reports
+reports/
+
+# Agent memory
+memory/
+
+# Yarn lock (project uses npm)
+yarn.lock

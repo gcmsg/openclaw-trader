@@ -1,0 +1,227 @@
+[
+  {
+    "id": "cpi-2026-01",
+    "name": "1月 CPI 公布",
+    "date": "2026-01-14",
+    "time": "13:30",
+    "impact": "high",
+    "category": "cpi",
+    "description": "美国消费者物价指数（CPI）同比年率，衡量通胀水平"
+  },
+  {
+    "id": "fed-2026-01",
+    "name": "Fed 利率决议",
+    "date": "2026-01-29",
+    "time": "19:00",
+    "impact": "high",
+    "category": "fed",
+    "description": "FOMC 利率决议 + 新闻发布会，可能影响市场流动性预期"
+  },
+  {
+    "id": "btc-opt-2026-01",
+    "name": "BTC 期权到期（1月）",
+    "date": "2026-01-30",
+    "time": "08:00",
+    "impact": "medium",
+    "category": "options_expiry",
+    "description": "Deribit BTC 月度期权到期，大额 Max Pain 区间可能引发价格磁吸"
+  },
+  {
+    "id": "cpi-2026-02",
+    "name": "2月 CPI 公布",
+    "date": "2026-02-12",
+    "time": "13:30",
+    "impact": "high",
+    "category": "cpi",
+    "description": "美国消费者物价指数（CPI）"
+  },
+  {
+    "id": "btc-opt-2026-02",
+    "name": "BTC 期权到期（2月）",
+    "date": "2026-02-27",
+    "time": "08:00",
+    "impact": "medium",
+    "category": "options_expiry",
+    "description": "Deribit BTC 月度期权到期"
+  },
+  {
+    "id": "cpi-2026-03",
+    "name": "3月 CPI 公布",
+    "date": "2026-03-12",
+    "time": "13:30",
+    "impact": "high",
+    "category": "cpi",
+    "description": "美国消费者物价指数（CPI）"
+  },
+  {
+    "id": "fed-2026-03",
+    "name": "Fed 利率决议",
+    "date": "2026-03-19",
+    "time": "18:00",
+    "impact": "high",
+    "category": "fed",
+    "description": "FOMC 利率决议 + 点阵图更新（季度），市场敏感度高"
+  },
+  {
+    "id": "btc-opt-2026-03",
+    "name": "BTC 期权到期（3月）",
+    "date": "2026-03-27",
+    "time": "08:00",
+    "impact": "high",
+    "category": "options_expiry",
+    "description": "Deribit BTC 季度期权到期，季末OI最大，波动较强"
+  },
+  {
+    "id": "etf-review-2026-q1",
+    "name": "BTC/ETH ETF 季度审议",
+    "date": "2026-03-31",
+    "time": "00:00",
+    "impact": "medium",
+    "category": "etf",
+    "description": "季度末 SEC ETF 条款审议期，可能出现审批结果公告"
+  },
+  {
+    "id": "cpi-2026-04",
+    "name": "4月 CPI 公布",
+    "date": "2026-04-10",
+    "time": "13:30",
+    "impact": "high",
+    "category": "cpi",
+    "description": "美国消费者物价指数（CPI）"
+  },
+  {
+    "id": "btc-opt-2026-04",
+    "name": "BTC 期权到期（4月）",
+    "date": "2026-04-24",
+    "time": "08:00",
+    "impact": "medium",
+    "category": "options_expiry",
+    "description": "Deribit BTC 月度期权到期"
+  },
+  {
+    "id": "fed-2026-05",
+    "name": "Fed 利率决议",
+    "date": "2026-05-07",
+    "time": "18:00",
+    "impact": "high",
+    "category": "fed",
+    "description": "FOMC 利率决议"
+  },
+  {
+    "id": "cpi-2026-05",
+    "name": "5月 CPI 公布",
+    "date": "2026-05-13",
+    "time": "13:30",
+    "impact": "high",
+    "category": "cpi",
+    "description": "美国消费者物价指数（CPI）"
+  },
+  {
+    "id": "btc-opt-2026-05",
+    "name": "BTC 期权到期（5月）",
+    "date": "2026-05-29",
+    "time": "08:00",
+    "impact": "medium",
+    "category": "options_expiry",
+    "description": "Deribit BTC 月度期权到期"
+  },
+  {
+    "id": "cpi-2026-06",
+    "name": "6月 CPI 公布",
+    "date": "2026-06-11",
+    "time": "13:30",
+    "impact": "high",
+    "category": "cpi",
+    "description": "美国消费者物价指数（CPI）"
+  },
+  {
+    "id": "fed-2026-06",
+    "name": "Fed 利率决议",
+    "date": "2026-06-18",
+    "time": "18:00",
+    "impact": "high",
+    "category": "fed",
+    "description": "FOMC 利率决议 + 点阵图更新（季度），市场敏感度高"
+  },
+  {
+    "id": "btc-opt-2026-06",
+    "name": "BTC 期权到期（6月）",
+    "date": "2026-06-26",
+    "time": "08:00",
+    "impact": "high",
+    "category": "options_expiry",
+    "description": "Deribit BTC 季度期权到期，H1 最大 OI 节点"
+  },
+  {
+    "id": "etf-review-2026-q2",
+    "name": "BTC/ETH ETF 季度审议",
+    "date": "2026-06-30",
+    "time": "00:00",
+    "impact": "medium",
+    "category": "etf",
+    "description": "季度末 SEC ETF 条款审议期"
+  },
+  {
+    "id": "cpi-2026-07",
+    "name": "7月 CPI 公布",
+    "date": "2026-07-09",
+    "time": "13:30",
+    "impact": "high",
+    "category": "cpi",
+    "description": "美国消费者物价指数（CPI）"
+  },
+  {
+    "id": "fed-2026-07",
+    "name": "Fed 利率决议",
+    "date": "2026-07-30",
+    "time": "18:00",
+    "impact": "high",
+    "category": "fed",
+    "description": "FOMC 利率决议"
+  },
+  {
+    "id": "btc-opt-2026-07",
+    "name": "BTC 期权到期（7月）",
+    "date": "2026-07-31",
+    "time": "08:00",
+    "impact": "medium",
+    "category": "options_expiry",
+    "description": "Deribit BTC 月度期权到期"
+  },
+  {
+    "id": "cpi-2026-08",
+    "name": "8月 CPI 公布",
+    "date": "2026-08-13",
+    "time": "13:30",
+    "impact": "high",
+    "category": "cpi",
+    "description": "美国消费者物价指数（CPI）"
+  },
+  {
+    "id": "fed-2026-09",
+    "name": "Fed 利率决议",
+    "date": "2026-09-17",
+    "time": "18:00",
+    "impact": "high",
+    "category": "fed",
+    "description": "FOMC 利率决议 + 点阵图更新（季度），年内关键节点"
+  },
+  {
+    "id": "btc-opt-2026-09",
+    "name": "BTC 期权到期（9月）",
+    "date": "2026-09-25",
+    "time": "08:00",
+    "impact": "high",
+    "category": "options_expiry",
+    "description": "Deribit BTC 季度期权到期，Q3末大节点"
+  },
+  {
+    "id": "etf-review-2026-q3",
+    "name": "BTC/ETH ETF 季度审议",
+    "date": "2026-09-30",
+    "time": "00:00",
+    "impact": "medium",
+    "category": "etf",
+    "description": "季度末 SEC ETF 条款审议期"
+  }
+]
